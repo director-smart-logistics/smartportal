@@ -4947,109 +4947,249 @@ export const ResultSummary = memo(function ResultSummary({
     handleReloadManifest,
   ]);
 
-  const handlePrintBoleta = useCallback(() => {
-    const printRows = resultData.rows.map((row, idx) => {
-      const effSlCode =
-        slCodeOverrides[idx]?.slCode ??
-        matchOverrides[idx]?.slCode ??
-        (row.slCode || "");
-      const effRuta =
-        rutaOverrides[effSlCode] ??
-        rutaOverrides[`__unmatched__${row.nombre}`] ??
-        rutaOverrides[row.slCode ?? ""] ??
-        slCodeOverrides[idx]?.ruta ??
-        matchOverrides[idx]?.ruta ??
-        (row.ruta || "");
-      const effCustomerName =
-        matchOverrides[idx]?.fullName ??
-        nameOverrides[idx] ??
-        (row.nombreCliente || "");
-      return {
-        slCode: effSlCode,
-        customerName: effCustomerName,
-        manifestName: row.nombre || "",
-        tracking: row.tracking || "",
-        ruta: effRuta,
-      };
-    });
+  // ── Helper: Fetch Firestore invoices and packages enrichment for printing ──
+  const fetchManifestPrintEnrichment = useCallback(
+    async (manifestNumber: string, trackings: string[]) => {
+      const trackingToInvoiceMap = new Map<string, any>();
+      const invoiceIdMap = new Map<string, any>();
+      const trackingToPackageMap = new Map<string, any>();
 
-    // Sort: by ruta (empty last), then customerName A-Z (sistema), then slCode as tiebreaker
-    printRows.sort((a, b) => {
-      if (!a.ruta && b.ruta) return 1;
-      if (a.ruta && !b.ruta) return -1;
-      if (a.ruta !== b.ruta)
-        return a.ruta.localeCompare(b.ruta, "es", { sensitivity: "base" });
-      const nameCmp = a.customerName.localeCompare(b.customerName, "es", {
-        sensitivity: "base",
-      });
-      if (nameCmp !== 0) return nameCmp;
-      return a.slCode.localeCompare(b.slCode);
-    });
+      if (!manifestNumber && !trackings.length) {
+        return { trackingToInvoiceMap, invoiceIdMap, trackingToPackageMap };
+      }
 
-    const html = buildBoletaHTML(printRows, resultData.manifestNumber || "");
+      try {
+        // 1. Fetch Invoices for this manifest (direct & multi-manifest arrays)
+        const invoicePromises: Promise<any>[] = [];
+        if (manifestNumber) {
+          invoicePromises.push(
+            getDocs(
+              query(
+                collection(db, "invoices"),
+                where("manifestNumber", "==", manifestNumber)
+              )
+            ).catch(() => null),
+            getDocs(
+              query(
+                collection(db, "invoices"),
+                where("manifestNumbers", "array-contains", manifestNumber)
+              )
+            ).catch(() => null)
+          );
+        }
+        const invSnaps = await Promise.all(invoicePromises);
+        invSnaps.forEach((snap) => {
+          if (!snap) return;
+          snap.docs.forEach((d: any) => {
+            const inv = { id: d.id, ...d.data() };
+            if (inv.status === "annulled" || inv.status === "cancelled") return;
+            invoiceIdMap.set(d.id, inv);
+            const tList: string[] = [];
+            if (inv.trackingNumber) tList.push(inv.trackingNumber);
+            if (Array.isArray(inv.trackingNumbers))
+              tList.push(...inv.trackingNumbers);
+            if (Array.isArray(inv.items)) {
+              inv.items.forEach((it: any) => {
+                if (it.trackingNumber) tList.push(it.trackingNumber);
+                if (it.tracking) tList.push(it.tracking);
+              });
+            }
+            tList.forEach((t) => {
+              if (t) trackingToInvoiceMap.set(t.toUpperCase().trim(), inv);
+            });
+          });
+        });
 
+        // 2. Fetch Packages for this manifest
+        if (manifestNumber) {
+          const pkgSnap = await getDocs(
+            query(
+              collection(db, "packages"),
+              where("manifestNumber", "==", manifestNumber)
+            )
+          ).catch(() => null);
+          if (pkgSnap) {
+            pkgSnap.docs.forEach((d: any) => {
+              const data = d.data();
+              const pkg = { id: d.id, ...data };
+              if (d.id)
+                trackingToPackageMap.set(d.id.toUpperCase().trim(), pkg);
+              if (data.tracking)
+                trackingToPackageMap.set(data.tracking.toUpperCase().trim(), pkg);
+              if (data.trackingNumber)
+                trackingToPackageMap.set(
+                  data.trackingNumber.toUpperCase().trim(),
+                  pkg
+                );
+            });
+          }
+        }
+
+        // 3. Fallback: For any trackings not found in manifest packages, query them chunked
+        const missingTrackings = trackings
+          .map((t) => (t || "").toUpperCase().trim())
+          .filter((t) => t && !trackingToPackageMap.has(t));
+
+        if (missingTrackings.length > 0) {
+          const chunks: string[][] = [];
+          for (let i = 0; i < missingTrackings.length; i += 30) {
+            chunks.push(missingTrackings.slice(i, i + 30));
+          }
+          await Promise.all(
+            chunks.map(async (chunk) => {
+              const snap = await getDocs(
+                query(
+                  collection(db, "packages"),
+                  where("trackingNumber", "in", chunk)
+                )
+              ).catch(() => null);
+              if (snap) {
+                snap.docs.forEach((d: any) => {
+                  const data = d.data();
+                  const pkg = { id: d.id, ...data };
+                  if (d.id)
+                    trackingToPackageMap.set(d.id.toUpperCase().trim(), pkg);
+                  if (data.tracking)
+                    trackingToPackageMap.set(
+                      data.tracking.toUpperCase().trim(),
+                      pkg
+                    );
+                  if (data.trackingNumber)
+                    trackingToPackageMap.set(
+                      data.trackingNumber.toUpperCase().trim(),
+                      pkg
+                    );
+                });
+              }
+            })
+          );
+        }
+      } catch (err) {
+        console.warn(
+          "[NovaTableModal] Warning fetching manifest print enrichment:",
+          err
+        );
+      }
+
+      return { trackingToInvoiceMap, invoiceIdMap, trackingToPackageMap };
+    },
+    []
+  );
+
+  const handlePrintBoleta = useCallback(async () => {
     const win = window.open("", "_blank", "width=1100,height=700");
     if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
-  }, [
-    resultData.rows,
-    resultData.manifestNumber,
-    slCodeOverrides,
-    matchOverrides,
-    rutaOverrides,
-  ]);
+    win.document.write(`
+      <div style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;">
+        <h2>Cargando boleta de bodega, por favor espere...</h2>
+      </div>
+    `);
 
-  // ── Boleta de Bodega ALFA (pure alphabetical, no route grouping) ─────────────
-  const handlePrintBoletaAlfa = useCallback(() => {
-    const printRows = resultData.rows.map((row, idx) => {
-      const effSlCode =
-        slCodeOverrides[idx]?.slCode ??
-        matchOverrides[idx]?.slCode ??
-        (row.slCode || "");
-      const effRuta =
-        rutaOverrides[effSlCode] ??
-        rutaOverrides[`__unmatched__${row.nombre}`] ??
-        rutaOverrides[row.slCode ?? ""] ??
-        slCodeOverrides[idx]?.ruta ??
-        matchOverrides[idx]?.ruta ??
-        (row.ruta || "");
-      const effCustomerName =
-        matchOverrides[idx]?.fullName ??
-        nameOverrides[idx] ??
-        (row.nombreCliente || "");
-      return {
-        slCode: effSlCode,
-        customerName: effCustomerName,
-        manifestName: row.nombre || "",
-        tracking: row.tracking || "",
-        ruta: effRuta,
-      };
-    });
+    try {
+      const allTrackings = resultData.rows
+        .map((r) => r.tracking)
+        .filter(Boolean) as string[];
+      const slCodes = Array.from(
+        new Set(resultData.rows.map((r) => r.slCode).filter(Boolean))
+      ) as string[];
 
-    // Sort: customerName A-Z, slCode as tiebreaker — no route grouping
-    printRows.sort((a, b) => {
-      const nameCmp = a.customerName.localeCompare(b.customerName, "es", {
-        sensitivity: "base",
+      const [customerMap, enrichment] = await Promise.all([
+        getCustomersBySlCodes(slCodes).catch(() => new Map()),
+        fetchManifestPrintEnrichment(
+          resultData.manifestNumber || "",
+          allTrackings
+        ),
+      ]);
+
+      const printRows: BoletaPrintRow[] = resultData.rows.map((row, idx) => {
+        const effSlCode =
+          slCodeOverrides[idx]?.slCode ??
+          matchOverrides[idx]?.slCode ??
+          (row.slCode || "");
+        const effRuta =
+          rutaOverrides[effSlCode] ??
+          rutaOverrides[`__unmatched__${row.nombre}`] ??
+          rutaOverrides[row.slCode ?? ""] ??
+          slCodeOverrides[idx]?.ruta ??
+          matchOverrides[idx]?.ruta ??
+          (row.ruta || "");
+        const effCustomerName =
+          matchOverrides[idx]?.fullName ??
+          nameOverrides[idx] ??
+          (row.nombreCliente || "");
+
+        const cust = customerMap.get(effSlCode);
+        const isConsolidado =
+          cust && typeof cust.consolidationEnabled === "boolean"
+            ? cust.consolidationEnabled
+            : (row.consolidacion ?? false);
+
+        const trk = (row.tracking || "").toUpperCase().trim();
+        const pkg = enrichment.trackingToPackageMap.get(trk);
+        const isReturned = Boolean(
+          pkg?.isReturned === true ||
+          pkg?.wasReturned === true ||
+          !!pkg?.returnedAt ||
+          !!pkg?.returnReason ||
+          pkg?.status === "returned" ||
+          pkg?.deliveryStatus === "returned" ||
+          (row as any).isReturned === true
+        );
+        const originManifest = isReturned
+          ? (pkg?.originalManifest ||
+              pkg?.originManifest ||
+              pkg?.manifiestoOrigen ||
+              (pkg?.updatedManifest &&
+              pkg?.manifestNumber &&
+              pkg?.updatedManifest !== pkg?.manifestNumber
+                ? pkg?.manifestNumber
+                : undefined) ||
+              (row as any).originManifest ||
+              (row as any).manifiestoOrigen)
+          : undefined;
+
+        return {
+          slCode: effSlCode,
+          customerName: effCustomerName,
+          manifestName: row.nombre || "",
+          tracking: row.tracking || "",
+          ruta: effRuta,
+          consolidacion: isConsolidado,
+          permisos: Boolean(row.permisos || pkg?.requiresPermit || pkg?.permisos),
+          isReturned,
+          originManifest,
+        };
       });
-      if (nameCmp !== 0) return nameCmp;
-      return a.slCode.localeCompare(b.slCode);
-    });
 
-    const html = buildBoletaHTML(
-      printRows,
-      resultData.manifestNumber || "",
-      false,
-    );
+      // Sort: by ruta (empty last), then customerName A-Z (sistema), then slCode as tiebreaker
+      printRows.sort((a, b) => {
+        if (!a.ruta && b.ruta) return 1;
+        if (a.ruta && !b.ruta) return -1;
+        if (a.ruta !== b.ruta)
+          return a.ruta.localeCompare(b.ruta, "es", { sensitivity: "base" });
+        const nameCmp = a.customerName.localeCompare(b.customerName, "es", {
+          sensitivity: "base",
+        });
+        if (nameCmp !== 0) return nameCmp;
+        return a.slCode.localeCompare(b.slCode);
+      });
 
-    const win = window.open("", "_blank", "width=1100,height=700");
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
+      const html = buildBoletaHTML(printRows, resultData.manifestNumber || "");
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    } catch (err) {
+      win.document.open();
+      win.document.write(`
+        <div style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif; color:red;">
+          <h2>Error al generar la boleta de bodega</h2>
+        </div>
+      `);
+      win.document.close();
+      console.error("Error building boleta:", err);
+    }
   }, [
     resultData.rows,
     resultData.manifestNumber,
@@ -5057,6 +5197,133 @@ export const ResultSummary = memo(function ResultSummary({
     matchOverrides,
     rutaOverrides,
     nameOverrides,
+    fetchManifestPrintEnrichment,
+  ]);
+
+  // ── Boleta de Bodega ALFA (pure alphabetical, no route grouping) ─────────────
+  const handlePrintBoletaAlfa = useCallback(async () => {
+    const win = window.open("", "_blank", "width=1100,height=700");
+    if (!win) return;
+    win.document.write(`
+      <div style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;">
+        <h2>Cargando boleta de bodega ALFA, por favor espere...</h2>
+      </div>
+    `);
+
+    try {
+      const allTrackings = resultData.rows
+        .map((r) => r.tracking)
+        .filter(Boolean) as string[];
+      const slCodes = Array.from(
+        new Set(resultData.rows.map((r) => r.slCode).filter(Boolean))
+      ) as string[];
+
+      const [customerMap, enrichment] = await Promise.all([
+        getCustomersBySlCodes(slCodes).catch(() => new Map()),
+        fetchManifestPrintEnrichment(
+          resultData.manifestNumber || "",
+          allTrackings
+        ),
+      ]);
+
+      const printRows: BoletaPrintRow[] = resultData.rows.map((row, idx) => {
+        const effSlCode =
+          slCodeOverrides[idx]?.slCode ??
+          matchOverrides[idx]?.slCode ??
+          (row.slCode || "");
+        const effRuta =
+          rutaOverrides[effSlCode] ??
+          rutaOverrides[`__unmatched__${row.nombre}`] ??
+          rutaOverrides[row.slCode ?? ""] ??
+          slCodeOverrides[idx]?.ruta ??
+          matchOverrides[idx]?.ruta ??
+          (row.ruta || "");
+        const effCustomerName =
+          matchOverrides[idx]?.fullName ??
+          nameOverrides[idx] ??
+          (row.nombreCliente || "");
+
+        const cust = customerMap.get(effSlCode);
+        const isConsolidado =
+          cust && typeof cust.consolidationEnabled === "boolean"
+            ? cust.consolidationEnabled
+            : (row.consolidacion ?? false);
+
+        const trk = (row.tracking || "").toUpperCase().trim();
+        const pkg = enrichment.trackingToPackageMap.get(trk);
+        const isReturned = Boolean(
+          pkg?.isReturned === true ||
+          pkg?.wasReturned === true ||
+          !!pkg?.returnedAt ||
+          !!pkg?.returnReason ||
+          pkg?.status === "returned" ||
+          pkg?.deliveryStatus === "returned" ||
+          (row as any).isReturned === true
+        );
+        const originManifest = isReturned
+          ? (pkg?.originalManifest ||
+              pkg?.originManifest ||
+              pkg?.manifiestoOrigen ||
+              (pkg?.updatedManifest &&
+              pkg?.manifestNumber &&
+              pkg?.updatedManifest !== pkg?.manifestNumber
+                ? pkg?.manifestNumber
+                : undefined) ||
+              (row as any).originManifest ||
+              (row as any).manifiestoOrigen)
+          : undefined;
+
+        return {
+          slCode: effSlCode,
+          customerName: effCustomerName,
+          manifestName: row.nombre || "",
+          tracking: row.tracking || "",
+          ruta: effRuta,
+          consolidacion: isConsolidado,
+          permisos: Boolean(row.permisos || pkg?.requiresPermit || pkg?.permisos),
+          isReturned,
+          originManifest,
+        };
+      });
+
+      // Sort: customerName A-Z, slCode as tiebreaker — no route grouping
+      printRows.sort((a, b) => {
+        const nameCmp = a.customerName.localeCompare(b.customerName, "es", {
+          sensitivity: "base",
+        });
+        if (nameCmp !== 0) return nameCmp;
+        return a.slCode.localeCompare(b.slCode);
+      });
+
+      const html = buildBoletaHTML(
+        printRows,
+        resultData.manifestNumber || "",
+        false
+      );
+
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    } catch (err) {
+      win.document.open();
+      win.document.write(`
+        <div style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif; color:red;">
+          <h2>Error al generar la boleta de bodega ALFA</h2>
+        </div>
+      `);
+      win.document.close();
+      console.error("Error building boleta alfa:", err);
+    }
+  }, [
+    resultData.rows,
+    resultData.manifestNumber,
+    slCodeOverrides,
+    matchOverrides,
+    rutaOverrides,
+    nameOverrides,
+    fetchManifestPrintEnrichment,
   ]);
 
   // ── Route manifest print ────────────────────────────────────────────────────
@@ -5067,7 +5334,7 @@ export const ResultSummary = memo(function ResultSummary({
     // it applies all overrides (price, route, name), consolidation distribution,
     // and shipping-type rules — exactly matching the Nova table display.
     const rowsToPrint = resultData.rows.filter((_, i) =>
-      filteredIdxs.includes(i),
+      filteredIdxs.includes(i)
     );
     const resolvedRows = buildResolvedRows(rowsToPrint);
 
@@ -5076,51 +5343,114 @@ export const ResultSummary = memo(function ResultSummary({
 
     win.document.write(`
       <div style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;">
-        <h2>Cargando manifiesto, por favor espere...</h2>
+        <h2>Cargando manifiesto de ruta, por favor espere...</h2>
       </div>
     `);
 
     try {
-      const slCodes = new Set<string>();
-      resolvedRows.forEach(r => {
-        if (r.slCode) slCodes.add(r.slCode);
-      });
+      const slCodes = Array.from(
+        new Set(resolvedRows.map((r) => r.slCode).filter(Boolean))
+      ) as string[];
+      const trackings = resolvedRows
+        .map((r) => r.tracking)
+        .filter(Boolean) as string[];
 
-      const customers = await getCustomersBySlCodes(Array.from(slCodes));
-      const customerMap = new Map();
-      customers.forEach(c => customerMap.set(c.slCode, c));
+      const [customerMap, enrichment] = await Promise.all([
+        getCustomersBySlCodes(slCodes).catch(() => new Map()),
+        fetchManifestPrintEnrichment(
+          resultData.manifestNumber || "",
+          trackings
+        ),
+      ]);
 
       const filteredRows: RouteManifestRow[] = resolvedRows
         .filter((r) => (r.ruta || "") === routeFilter)
         .map((r) => {
           const c = customerMap.get(r.slCode);
-          const isConsolidado = c && typeof c.consolidationEnabled === 'boolean'
-            ? c.consolidationEnabled
-            : (r.consolidacion ?? false);
+          const isConsolidado =
+            c && typeof c.consolidationEnabled === "boolean"
+              ? c.consolidationEnabled
+              : (r.consolidacion ?? false);
+
+          const trk = (r.tracking || "").toUpperCase().trim();
+          const pkg = enrichment.trackingToPackageMap.get(trk);
+          const pkgInvoice =
+            enrichment.trackingToInvoiceMap.get(trk) ||
+            (pkg?.invoiceId
+              ? enrichment.invoiceIdMap.get(pkg.invoiceId)
+              : null);
 
           const isReturned = Boolean(
+            pkg?.isReturned === true ||
+            pkg?.wasReturned === true ||
+            !!pkg?.returnedAt ||
+            !!pkg?.returnReason ||
+            pkg?.status === "returned" ||
+            pkg?.deliveryStatus === "returned" ||
             (r as any).isReturned === true ||
             (r as any).wasReturned === true ||
             !!(r as any).returnedAt ||
-            !!(r as any).returnReason ||
-            (r as any).status === 'returned' ||
-            (r as any).deliveryStatus === 'returned'
+            !!(r as any).returnReason
           );
+
+          const originManifest = isReturned
+            ? (pkg?.originalManifest ||
+                pkg?.originManifest ||
+                pkg?.manifiestoOrigen ||
+                (pkg?.updatedManifest &&
+                pkg?.manifestNumber &&
+                pkg?.updatedManifest !== pkg?.manifestNumber
+                  ? pkg?.manifestNumber
+                  : undefined) ||
+                (r as any).originManifest ||
+                (r as any).manifiestoOrigen)
+            : undefined;
+
+          // Look for matching item inside the invoice if available
+          let invItem = null;
+          if (pkgInvoice && Array.isArray(pkgInvoice.items)) {
+            invItem = pkgInvoice.items.find((it: any) => {
+              const itTrk = (
+                it.trackingNumber ||
+                it.tracking ||
+                ""
+              )
+                .toUpperCase()
+                .trim();
+              return itTrk && itTrk === trk;
+            });
+          }
+          const priceUSD = invItem
+            ? Number(
+                invItem.unitPrice ??
+                  invItem.totalPrice ??
+                  invItem.amount ??
+                  0
+              )
+            : Number(pkg?.price ?? r.precio ?? 0);
+
           return {
             slCode: r.slCode || "",
             customerName: r.nombreCliente || r.nombre || "",
             manifestName: r.nombre || "",
             tracking: r.tracking || "",
-            price: r.precio,
+            price: priceUSD,
             descripcion: r.descripcion || "",
             peso: r.pesoRedondeo ?? Math.ceil(r.peso ?? 0),
             consolidacion: isConsolidado,
-            permisos: r.permisos ?? false,
-            invoiceId: (r as any).invoiceId,
-            invoiceNumber: (r as any).invoiceNumber,
+            permisos: Boolean(r.permisos || pkg?.requiresPermit || pkg?.permisos),
+            invoiceId: pkgInvoice?.id || pkg?.invoiceId,
+            invoiceNumber: pkgInvoice?.invoiceNumber || pkg?.invoiceNumber,
+            invoiceAmountUSD:
+              pkgInvoice?.totalAmount ??
+              pkgInvoice?.amount ??
+              pkgInvoice?.subtotal,
+            invoiceAmountCRC:
+              pkgInvoice?.amountCRC ?? pkgInvoice?.totalAmountCRC,
             isReturned: isReturned,
-            isReassigned: (r as any).isReassigned === true,
-            originManifest: isReturned ? ((r as any).originManifest || (r as any).manifiestoOrigen) : undefined,
+            isReassigned:
+              pkg?.isReassigned === true || (r as any).isReassigned === true,
+            originManifest: originManifest,
           };
         });
 
@@ -5133,7 +5463,7 @@ export const ResultSummary = memo(function ResultSummary({
         filteredRows,
         routeFilter,
         resultData.manifestNumber || "",
-        tc,
+        tc
       );
 
       win.document.open();
@@ -5158,6 +5488,7 @@ export const ResultSummary = memo(function ResultSummary({
     routeFilter,
     resultData.manifestNumber,
     tc,
+    fetchManifestPrintEnrichment,
   ]);
 
   // ── PERF: memoize group building + sorting so selectedRows / priceOverrides

@@ -378,4 +378,25 @@ describe('buildBoletaHTML — smoke', () => {
   it('handles empty rows', () => {
     expect(() => buildBoletaHTML([], 'M001')).not.toThrow();
   });
+
+  it('renders DEV badge and origin manifest when package isReturned is true', () => {
+    const rowsWithReturn: BoletaPrintRow[] = [
+      { slCode: 'SL001', customerName: 'JUAN PEREZ', manifestName: 'M001', tracking: 'T001', ruta: 'Alajuela' },
+      {
+        slCode: 'SL002',
+        customerName: 'MARIA LOPEZ',
+        manifestName: 'M001',
+        tracking: 'T002',
+        ruta: 'Cartago',
+        isReturned: true,
+        originManifest: '10-08-2026DAN',
+      },
+    ];
+    const html = buildBoletaHTML(rowsWithReturn, 'M001');
+    expect(html).toContain('ret-badge');
+    expect(html).toContain('DEV');
+    expect(html).toContain('ret-origin-badge');
+    expect(html).toContain('10-08-2026DAN');
+  });
 });
+

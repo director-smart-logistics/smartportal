@@ -28,6 +28,8 @@ export interface BoletaPrintRow {
   ruta:         string;
   consolidacion?: boolean;
   permisos?: boolean;
+  isReturned?: boolean;
+  originManifest?: string;
 }
 
 const ROUTE_PALETTE = [
@@ -78,6 +80,8 @@ export function buildBoletaHTML(
         </td>
       </tr>` : '';
     const rutaStyle = ` style="color:${color};font-weight:700"`;  // always color the ruta cell
+    const retBadge = r.isReturned ? ' <span class="ret-badge">DEV</span>' : '';
+    const originBadge = (r.isReturned && r.originManifest) ? ` <span class="ret-origin-badge" title="Manifiesto de Origen">${r.originManifest}</span>` : '';
     return `${headerRow}
       <tr class="${i % 2 === 0 ? 'even' : 'odd'}">
         <td class="center">${seq}</td>
@@ -85,10 +89,11 @@ export function buildBoletaHTML(
           ${r.slCode || '<span class="na">—</span>'}
           ${r.consolidacion ? ' <span class="cons-badge">CONS</span>' : ''}
           ${r.permisos ? ' <span class="perm-badge">PERM</span>' : ''}
+          ${retBadge}
         </td>
         <td>${r.customerName ? r.customerName.toUpperCase() : '<span class="na">—</span>'}</td>
         <td>${r.manifestName ? r.manifestName.toUpperCase() : '<span class="na">—</span>'}</td>
-        <td class="mono small track-num">${r.permisos ? '<span class="perm-flag">P</span> ' : ''}${r.tracking || '<span class="na">—</span>'}</td>
+        <td class="mono small track-num">${r.permisos ? '<span class="perm-flag">P</span> ' : ''}${r.tracking || '<span class="na">—</span>'}${originBadge}</td>
         <td${rutaStyle}>${r.ruta || '<span class="na">Sin ruta</span>'}</td>
         <td class="check"></td>
       </tr>`;
@@ -132,6 +137,8 @@ export function buildBoletaHTML(
     .cons-badge { display: inline-block; font-size: 5.5pt; font-weight: 700; background: #1d4ed8 !important; color: #fff !important; padding: 1px 4px; border-radius: 3px; margin-left: 4px; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     .perm-badge { display: inline-block; font-size: 5.5pt; font-weight: 700; background: #c2410c !important; color: #fff !important; padding: 1px 4px; border-radius: 3px; margin-left: 4px; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     .perm-flag  { display: inline-block; font-size: 5.5pt; font-weight: 900; background: #c2410c !important; color: #fff !important; padding: 0px 3px; border-radius: 2px; margin-right: 3px; vertical-align: middle; letter-spacing: 0.2px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    .ret-badge  { display: inline-block; font-size: 5.5pt; font-weight: 700; background: #dc2626 !important; color: #fff !important; padding: 1px 4px; border-radius: 3px; margin-left: 4px; vertical-align: middle; text-transform: uppercase; letter-spacing: 0.3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    .ret-origin-badge { display: inline-block; font-size: 5.5pt; font-weight: 600; background: #fee2e2 !important; color: #991b1b !important; padding: 0px 3px; border-radius: 2px; margin-left: 4px; border: 1px solid #f87171; vertical-align: middle; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     footer { margin-top: 5px; font-size: 5.5pt; color: #666; display: flex; justify-content: space-between; border-top: 1px solid #ccc; padding-top: 3px; }
   </style>
 </head>
