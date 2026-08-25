@@ -26,6 +26,19 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1588',
+    date: '2026-08-25',
+    layer: 'both',
+    type: 'feature',
+    title: 'Insignia de Distrito, Dirección en Tarjetas de Ruta y Filtrado Dinámico por Manifiesto',
+    description:
+      '1. **Insignia de Distrito en Tarjetas de Clientes (`DriverRouteWizard.tsx`)**: Se integró el badge oficial del distrito (`MapPin`) posicionado junto a la píldora de precio en la vista de chofer.\\n' +
+      '2. **Dirección Completa en Tarjetas de Parada (`DriverRouteWizard.tsx`)**: Extracción y renderizado de la dirección exacta del cliente (`fullAddress` / `streetAddress` / `deliveryAddress`) con soporte de apertura dinámica en Google Maps.\\n' +
+      '3. **Píldoras y Filtro de Múltiples Manifiestos (`PackageList`)**: Barra de tabs dinámicos para sesiones con múltiples manifiestos (`[Todos, MAN-1 (X), MAN-2 (Y)]`) con conteo en vivo de clientes y paquetes.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'feat(routes): add district badge, customer address row and multi-manifest tabs (v0.0.1588)',
+  },
+  {
     version: '0.0.1586',
     date: '2026-08-25',
     layer: 'both',

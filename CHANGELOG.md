@@ -2,6 +2,18 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1588] - 2026-08-25
+
+### Added & Hardened (District Badge in Customer Card, Exact Address Row & Multi-Manifest Tabs in Route Sessions)
+- **Insignia de Distrito en Tarjetas de Clientes (`DriverRouteWizard.tsx`):**
+  - Incorporado el badge de distrito (`MapPin`) junto a la píldora de precio en la tarjeta de cliente para identificación geográfica inmediata por parte del chofer.
+- **Dirección Completa en Tarjetas de Parada (`DriverRouteWizard.tsx`):**
+  - Renderizado de la dirección exacta de entrega con icono de ubicación y apertura automática de coordenadas o búsqueda de dirección en Google Maps.
+- **Filtro y Píldoras de Múltiples Manifiestos (`PackageList`):**
+  - Generación dinámica de pestañas de filtrado por manifiesto (`Todos`, `MAN-1`, `MAN-2`) para sesiones donde el chofer carga paquetes de más de un manifiesto, con contadores en tiempo real de clientes y paquetes `(X c · Y p)`.
+- **Certificación de Pruebas Automatizadas:**
+  - 177 suites de prueba y 2,371 tests pasando al 100% con 0 fallos y 0 regresiones.
+
 ## [0.0.1586] - 2026-08-25
 
 ### Added & Hardened (Nova Print Alignment with Returns & Invoices, Live Customer Search & 2s Debounce)

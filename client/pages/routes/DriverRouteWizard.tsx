@@ -1864,6 +1864,13 @@ function PkgRow({ pkg, expanded, loading, onExpand, onDeliver, onReturn, hideCus
                   }
                 </span>
               )}
+
+              {!hideCustomerInfo && pkg.deliveryAddress && (
+                <p className="text-xs text-muted-foreground font-normal line-clamp-1 w-full flex items-center gap-1 mt-0.5">
+                  <MapPin className="w-3 h-3 text-muted-foreground/70 shrink-0" />
+                  <span>{pkg.deliveryAddress}</span>
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -1929,6 +1936,11 @@ function PackageList({
   const [customerFlagsMap, setCustomerFlagsMap] = useState<Map<string, {
     consolidationEnabled: boolean;
     coordinates?: { lat: number; lng: number } | null;
+    district?: string | null;
+    canton?: string | null;
+    province?: string | null;
+    exactAddress?: string | null;
+    fullAddress?: string | null;
   }>>(new Map());
 
   useEffect(() => {
@@ -1936,7 +1948,15 @@ function PackageList({
     const chunks: string[][] = [];
     for (let i = 0; i < uniqueSlCodes.length; i += 30) chunks.push(uniqueSlCodes.slice(i, i + 30));
     const unsubs: (() => void)[] = [];
-    const partials = new Map<string, { consolidationEnabled: boolean; coordinates?: { lat: number; lng: number } | null }>();
+    const partials = new Map<string, {
+      consolidationEnabled: boolean;
+      coordinates?: { lat: number; lng: number } | null;
+      district?: string | null;
+      canton?: string | null;
+      province?: string | null;
+      exactAddress?: string | null;
+      fullAddress?: string | null;
+    }>();
     chunks.forEach(chunk => {
       const q = fsQuery(collection(db, 'customers'), fsWhere('slCode', 'in', chunk));
       const unsub = onSnapshot(q, (snap) => {
@@ -1949,11 +1969,64 @@ function PackageList({
           const defaultAddr = data.defaultAddress ||
             addrs.find((a: any) => a.isDefault) ||
             addrs.find((a: any) => a.coordinates?.lat && a.coordinates?.lng) ||
+            addrs[0] ||
             null;
           const coordinates = defaultAddr?.coordinates?.lat && defaultAddr?.coordinates?.lng
             ? { lat: Number(defaultAddr.coordinates.lat), lng: Number(defaultAddr.coordinates.lng) }
             : null;
-          partials.set(slCode, { consolidationEnabled: data.consolidationEnabled === true, coordinates });
+
+          const district = defaultAddr?.district ||
+            defaultAddr?.distrito ||
+            data.location?.district ||
+            data.location?.distrito ||
+            data.district ||
+            data.distrito ||
+            addrs.find((a: any) => a.district || a.distrito)?.district ||
+            addrs.find((a: any) => a.district || a.distrito)?.distrito ||
+            null;
+
+          const canton = defaultAddr?.canton ||
+            data.location?.canton ||
+            data.canton ||
+            addrs.find((a: any) => a.canton)?.canton ||
+            null;
+
+          const province = defaultAddr?.province ||
+            defaultAddr?.provincia ||
+            data.location?.province ||
+            data.location?.provincia ||
+            data.province ||
+            data.provincia ||
+            addrs.find((a: any) => a.province || a.provincia)?.province ||
+            null;
+
+          const exactAddress = defaultAddr?.streetAddress ||
+            defaultAddr?.address ||
+            defaultAddr?.details ||
+            data.direccionExacta ||
+            data.direccion ||
+            data.address ||
+            data.location?.addressDetail ||
+            data.location?.detail ||
+            addrs[0]?.streetAddress ||
+            addrs[0]?.address ||
+            null;
+
+          const fullAddress = exactAddress
+            ? (district && !exactAddress.toLowerCase().includes(district.toLowerCase())
+                ? [exactAddress, district, canton].filter(Boolean).join(', ')
+                : exactAddress)
+            : [district, canton, province].filter(Boolean).join(', ') || null;
+
+          partials.set(slCode, {
+            consolidationEnabled: data.consolidationEnabled === true,
+            coordinates,
+            district,
+            canton,
+            province,
+            exactAddress,
+            fullAddress,
+          });
         });
         setCustomerFlagsMap(new Map(partials));
       });
@@ -2145,6 +2218,17 @@ function PackageList({
   }, [session.routeName]);
   const [selectedRouteTab, setSelectedRouteTab] = useState<string>('Todas');
 
+  // Manifest-filtering tabs for driver (when session contains packages from multiple manifests)
+  const sessionManifests = useMemo(() => {
+    const mans = new Set<string>();
+    enrichedPackages.forEach(p => {
+      const m = p.manifestNumber || (p as any).manifestId;
+      if (m) mans.add(m);
+    });
+    return Array.from(mans).sort();
+  }, [enrichedPackages]);
+  const [selectedManifestTab, setSelectedManifestTab] = useState<string>('Todos');
+
   const q = search.toLowerCase().trim();
 
   // Only show packages still pending delivery — check BOTH the session field AND
@@ -2157,11 +2241,16 @@ function PackageList({
       if (selectedRouteTab !== 'Todas') {
         const pkgRoute = (p.ruta || '').toLowerCase().trim();
         const tabName = selectedRouteTab.toLowerCase().trim();
-        return pkgRoute.includes(tabName) || tabName.includes(pkgRoute);
+        if (!pkgRoute.includes(tabName) && !tabName.includes(pkgRoute)) return false;
+      }
+      if (selectedManifestTab !== 'Todos') {
+        const pkgMan = (p.manifestNumber || (p as any).manifestId || '').toLowerCase().trim();
+        const tabMan = selectedManifestTab.toLowerCase().trim();
+        if (pkgMan !== tabMan) return false;
       }
       return true;
     }),
-    [enrichedPackages, selectedRouteTab]
+    [enrichedPackages, selectedRouteTab, selectedManifestTab]
   );
   const filtered = useMemo(() => {
     if (!q) return pendingOnly;
@@ -2212,10 +2301,15 @@ function PackageList({
     };
 
     const sessionDone = session.packages.filter(isPkgClosedInSession);
-    const filteredByTab = selectedRouteTab === 'Todas' ? sessionDone : sessionDone.filter(p => {
+    const filteredByRoute = selectedRouteTab === 'Todas' ? sessionDone : sessionDone.filter(p => {
       const pkgRoute = (p.ruta || '').toLowerCase().trim();
       const tabName = selectedRouteTab.toLowerCase().trim();
       return pkgRoute.includes(tabName) || tabName.includes(pkgRoute);
+    });
+    const filteredByTab = selectedManifestTab === 'Todos' ? filteredByRoute : filteredByRoute.filter(p => {
+      const pkgMan = (p.manifestNumber || (p as any).manifestId || '').toLowerCase().trim();
+      const tabMan = selectedManifestTab.toLowerCase().trim();
+      return pkgMan === tabMan;
     });
     if (!q) return filteredByTab;
     return filteredByTab.filter(pkg =>
@@ -2223,7 +2317,7 @@ function PackageList({
       pkg.customerName?.toLowerCase().includes(q) ||
       pkg.slCode?.toLowerCase().includes(q)
     );
-  }, [session.packages, q, selectedRouteTab]);
+  }, [session.packages, q, selectedRouteTab, selectedManifestTab]);
   const tabFiltered = viewTab === 'delivered' ? deliveredFiltered : pendingFiltered;
 
   const pendingClientsCount = useMemo(() => {
@@ -2253,6 +2347,25 @@ function PackageList({
           const routeLower = route.toLowerCase().trim();
           return pkgRoute.includes(routeLower) || routeLower.includes(pkgRoute);
         });
+
+    const packagesCount = filtered.length;
+    const clientsCount = new Set(filtered.map(p => p.customerName || 'Sin nombre')).size;
+    
+    return { packagesCount, clientsCount };
+  }, [viewTab, session.packages, enrichedPackages]);
+
+  const getManifestPillStats = useCallback((man: string) => {
+    const isPkgClosedInSession = (p: RouteSessionPackage) => {
+      const st = (p.deliveryStatus || '').toLowerCase().trim();
+      return st === 'delivered' || st === 'returned' || st === 'consolidado' || st === 'consolidated' || st === 'pickup' || st === 'retira_oficina';
+    };
+    const baseList = viewTab === 'delivered'
+      ? session.packages.filter(isPkgClosedInSession)
+      : enrichedPackages.filter(p => !p.deliveryStatus || p.deliveryStatus === 'pending' || p.deliveryStatus === 'en_ruta');
+    
+    const filtered = man === 'Todos'
+      ? baseList
+      : baseList.filter(p => (p.manifestNumber || (p as any).manifestId || '').toLowerCase().trim() === man.toLowerCase().trim());
 
     const packagesCount = filtered.length;
     const clientsCount = new Set(filtered.map(p => p.customerName || 'Sin nombre')).size;
@@ -2894,6 +3007,40 @@ function PackageList({
         </div>
       )}
 
+      {/* Manifest tabs for multi-manifest sessions */}
+      {sessionManifests.length > 1 && (
+        <div className="flex gap-1.5 overflow-x-auto pt-0.5 pb-2 shrink-0 scrollbar-none items-center">
+          <span className="text-[10px] uppercase font-bold text-muted-foreground mr-0.5 shrink-0">Manifiesto:</span>
+          {['Todos', ...sessionManifests].map(man => {
+            const isSelected = selectedManifestTab === man;
+            const stats = getManifestPillStats(man);
+            return (
+              <button
+                key={man}
+                onClick={() => setSelectedManifestTab(man)}
+                className={cn(
+                  'px-2.5 py-1 rounded-xl border text-xs transition-all active:scale-95 shrink-0 flex items-center gap-1.5 shadow-2xs',
+                  isSelected
+                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-slate-900 dark:border-slate-100 font-extrabold shadow-sm'
+                    : 'bg-background text-foreground border-border hover:bg-muted/50 font-bold'
+                )}
+                title={man}
+              >
+                <span className="font-mono text-[11px] font-bold">{man}</span>
+                <span className={cn(
+                  'text-[10px] px-1.5 py-0.5 rounded-md font-bold shrink-0 tabular-nums leading-none',
+                  isSelected 
+                    ? 'bg-white/20 text-white dark:bg-black/20 dark:text-slate-900' 
+                    : 'bg-muted text-muted-foreground'
+                )}>
+                  {stats.clientsCount}c·{stats.packagesCount}p
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
 
 
       {/* ── Customer total banner ── */}
@@ -3004,6 +3151,17 @@ function PackageList({
             );
             const groupActionsOpen = !isOpen;
 
+            // Extract District and Address for this customer
+            const district = customerProfile?.district ||
+              (customerProfile as any)?.distrito ||
+              pkgs.find(p => (p as any).district)?.district ||
+              null;
+
+            const address = customerProfile?.fullAddress ||
+              customerProfile?.exactAddress ||
+              pkgs.find(p => p.deliveryAddress)?.deliveryAddress ||
+              null;
+
             return (
               <div 
                 key={key} 
@@ -3023,7 +3181,6 @@ function PackageList({
                   
                   const hasPrice = totalCRC > 0 || totalUSD > 0;
                   const hasCoords = !!customerProfile?.coordinates;
-                  const showBottomRow = hasPrice || hasCoords;
  
                   return (
                     <div
@@ -3087,32 +3244,52 @@ function PackageList({
                         </span>
                       </div>
 
-                      {/* Bottom Row: Price Tag on Left | Maps Link & Chevron on Right */}
-                      <div className="flex items-center justify-between gap-3 w-full">
-                        {/* Left: Price Tag */}
-                        <div className="flex items-center gap-2">
+                      {/* Customer Address Text Row */}
+                      {address && (
+                        <div className="flex items-start gap-1.5 text-xs text-muted-foreground font-medium px-0.5 mt-0.5 leading-snug">
+                          <MapPin className="w-3.5 h-3.5 text-primary/70 shrink-0 mt-0.5" />
+                          <span className="break-words line-clamp-2 text-foreground/90 font-medium">
+                            {address}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Bottom Row: Price Tag & District Badge on Left | Maps Link & Chevron on Right */}
+                      <div className="flex items-center justify-between gap-2 w-full mt-0.5">
+                        {/* Left: Price Tag + District Badge */}
+                        <div className="flex items-center gap-2 flex-wrap min-w-0">
                           {hasPrice && (
-                            <span className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/50 dark:border-emerald-800/50 px-2.5 py-1 rounded-md">
+                            <span className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/50 dark:border-emerald-800/50 px-2.5 py-1 rounded-md shrink-0">
                               {totalUSD > 0 && `$${totalUSD.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
                               {totalCRC > 0 && totalUSD > 0 && <span className="mx-0.5 opacity-50">/</span>}
                               {totalCRC > 0 && `₡${Math.round(totalCRC).toLocaleString('es-CR')}`}
+                            </span>
+                          )}
+
+                          {/* District Badge right in the highlighted area */}
+                          {district && (
+                            <span className="inline-flex items-center gap-1 text-xs font-extrabold px-2.5 py-1 rounded-md uppercase shrink-0 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shadow-2xs">
+                              <MapPin className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                              <span className="truncate max-w-[150px]">{district}</span>
                             </span>
                           )}
                         </div>
 
                         {/* Right: Google Maps Link + Chevron */}
                         <div className="flex items-center gap-2 shrink-0">
-                          {ENABLE_GOOGLE_MAPS && hasCoords && (() => {
-                            const { lat, lng } = customerProfile.coordinates;
+                          {ENABLE_GOOGLE_MAPS && (hasCoords || address) && (() => {
+                            const mapUrl = hasCoords
+                              ? `https://www.google.com/maps/dir/?api=1&destination=${customerProfile.coordinates.lat},${customerProfile.coordinates.lng}&travelmode=driving`
+                              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address || '')}`;
                             return (
                               <a
-                                href={`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`}
+                                href={mapUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-emerald-500 text-white bg-emerald-600 hover:bg-emerald-700 dark:border-emerald-600 dark:bg-emerald-700 dark:hover:bg-emerald-600 transition-all active:scale-95 duration-100 shadow-sm text-sm font-extrabold uppercase tracking-wide shrink-0"
                                 onClick={e => {
                                   e.stopPropagation();
-                                  trackEvent('nav_google_maps_click', { customerName, coords: { lat, lng } });
+                                  trackEvent('nav_google_maps_click', { customerName, coords: customerProfile?.coordinates, address });
                                 }}
                                 title="Abrir en Google Maps"
                               >

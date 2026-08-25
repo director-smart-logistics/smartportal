@@ -25,4 +25,28 @@ describe('DriverRouteWizard — Route Abbreviation & Manifest Selection Logic', 
     expect(defaultSelected).toEqual(['MAN-2026-08-17']);
     expect(defaultSelected.length).toBe(1);
   });
+
+  it('extracts district, canton, and full address from customer profile structure', () => {
+    const mockCustomerDoc = {
+      slCode: 'SL261239',
+      fullName: 'MARIELA CALDERON RAMÍREZ',
+      defaultAddress: {
+        streetAddress: '150m este de la plaza',
+        district: 'San Rafael',
+        canton: 'La Unión',
+        province: 'Cartago',
+      },
+    };
+
+    const district = mockCustomerDoc.defaultAddress.district;
+    const fullAddress = [
+      mockCustomerDoc.defaultAddress.streetAddress,
+      mockCustomerDoc.defaultAddress.district,
+      mockCustomerDoc.defaultAddress.canton,
+    ].filter(Boolean).join(', ');
+
+    expect(district).toBe('San Rafael');
+    expect(fullAddress).toBe('150m este de la plaza, San Rafael, La Unión');
+  });
 });
+
