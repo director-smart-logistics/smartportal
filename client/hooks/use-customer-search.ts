@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { searchCustomersLocal, getCustomerBySlCode } from '@/lib/services/customer-matcher';
+import { searchCustomersLocal, getCustomerBySlCode, findCustomerBySlCode } from '@/lib/services/customer-matcher';
 import { getLearningAssociations } from '@/lib/services/manifest-learning-service';
 
 export type CombinedResult = {
@@ -25,6 +25,7 @@ export interface UseCustomerSearchReturn {
   loading: boolean;
   handleInput: (val: string) => void;
   clearQuery: () => void;
+  triggerSearchImmediate: (overrideVal?: string) => void;
 }
 
 export function useCustomerSearch(nombre: string, currentSlCode?: string): UseCustomerSearchReturn {
@@ -52,7 +53,7 @@ export function useCustomerSearch(nombre: string, currentSlCode?: string): UseCu
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 1. Ultra-fast in-memory search on keystroke (120ms debounce, 0ms network latency)
+  // 1. Ultra-fast in-memory search on keystroke with resilient live fallback
   const runSearch = useCallback(async (term: string) => {
     const clean = term.trim();
     if (!clean) {
@@ -62,7 +63,29 @@ export function useCustomerSearch(nombre: string, currentSlCode?: string): UseCu
     }
     setLoading(true);
     try {
-      const hits = await searchCustomersLocal(clean, { limit: 8, minScore: 0.60 });
+      let hits = await searchCustomersLocal(clean, { limit: 8, minScore: 0.60 });
+
+      // Direct fallback if exact SL code or digits were entered and still 0 hits
+      if (hits.length === 0) {
+        const cleanUpper = clean.toUpperCase().replace(/\s+/g, '');
+        const targetSl = cleanUpper.startsWith('SL') ? cleanUpper : `SL${cleanUpper}`;
+        const directCustomer = await findCustomerBySlCode(targetSl);
+        if (directCustomer) {
+          hits = [{
+            slCode: directCustomer.slCode,
+            fullName: directCustomer.fullName,
+            email: directCustomer.email,
+            phone: directCustomer.phone,
+            dni: directCustomer.dni,
+            ruta: directCustomer.ruta,
+            consolidationEnabled: directCustomer.consolidationEnabled,
+            score: 1.0,
+            source: 'local' as const,
+            isTemp: directCustomer.isTemp,
+          } as any];
+        }
+      }
+
       const enriched: CombinedResult[] = hits.map((h) => ({
         slCode: h.slCode,
         fullName: h.fullName,
@@ -84,6 +107,17 @@ export function useCustomerSearch(nombre: string, currentSlCode?: string): UseCu
     }
   }, []);
 
+  const triggerSearchImmediate = useCallback((overrideVal?: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const term = overrideVal !== undefined ? overrideVal : query;
+    if (!term.trim()) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
+    runSearch(term);
+  }, [query, runSearch]);
+
   const handleInput = useCallback((val: string) => {
     setQuery(val);
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -93,12 +127,14 @@ export function useCustomerSearch(nombre: string, currentSlCode?: string): UseCu
       return;
     }
     setLoading(true);
+    // Execute search 2 seconds after the user stops typing
     debounceRef.current = setTimeout(() => {
       runSearch(val);
-    }, 120);
+    }, 2000);
   }, [runSearch]);
 
   const clearQuery = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     setQuery('');
     setResults([]);
     setLoading(false);

@@ -26,6 +26,19 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1586',
+    date: '2026-08-25',
+    layer: 'both',
+    type: 'feature',
+    title: 'Alineación de Boletas de Ruta en Nova con Devoluciones/Facturas y Búsqueda Resiliente de Clientes',
+    description:
+      '1. **Alineación de Boletas y Manifiestos de Ruta en Nova (`NovaTableModal.tsx`, `nova-print.ts`)**: Se enriquecieron las impresiones de manifiestos y boletas de bodega consultando en tiempo real las facturas y paquetes de Firestore. Muestra números de factura agrupados por cliente en la sublínea (`#FAC-...`), suma total en USD y CRC con tipo de cambio, badges `DEV` e insignias rojas `+X` para paquetes devueltos con indicativo de manifiesto de origen (`ret-mani-badge`) y desglose de precios unitarios.\\n' +
+      '2. **Búsqueda Resiliente de Clientes en Vivo (`use-customer-search.ts`, `typeahead-search.ts`, `customer-loader.ts`)**: Búsqueda en tiempo real contra `customers` de SP1 y `users` de SP2 para clientes recién registrados (ej. `SL262273`), con inyección dinámica en memoria (`injectCustomerIntoCache`) para disponibilidad inmediata en O(1).\\n' +
+      '3. **Control de Búsqueda y Debounce de 2 Segundos (`NovaCustomerSearchModal.tsx`)**: Configuración de retardo de 2.0 segundos tras detener la escritura y ejecución inmediata al presionar `Enter`.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'feat(nova): align route printouts with returns/invoices and add resilient customer search (v0.0.1586)',
+  },
+  {
     version: '0.0.1583',
     date: '2026-08-25',
     layer: 'both',

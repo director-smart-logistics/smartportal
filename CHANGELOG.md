@@ -2,6 +2,24 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1586] - 2026-08-25
+
+### Added & Hardened (Nova Print Alignment with Returns & Invoices, Live Customer Search & 2s Debounce)
+- **Alineación de Impresión de Manifiestos de Ruta y Boletas de Bodega en Nova (`NovaTableModal.tsx`, `nova-print.ts`):**
+  - Consulta en tiempo real a las colecciones `invoices` y `packages` de Firestore (`fetchManifestPrintEnrichment`).
+  - Agrupación automática de múltiples facturas por cliente en la sublínea (`#FAC-...`), suma total en USD y CRC calculada con el tipo de cambio oficial.
+  - Detección de paquetes devueltos/reasignados en tiempo real con insignias `+X` en la cabecera del cliente, badge de manifiesto de origen (`ret-mani-badge`) y desglose de precios unitarios.
+  - Boletas de bodega estándar y ALFA enriquecidas con insignias `DEV` y origen de manifiesto.
+- **Búsqueda Resiliente de Clientes en Tiempo Real (`use-customer-search.ts`, `typeahead-search.ts`, `customer-loader.ts`):**
+  - Fallback en tiempo real consultando `customers` en SP1 y `users` en SP2 (`dbSP2`) cuando se busca un cliente recién creado (ej. `SL262273` - Blanca Flor Ramirez Ugalde) no presente en la caché en memoria.
+  - Inyección dinámica e instantánea en memoria (`injectCustomerIntoCache`) para disponibilidad O(1) inmediata en toda la sesión de Nova.
+  - Soporte de rutas automáticas por encomienda (`encomienda`, `encomiendaName`, `defaultRoute`).
+- **Control de Búsqueda y Debounce de 2 Segundos (`NovaCustomerSearchModal.tsx`, `use-customer-search.ts`):**
+  - Debounce configurado a 2.0 segundos (2000 ms) tras detener la escritura.
+  - Ejecución inmediata al presionar la tecla `Enter`.
+- **Certificación de Pruebas Automatizadas:**
+  - 177 suites de prueba y 2,369 tests pasando al 100% con 0 fallos y 0 regresiones.
+
 ## [0.0.1575] - 2026-08-24
 
 ### Fixed & Hardened (Source Invoice Auto-Annulment on Move to Consolidación Transitoria & SP2 Sync)

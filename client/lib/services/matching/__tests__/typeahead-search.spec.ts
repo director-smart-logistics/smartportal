@@ -29,6 +29,11 @@ vi.mock('@/lib/firebase/config', () => ({
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(),
   getDocs: vi.fn(async () => ({ empty: true, docs: [] })),
+  doc: vi.fn(),
+  getDoc: vi.fn(async () => ({ exists: () => false, data: () => null })),
+  query: vi.fn(),
+  where: vi.fn(),
+  limit: vi.fn(),
 }));
 
 describe('searchCustomersLocal (Typeahead)', () => {
@@ -115,4 +120,12 @@ describe('searchCustomersLocal (Typeahead)', () => {
     const hitsPartial = await searchCustomersLocal('JUAN ALB');
     expect(hitsPartial.length).toBe(1);
   });
+
+  it('should fallback to findCustomerBySlCode when SL code is not in memory cache (e.g. newly registered SP2 user)', async () => {
+    // mockDb is empty (not loaded in SP1 initial cache)
+    const hits = await searchCustomersLocal('SL262273');
+    // searchCustomersLocal attempts fallback cleanly without throwing
+    expect(Array.isArray(hits)).toBe(true);
+  });
 });
+

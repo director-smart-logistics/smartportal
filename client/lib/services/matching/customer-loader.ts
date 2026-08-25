@@ -236,7 +236,36 @@ export async function findCustomerBySlCode(slCode: string): Promise<CustomerData
   const existing = cachedIndexes?.bySlCode.get(upper);
   if (existing) return existing;
 
-  // Resilient SP2 Fallback: If not found in SP1, query dbSP2 users collection
+  // 1. Direct query in SP1 customers collection
+  try {
+    const qSP1 = query(collection(db, 'customers'), where('slCode', '==', upper), limit(1));
+    const snapSP1 = await getDocs(qSP1);
+    if (!snapSP1.empty) {
+      const docData = snapSP1.docs[0].data();
+      const rawName = docData.fullName || docData.name || '';
+      const fullName = (resolveCustomerFullName(docData.firstName, docData.lastName, rawName) || rawName || upper).toUpperCase().trim();
+      const resolved: CustomerData = {
+        id: snapSP1.docs[0].id,
+        name: fullName,
+        fullName,
+        normalizedName: normalize(fullName),
+        firstName: (docData.firstName || fullName.split(' ')[0] || '').toUpperCase().trim(),
+        lastName: (docData.lastName || fullName.split(' ').slice(1).join(' ') || '').toUpperCase().trim(),
+        slCode: docData.slCode || upper,
+        ruta: docData.ruta || docData.route || docData.defaultRoute || docData.encomienda || undefined,
+        consolidationEnabled: docData.consolidationEnabled === true,
+        email: docData.email || '',
+        phone: docData.phone || docData.phoneNumber || '',
+        dni: docData.dni || docData.cedula || '',
+      };
+      injectCustomerIntoCache(resolved);
+      return resolved;
+    }
+  } catch (e) {
+    console.warn(`[CustomerMatcher] SP1 direct lookup failed for ${upper}:`, e);
+  }
+
+  // 2. Resilient SP2 Fallback: If not found in SP1, query dbSP2 users collection
   try {
     if (dbSP2) {
       // 1. Direct doc get by slCode ID
@@ -291,7 +320,7 @@ export async function findCustomerBySlCode(slCode: string): Promise<CustomerData
           firstName,
           lastName,
           slCode: upper,
-          ruta: userData.ruta || userData.route || userData.defaultRoute || undefined,
+          ruta: userData.ruta || userData.route || userData.defaultRoute || userData.encomienda || userData.encomiendaName || undefined,
           consolidationEnabled: userData.consolidationEnabled === true,
           email: userData.email || '',
           phone: userData.phone || userData.phoneNumber || '',

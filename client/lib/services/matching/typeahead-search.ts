@@ -18,8 +18,10 @@
 
 import type { CustomerData } from './types';
 import { normalize, meaningfulTokens } from './normalize';
-import { loadCustomers } from './customer-loader';
+import { loadCustomers, findCustomerBySlCode } from './customer-loader';
 import { matchName } from './match-engine';
+import { collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { db, dbSP2 } from '../../firebase/config';
 
 type Hit = {
   slCode: string;
@@ -43,7 +45,7 @@ export async function searchCustomersLocal(
   options: { limit?: number; minScore?: number } = {}
 ): Promise<Hit[]> {
   const customers = await loadCustomers();
-  if (!searchTerm.trim() || customers.length === 0) return [];
+  if (!searchTerm.trim() && customers.length === 0) return [];
 
   const { limit: maxResults = 15 } = options;
   const raw = searchTerm.trim();
@@ -70,12 +72,35 @@ export async function searchCustomersLocal(
     for (const c of customers) {
       if (c.email && c.email.toLowerCase().includes(emailLower)) push(c, 1.0);
     }
+    if (hits.length === 0) {
+      try {
+        if (dbSP2) {
+          const qEmail = query(collection(dbSP2, 'users'), where('email', '==', emailLower), limit(1));
+          const snap = await getDocs(qEmail);
+          if (!snap.empty) {
+            const u = snap.docs[0].data();
+            const slCode = (u.slCode || u.sl_code || u.casillero || snap.docs[0].id || '').toUpperCase();
+            if (slCode) {
+              const live = await findCustomerBySlCode(slCode);
+              if (live) push(live, 1.0);
+            }
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
     return hits.sort((a, b) => (b.score - a.score) || ((a.isTemp ? 1 : 0) - (b.isTemp ? 1 : 0))).slice(0, maxResults);
   }
 
   // ── Tier 0-B: Pure digits — DNI / phone / partial SL number ───────────────
   if (/^\d+$/.test(raw)) {
     const digits = raw.replace(/\D/g, '');
+    const targetSL = `SL${digits}`;
+    // Exact SL code in memory
+    for (const c of customers) {
+      if (c.slCode.toUpperCase() === targetSL) push(c, 1.0);
+    }
     // DNI/cedula
     for (const c of customers) {
       if (c.dni && c.dni.replace(/\D/g, '').includes(digits)) push(c, 1.0);
@@ -87,6 +112,29 @@ export async function searchCustomersLocal(
     // SL number digits (e.g. "1793" → SL1793)
     for (const c of customers) {
       if (c.slCode.replace(/\D/g, '').includes(digits)) push(c, 0.90);
+    }
+    if (hits.length === 0 && digits.length >= 3) {
+      const liveCustomer = await findCustomerBySlCode(targetSL);
+      if (liveCustomer) push(liveCustomer, 1.0);
+
+      if (hits.length === 0 && digits.length >= 6) {
+        try {
+          if (dbSP2) {
+            const qDni = query(collection(dbSP2, 'users'), where('dni', '==', digits), limit(1));
+            const snap = await getDocs(qDni);
+            if (!snap.empty) {
+              const u = snap.docs[0].data();
+              const slCode = (u.slCode || u.sl_code || u.casillero || snap.docs[0].id || '').toUpperCase();
+              if (slCode) {
+                const live = await findCustomerBySlCode(slCode);
+                if (live) push(live, 1.0);
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
     }
     return hits.sort((a, b) => (b.score - a.score) || ((a.isTemp ? 1 : 0) - (b.isTemp ? 1 : 0))).slice(0, maxResults);
   }
@@ -100,6 +148,10 @@ export async function searchCustomersLocal(
     // Exact match first
     for (const c of customers) {
       if (c.slCode.toUpperCase() === target) push(c, 1.0);
+    }
+    if (hits.length === 0) {
+      const liveCustomer = await findCustomerBySlCode(target);
+      if (liveCustomer) push(liveCustomer, 1.0);
     }
     if (hits.length > 0) return hits.slice(0, maxResults);
     // Partial match (e.g. "SL179" matches SL1793, SL17900…)

@@ -37,6 +37,7 @@ export function CustomerSearchModal({
     loading,
     handleInput,
     clearQuery,
+    triggerSearchImmediate,
   } = useCustomerSearch(nombre, currentSlCode);
 
   // Close on Escape & Arrow Key navigation
@@ -58,17 +59,22 @@ export function CustomerSearchModal({
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIndex((prev) => (prev > 0 ? prev - 1 : Math.max(0, visibleList.length - 1)));
-      } else if (e.key === "Enter" && visibleList.length > 0 && selectedIndex >= 0 && selectedIndex < visibleList.length) {
-        e.preventDefault();
-        const selected = visibleList[selectedIndex];
-        if (selected) {
-          handleSelect(selected.slCode, selected.fullName, selected.ruta || "");
+      } else if (e.key === "Enter") {
+        if (visibleList.length > 0 && selectedIndex >= 0 && selectedIndex < visibleList.length) {
+          e.preventDefault();
+          const selected = visibleList[selectedIndex];
+          if (selected) {
+            handleSelect(selected.slCode, selected.fullName, selected.ruta || "");
+          }
+        } else if (query.trim().length >= 2) {
+          e.preventDefault();
+          triggerSearchImmediate?.();
         }
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [onClose, visibleList, selectedIndex]);
+  }, [onClose, visibleList, selectedIndex, query, triggerSearchImmediate]);
 
   // Reset selected index on query change
   useEffect(() => {
@@ -149,6 +155,12 @@ export function CustomerSearchModal({
               type="text"
               value={query}
               onChange={(e) => handleInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && visibleList.length === 0 && query.trim().length >= 2) {
+                  e.preventDefault();
+                  triggerSearchImmediate?.();
+                }
+              }}
               placeholder={t("nova.customerSearch_searchPlaceholder", { defaultValue: "Buscar por nombre, SL Code (ej. SL1234), cédula, teléfono..." })}
               aria-label={t("nova.customerSearch_searchAriaLabel", { defaultValue: "Buscar cliente" })}
               data-testid="customer-search-input"

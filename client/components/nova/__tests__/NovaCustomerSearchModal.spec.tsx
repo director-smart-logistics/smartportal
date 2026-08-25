@@ -119,6 +119,7 @@ describe("CustomerSearchModal (Nova Customer Link/Reassign)", () => {
 
     const input = screen.getByTestId("customer-search-input");
     fireEvent.change(input, { target: { value: "MARIO" } });
+    fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => {
       expect(mockSearchCustomersLocal).toHaveBeenCalledWith("MARIO", {
@@ -128,7 +129,7 @@ describe("CustomerSearchModal (Nova Customer Link/Reassign)", () => {
       expect(screen.getByTestId("search-results-section")).toBeDefined();
       expect(screen.getByText("MARIO VARGAS LLOSA")).toBeDefined();
       expect(screen.getByText("SL999")).toBeDefined();
-    });
+    }, { timeout: 3500 });
   });
 
   it("triggers onSelected callback when a customer row is clicked", async () => {
