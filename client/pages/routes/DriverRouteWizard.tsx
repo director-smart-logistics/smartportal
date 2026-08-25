@@ -1866,9 +1866,9 @@ function PkgRow({ pkg, expanded, loading, onExpand, onDeliver, onReturn, hideCus
               )}
 
               {!hideCustomerInfo && pkg.deliveryAddress && (
-                <p className="text-xs text-muted-foreground font-normal line-clamp-1 w-full flex items-center gap-1 mt-0.5">
-                  <MapPin className="w-3 h-3 text-muted-foreground/70 shrink-0" />
-                  <span>{pkg.deliveryAddress}</span>
+                <p className="text-xs text-muted-foreground font-normal break-words w-full flex items-start gap-1 mt-0.5 leading-snug">
+                  <MapPin className="w-3.5 h-3.5 text-muted-foreground/70 shrink-0 mt-0.5" />
+                  <span className="text-foreground/90">{pkg.deliveryAddress}</span>
                 </p>
               )}
             </div>
@@ -3244,11 +3244,11 @@ function PackageList({
                         </span>
                       </div>
 
-                      {/* Customer Address Text Row */}
+                      {/* Customer Address Text Row — Full, untruncated address */}
                       {address && (
                         <div className="flex items-start gap-1.5 text-xs text-muted-foreground font-medium px-0.5 mt-0.5 leading-snug">
                           <MapPin className="w-3.5 h-3.5 text-primary/70 shrink-0 mt-0.5" />
-                          <span className="break-words line-clamp-2 text-foreground/90 font-medium">
+                          <span className="break-words text-foreground/90 font-medium">
                             {address}
                           </span>
                         </div>
@@ -3270,7 +3270,7 @@ function PackageList({
                           {district && (
                             <span className="inline-flex items-center gap-1 text-xs font-extrabold px-2.5 py-1 rounded-md uppercase shrink-0 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shadow-2xs">
                               <MapPin className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                              <span className="truncate max-w-[150px]">{district}</span>
+                              <span>{district}</span>
                             </span>
                           )}
                         </div>
