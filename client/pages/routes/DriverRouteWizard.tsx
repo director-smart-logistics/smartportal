@@ -3249,13 +3249,23 @@ function PackageList({
                         <span className="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded uppercase shrink-0 bg-slate-50 dark:bg-slate-900/30 text-slate-700 dark:text-slate-300 border border-slate-200/60 dark:border-slate-800">
                           {pkgs.length} pkg{pkgs.length > 1 ? 's' : ''}
                         </span>
-                        {/* District Badge (Muted Gray Style in Middle Badge Row) */}
-                        {district && (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded uppercase shrink-0 bg-slate-50 dark:bg-slate-900/40 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
-                            <MapPin className="w-3 h-3 text-slate-500 dark:text-slate-400 shrink-0" />
-                            <span className="font-extrabold">{district}</span>
-                          </span>
-                        )}
+                        {/* District Badge (Route Color Outline & Text Style in Middle Badge Row) */}
+                        {district && (() => {
+                          const rc = sample.ruta ? getRouteColor(sample.ruta) : null;
+                          return (
+                            <span 
+                              className={cn(
+                                "inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded uppercase shrink-0 shadow-2xs border",
+                                rc 
+                                  ? cn("bg-slate-50 dark:bg-slate-900/40", rc.border, rc.text) 
+                                  : "bg-slate-50 dark:bg-slate-900/40 text-slate-700 dark:text-slate-300 border-slate-200/80 dark:border-slate-800"
+                              )}
+                            >
+                              <MapPin className={cn("w-3 h-3 shrink-0", rc?.text ? rc.text : "text-slate-500 dark:text-slate-400")} />
+                              <span className="font-black tracking-wide">{district}</span>
+                            </span>
+                          );
+                        })()}
                       </div>
 
                       {/* Customer Address Text Row — Full, untruncated address */}
