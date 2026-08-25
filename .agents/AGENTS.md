@@ -103,4 +103,10 @@ These rules govern the development, auditing, and maintenance of the SmartLogist
   5. **Automated Vitest Regression Suite**: All price calculations and invariants are covered by `use-nova-price-invariants.spec.ts` and `NovaCalculationsAndGroups.spec.tsx`. No PR or commit may be merged if any invariant fails.
   6. **DUA & Customs Retention Isolation (Zero-Weight Rule)**: When an item arrives with `peso === 0` (or `peso <= 0`), it represents a DUA / package retained in customs. The system MUST preserve `peso: 0` and `precio: 0` (rendering the red `DUA` badge in table), without triggering automatic minimum weight tariffs ($8.00). If an operator assigns a manual clearance fee via price override, that fee is honored. When customs releases the parcel and the real weight is recorded (`peso > 0`), standard tariff calculations automatically activate.
 
-
+## 16. Multi-Repository Dual-Sync Mandate (`smart-portal-1` ➔ `smartportal`)
+- **Architecture & Separation**:
+  - `smart-portal-1` is the active development workspace repository (`git@github.com:jbricenoz/smart-portal-1.git`).
+  - `smartportal` is the client/organization clean delivery repository (`git@github.com:director-smart-logistics/smartportal.git`).
+- **Strict Parity Mandate**: Whenever the user requests to sync, release, or deploy changes, the AI agent MUST execute `npm run sync:smartportal` (or run `node scripts/deploy/sync-to-smartportal.mjs "<description>"`) to propagate all changes cleanly to `director-smart-logistics/smartportal:main`.
+- **Internal Script Isolation**: `scripts/deploy/sync-to-smartportal.mjs` and sync commands MUST ONLY live in `smart-portal-1` and are explicitly excluded from `smartportal`.
+- **Push Protection Compliance**: Never commit hardcoded secrets, sample API keys, or raw OAuth tokens to any repository. All credentials must be read via `process.env`.

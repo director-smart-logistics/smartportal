@@ -23,7 +23,8 @@
     "typecheck": "tsc",
     "db": "node scripts/firestore-query.mjs",
     "backfill:costcrc": "node scripts/backfill-costcrc.mjs",
-    "deploy": "npm run build && firebase deploy --only hosting"
+    "deploy": "npm run build && firebase deploy --only hosting",
+    "sync:smartportal": "node scripts/deploy/sync-to-smartportal.mjs"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.18.0",
