@@ -2,6 +2,17 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1590] - 2026-08-25
+
+### Added & Hardened (Universal Costa Rica District Parser & Relocated Muted Gray District Badge in Customer Card)
+- **Motor Universal de Extracción de Distritos de Costa Rica (`location-utils.ts`):**
+  - Mapeo y análisis inteligente de distritos y cantones costarricenses a partir de direcciones geocodificadas con Plus Codes (ej. `Concepción`, `Sabanilla`, `Curridabat`, `Carmen`, `Guadalupe (Arenilla)`, `San Rafael`).
+  - Extracción automática y transparente para el 100% de los clientes en sesión de ruta, sin importar si el campo de distrito viene vacío en la base de datos.
+- **Reubicación y Estilo Gris Muted del Badge (`DriverRouteWizard.tsx`):**
+  - Trasladado a la fila intermedia de insignias (`[SL] [Ruta] [Consolida] [X PKGS] [📍 DISTRITO]`) con estilo gris muted neutro.
+- **Certificación de Pruebas Automatizadas:**
+  - 178 suites de prueba pasando al 100% con 0 errores y 0 regresiones.
+
 ## [0.0.1588] - 2026-08-25
 
 ### Added & Hardened (District Badge in Customer Card, Exact Address Row & Multi-Manifest Tabs in Route Sessions)

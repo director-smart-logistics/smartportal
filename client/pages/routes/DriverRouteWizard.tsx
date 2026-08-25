@@ -38,8 +38,8 @@ import { useDriverMetrics } from '@/lib/hooks/useDriverMetrics';
 import { syncPackagesToSmartWeb, syncPackagesToSmartWebWithTimeout, type SP1PackageForSync } from '@/lib/services/sync-smartweb-service';
 import { markInvoicesAsPaidForTrackings, annulInvoicesByTrackingsAndManifest, safeFormatDate } from '@/lib/services/invoice-service';
 import { pushStatusToSp2 } from '@/lib/services/sync-invoices-service';
-import { getRecentManifests } from '@/lib/services/manifest-processor/queries';
 import { analyzeDashboardImage, isDashboardAIEnabled } from '@/lib/services/route-ai-analyzer';
+import { extractDistrictFromAddress } from '@/lib/utils/location-utils';
 
 const ENABLE_GOOGLE_MAPS = false;
 
@@ -1975,6 +1975,18 @@ function PackageList({
             ? { lat: Number(defaultAddr.coordinates.lat), lng: Number(defaultAddr.coordinates.lng) }
             : null;
 
+          const exactAddress = defaultAddr?.streetAddress ||
+            defaultAddr?.address ||
+            defaultAddr?.details ||
+            data.direccionExacta ||
+            data.direccion ||
+            data.address ||
+            data.location?.addressDetail ||
+            data.location?.detail ||
+            addrs[0]?.streetAddress ||
+            addrs[0]?.address ||
+            null;
+
           const district = defaultAddr?.district ||
             defaultAddr?.distrito ||
             data.location?.district ||
@@ -1983,6 +1995,9 @@ function PackageList({
             data.distrito ||
             addrs.find((a: any) => a.district || a.distrito)?.district ||
             addrs.find((a: any) => a.district || a.distrito)?.distrito ||
+            extractDistrictFromAddress(exactAddress) ||
+            extractDistrictFromAddress(defaultAddr?.formattedAddress) ||
+            extractDistrictFromAddress(data.location?.addressDetail) ||
             null;
 
           const canton = defaultAddr?.canton ||
@@ -1998,18 +2013,6 @@ function PackageList({
             data.province ||
             data.provincia ||
             addrs.find((a: any) => a.province || a.provincia)?.province ||
-            null;
-
-          const exactAddress = defaultAddr?.streetAddress ||
-            defaultAddr?.address ||
-            defaultAddr?.details ||
-            data.direccionExacta ||
-            data.direccion ||
-            data.address ||
-            data.location?.addressDetail ||
-            data.location?.detail ||
-            addrs[0]?.streetAddress ||
-            addrs[0]?.address ||
             null;
 
           const fullAddress = exactAddress
@@ -3151,15 +3154,19 @@ function PackageList({
             );
             const groupActionsOpen = !isOpen;
 
-            // Extract District and Address for this customer
-            const district = customerProfile?.district ||
-              (customerProfile as any)?.distrito ||
-              pkgs.find(p => (p as any).district)?.district ||
-              null;
-
+            // Extract District and Address for this customer (with intelligent Costa Rica address extraction)
             const address = customerProfile?.fullAddress ||
               customerProfile?.exactAddress ||
               pkgs.find(p => p.deliveryAddress)?.deliveryAddress ||
+              null;
+
+            const district = customerProfile?.district ||
+              (customerProfile as any)?.distrito ||
+              extractDistrictFromAddress(address) ||
+              extractDistrictFromAddress(customerProfile?.fullAddress) ||
+              extractDistrictFromAddress(customerProfile?.exactAddress) ||
+              pkgs.find(p => (p as any).district)?.district ||
+              extractDistrictFromAddress(pkgs.find(p => p.deliveryAddress)?.deliveryAddress) ||
               null;
 
             return (
@@ -3242,6 +3249,13 @@ function PackageList({
                         <span className="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded uppercase shrink-0 bg-slate-50 dark:bg-slate-900/30 text-slate-700 dark:text-slate-300 border border-slate-200/60 dark:border-slate-800">
                           {pkgs.length} pkg{pkgs.length > 1 ? 's' : ''}
                         </span>
+                        {/* District Badge (Muted Gray Style in Middle Badge Row) */}
+                        {district && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded uppercase shrink-0 bg-slate-50 dark:bg-slate-900/40 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                            <MapPin className="w-3 h-3 text-slate-500 dark:text-slate-400 shrink-0" />
+                            <span className="font-extrabold">{district}</span>
+                          </span>
+                        )}
                       </div>
 
                       {/* Customer Address Text Row — Full, untruncated address */}
@@ -3254,23 +3268,15 @@ function PackageList({
                         </div>
                       )}
 
-                      {/* Bottom Row: Price Tag & District Badge on Left | Maps Link & Chevron on Right */}
+                      {/* Bottom Row: Price Tag on Left | Maps Link & Chevron on Right */}
                       <div className="flex items-center justify-between gap-2 w-full mt-0.5">
-                        {/* Left: Price Tag + District Badge */}
-                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                        {/* Left: Price Tag */}
+                        <div className="flex items-center gap-2">
                           {hasPrice && (
                             <span className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/50 dark:border-emerald-800/50 px-2.5 py-1 rounded-md shrink-0">
                               {totalUSD > 0 && `$${totalUSD.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
                               {totalCRC > 0 && totalUSD > 0 && <span className="mx-0.5 opacity-50">/</span>}
                               {totalCRC > 0 && `₡${Math.round(totalCRC).toLocaleString('es-CR')}`}
-                            </span>
-                          )}
-
-                          {/* District Badge right in the highlighted area */}
-                          {district && (
-                            <span className="inline-flex items-center gap-1 text-xs font-extrabold px-2.5 py-1 rounded-md uppercase shrink-0 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shadow-2xs">
-                              <MapPin className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                              <span>{district}</span>
                             </span>
                           )}
                         </div>

@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1590',
+    date: '2026-08-25',
+    layer: 'both',
+    type: 'feature',
+    title: 'Motor Universal de Extracción de Distritos de Costa Rica y Reubicación de Badge en Fila de Badges',
+    description:
+      '1. **Motor de Extracción Universal de Distritos (`location-utils.ts`)**: Diccionario con los ~488 distritos y cantones de Costa Rica. Resuelve automáticamente distritos a partir de direcciones geocodificadas con Plus Codes (ej. `Concepción`, `Sabanilla`, `Curridabat`, `Carmen`, `Guadalupe (Arenilla)`, `San Rafael`).\\n' +
+      '2. **Reubicación y Estilo Gris Muted del Badge de Distrito (`DriverRouteWizard.tsx`)**: Se trasladó el badge a la fila intermedia junto al contador de paquetes (`[SL] [Ruta] [Consolida] [X PKGS] [📍 DISTRITO]`) con estilo gris muted neutro.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'feat(routes): universal CR district parser and muted district badge in middle row (v0.0.1590)',
+  },
+  {
     version: '0.0.1588',
     date: '2026-08-25',
     layer: 'both',
