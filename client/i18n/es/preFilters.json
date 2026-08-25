@@ -1,0 +1,32 @@
+{
+  "title": "Filtros",
+  "required": "Requerido",
+  "description": "Aplica al menos un filtro para buscar paquetes. Esto ayuda a manejar grandes volúmenes de datos eficientemente.",
+  "manifestNumber": "Número de Manifiesto",
+  "manifestPlaceholder": "Buscar manifiesto...",
+  "type": "Tipo",
+  "selectType": "Seleccionar tipo",
+  "dateFrom": "Fecha Desde",
+  "dateTo": "Fecha Hasta",
+  "dateRange": "Rango de Fechas",
+  "selectDateRange": "Seleccionar rango de fechas...",
+  "today": "Hoy",
+  "yesterday": "Ayer",
+  "thisWeek": "Esta Semana",
+  "selectDate": "Seleccionar fecha...",
+  "custom": "Personalizado",
+  "search": "Buscar",
+  "clear": "Limpiar",
+  "applyToLoad": "Configura los filtros y haz clic en Buscar para cargar los paquetes",
+  "atLeastOneRequired": "Por favor aplica al menos un filtro antes de buscar",
+  "noResults": "No se encontraron paquetes con los filtros aplicados",
+  "loading": "Cargando paquetes...",
+  "activeFilters": "Filtros Activos",
+  "types": {
+    "air": "Aéreo",
+    "sea": "Marítimo",
+    "freight": "Terrestre",
+    "local": "Local",
+    "other": "Otro"
+  }
+}

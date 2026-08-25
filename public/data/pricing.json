@@ -1,0 +1,220 @@
+{
+  "countries": {
+    "usa": {
+      "name": "Estados Unidos",
+      "flag": "🇺🇸",
+      "types": {
+        "air": {
+          "name": "Aéreo",
+          "icon": "plane",
+          "note": "Vuelos diarios según corte de guía · Tiempo aproximado de 3 a 4 días hábiles una vez recepcionado y confirmado por la bodega de Miami",
+          "regular": {
+            "description": "Ropa, calzado, accesorios, adornos, bisutería, juguetes y otros artículos generales",
+            "tiers": [
+              {
+                "range": "0g - 499g",
+                "price": 8,
+                "currency": "USD"
+              },
+              {
+                "range": "500g - 1kg",
+                "price": 12,
+                "currency": "USD"
+              },
+              {
+                "range": "Cada 500g adicional",
+                "price": 8,
+                "currency": "USD",
+                "note": "Ej: 1.2kg = $20 (12+8), 1.6kg = $24 (12+8+4)"
+              }
+            ]
+          },
+          "restricted": {
+            "description": "Cosméticos, medicamentos, suplementos, alimentos y otros artículos regulados",
+            "basePrice": 12,
+            "trackingFee": 3,
+            "perKg": 12,
+            "currency": "USD",
+            "note": "Los artículos restringidos requieren tarifa de rastreo adicional por paquete"
+          },
+          "electronics": {
+            "description": "Computadoras, pantallas, celulares, tablets, relojes, cámaras, consolas y otros electrónicos",
+            "quoteRequired": true,
+            "chargePerTracking": true,
+            "note": "Los electrónicos se cotizan individualmente y se cobran por número de rastreo"
+          }
+        },
+        "sea": {
+          "name": "Marítimo",
+          "icon": "ship",
+          "note": "Envío económico por contenedor (15-30 días). Ideal para pedidos grandes.",
+          "regular": {
+            "description": "Artículos generales por pie cúbico",
+            "pricePerCubicFoot": 30,
+            "currency": "USD",
+            "note": "Tarifa todo incluido por pie cúbico"
+          },
+          "restricted": {
+            "description": "Artículos regulados",
+            "quoteRequired": true,
+            "note": "Requiere cotización personalizada"
+          },
+          "electronics": {
+            "quoteRequired": true
+          }
+        }
+      }
+    },
+    "mexico": {
+      "name": "México",
+      "flag": "🇲🇽",
+      "types": {
+        "air": {
+          "name": "Aéreo",
+          "icon": "plane",
+          "note": "1 vuelo al mes · Servicio de pick-up · Ciudad de México",
+          "regular": {
+            "description": "Ropa, calzado, accesorios, adornos, bisutería, juguetes y otros artículos generales",
+            "pricePerKg": 16,
+            "currency": "USD",
+            "note": "Tarifa todo incluido por kg"
+          },
+          "restricted": {
+            "description": "Cosméticos, medicamentos, suplementos, alimentos y otros artículos que requieren permisos",
+            "pricePerKg": 20,
+            "currency": "USD",
+            "note": "Tarifa por kg para artículos que requieren permisos"
+          },
+          "electronics": {
+            "description": "Electrónicos",
+            "quoteRequired": true,
+            "chargePerTracking": true
+          }
+        },
+        "sea": {
+          "name": "Marítimo",
+          "icon": "ship",
+          "regular": {
+            "description": "Artículos generales por peso volumétrico",
+            "volumetric": {
+              "description": "Cobro por peso volumétrico o peso real (el mayor)",
+              "formula": "Largo x Ancho x Alto (cm) ÷ 5000",
+              "pricePerKg": 5,
+              "currency": "USD"
+            }
+          },
+          "restricted": {
+            "description": "Artículos regulados",
+            "volumetric": {
+              "pricePerKg": 5,
+              "currency": "USD"
+            },
+            "basePrice": 8,
+            "trackingFee": 3,
+            "currency": "USD"
+          },
+          "electronics": {
+            "quoteRequired": true,
+            "chargePerTracking": true
+          }
+        }
+      }
+    },
+    "china": {
+      "name": "China",
+      "flag": "🇨🇳",
+      "types": {
+        "air": {
+          "name": "Aéreo",
+          "icon": "plane",
+          "note": "1 a 2 cortes semanales · Servicio de pick-up · Servicio de reempaque · Baiyun",
+          "regular": {
+            "description": "Ropa, calzado, accesorios, adornos, bisutería, juguetes y otros artículos generales",
+            "pricePerKg": 20,
+            "currency": "USD",
+            "note": "Tarifa todo incluido por kg (puede variar por volumen)"
+          },
+          "restricted": {
+            "description": "Cosméticos, medicamentos, suplementos, alimentos y otros artículos que requieren permisos",
+            "quoteRequired": true,
+            "note": "Requiere cotización personalizada"
+          },
+          "electronics": {
+            "description": "Electrónicos",
+            "quoteRequired": true,
+            "chargePerTracking": true
+          }
+        },
+        "sea": {
+          "name": "Marítimo",
+          "icon": "ship",
+          "note": "Corte cada 15 días · Servicio de pick-up · Servicio de reempaque · Baiyun",
+          "regular": {
+            "description": "Artículos generales por pie cúbico",
+            "pricePerCubicFoot": 45,
+            "currency": "USD",
+            "note": "Tarifa todo incluido por pie cúbico"
+          },
+          "restricted": {
+            "description": "Artículos regulados",
+            "quoteRequired": true,
+            "note": "Requiere cotización personalizada"
+          },
+          "electronics": {
+            "quoteRequired": true
+          }
+        }
+      }
+    },
+    "colombia": {
+      "name": "Colombia",
+      "flag": "🇨🇴",
+      "types": {
+        "air": {
+          "name": "Aéreo",
+          "icon": "plane",
+          "note": "",
+          "regular": {
+            "description": "Ropa, calzado, accesorios, adornos, bisutería, juguetes y otros artículos generales",
+            "pricePerKg": 12,
+            "currency": "USD",
+            "note": "Tarifa todo incluido por kg"
+          },
+          "restricted": {
+            "description": "Cosméticos, medicamentos, suplementos, alimentos y otros artículos que requieren permisos",
+            "pricePerKg": 15,
+            "currency": "USD",
+            "note": "Tarifa por kg para artículos que requieren permisos"
+          },
+          "electronics": {
+            "description": "Electrónicos",
+            "quoteRequired": true,
+            "chargePerTracking": true
+          }
+        },
+        "sea": {
+          "name": "Marítimo",
+          "icon": "ship",
+          "regular": {
+            "volumetric": {
+              "pricePerKg": 7,
+              "currency": "USD"
+            }
+          },
+          "restricted": {
+            "volumetric": {
+              "pricePerKg": 7,
+              "currency": "USD"
+            },
+            "basePrice": 10,
+            "trackingFee": 3,
+            "currency": "USD"
+          },
+          "electronics": {
+            "quoteRequired": true
+          }
+        }
+      }
+    }
+  }
+}

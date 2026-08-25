@@ -1,0 +1,18 @@
+{
+  "title": "Quick Navigation",
+  "placeholder": "Type a command or search...",
+  "suggestions": "Suggestions",
+  "noResults": "No results found",
+  "quickLinks": "Quick Links",
+  "packages": "Packages",
+  "packagesDesc": "Manage and track packages",
+  "tracking": "Tracking",
+  "trackingDesc": "Real-time package tracking",
+  "timeEntry": "Time Entry",
+  "timeEntryDesc": "Record employee time entries",
+  "recentPages": "Recent Pages",
+  "pressToOpen": "Press {key} to open",
+  "pressToClose": "Press Esc to close",
+  "navigateTo": "Navigate to {page}",
+  "keyboardShortcut": "Ctrl+K"
+}

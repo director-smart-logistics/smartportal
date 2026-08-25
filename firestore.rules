@@ -1,0 +1,537 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function hasAnyRole(roles) {
+      return isAuthenticated() && 
+        ('role' in request.auth.token) && 
+        (request.auth.token.role in roles);
+    }
+    
+    function isAdmin() {
+      return hasAnyRole(['SUPER_ADMIN', 'ADMIN']);
+    }
+    
+    function isAgent() {
+      return hasAnyRole(['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'AGENT', 'STAFF']);
+    }
+    
+    // Delivery drivers or any office agents
+    function isDelivery() {
+      return hasAnyRole(['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'AGENT', 'STAFF', 'DELIVERY']);
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Users collection — only admins list all; each user reads their own profile
+    match /users/{userId} {
+      allow read: if isAdmin() || isOwner(userId);
+      allow create: if isAdmin() || isOwner(userId);
+      allow update: if isAdmin() || isOwner(userId);
+      allow delete: if isAdmin();
+    }
+
+    // Pending registrations — admin panel: list invited users who haven't signed in yet
+    // Cloud Functions (Admin SDK) bypass these rules for creates/deletes during user sync
+    match /pending_registrations/{email} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow delete: if isAdmin();
+      allow update: if false;
+    }
+    
+    // Customers collection — agents and above; delivery staff have no customer data access
+    match /customers/{customerId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+    
+    // Packages collection — delivery staff need to scan packages.
+    // Public /scanner/bodega kiosk reads via the slScannerLookup Cloud Function
+    // (Admin SDK bypasses rules), so no anonymous access is granted here.
+    match /packages/{packageId} {
+      allow read: if true;
+      allow create: if isAgent();
+      allow update: if isDelivery();
+      allow delete: if isAdmin();
+      
+      // Tracking history subcollection
+      match /trackingHistory/{historyId} {
+        allow read: if isDelivery();
+        allow create: if isDelivery();
+        allow update: if isAgent();
+        allow delete: if isAdmin();
+      }
+    }
+    
+    // Invoices collection — financial data; delivery staff excluded
+    match /invoices/{invoiceId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+      
+      // Invoice items subcollection
+      match /items/{itemId} {
+        allow read: if isAgent();
+        allow create: if isAgent();
+        allow update: if isAgent();
+        allow delete: if isAdmin();
+      }
+    }
+    
+    // Quotes collection — pricing proposals; delivery staff excluded
+    match /quotes/{quoteId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+      
+      // Quote items subcollection
+      match /items/{itemId} {
+        allow read: if isAgent();
+        allow create: if isAgent();
+        allow update: if isAgent();
+        allow delete: if isAdmin();
+      }
+    }
+    
+    // Routes collection — delivery staff must read their assigned routes
+    match /routes/{routeId} {
+      allow read: if isDelivery();
+      allow create: if isAgent();
+      allow update: if isDelivery();
+      allow delete: if isAdmin();
+      
+      // Route packages subcollection
+      match /packages/{routePackageId} {
+        allow read: if isDelivery();
+        allow create: if isAgent();
+        allow update: if isDelivery();
+        allow delete: if isAdmin();
+      }
+      
+      // Route agents subcollection
+      match /agents/{routeAgentId} {
+        allow read: if isDelivery();
+        allow create: if isAdmin();
+        allow update: if isAdmin();
+        allow delete: if isAdmin();
+      }
+    }
+    
+    // Route sessions — delivery staff read/write their own; agents manage all
+    // NOTE: Firestore queries cannot evaluate resource.data, so `list` uses a broader
+    // allow (isDelivery) — the app MUST always filter queries with where('driverId','==',uid).
+    // Single-document `get` keeps the strict resource.data check for defense-in-depth.
+    match /route_sessions/{sessionId} {
+      allow get:    if isAgent() || (isDelivery() && resource.data.driverId == request.auth.uid);
+      allow list:   if isAgent() || isDelivery();
+      allow create: if isAgent() || (isDelivery() && request.resource.data.driverId == request.auth.uid);
+      allow update: if isAgent() || (isDelivery() && resource.data.driverId == request.auth.uid);
+      allow delete: if isAdmin();
+
+      // Per-stop performance metrics written by the driver app in real-time.
+      // Agents (admins/managers) can read all for dashboards; drivers write only to their own session.
+      match /driver_metrics/{metricId} {
+        allow read:   if isAgent();
+        allow create: if isDelivery();
+        allow update: if isAdmin();
+        allow delete: if isAdmin();
+      }
+
+      // Admin → Driver notification channel.
+      // Agents create/update (send messages, mark resolved); drivers read and mark-read.
+      match /notifications/{notifId} {
+        allow read:   if isAgent() || isDelivery();
+        allow create: if isAgent();
+        allow update: if isAgent() || isDelivery();
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Driver metrics — delivery staff write their own; agents read all for dashboards
+    match /driver_metrics/{driverId} {
+      allow get:    if isAgent() || isOwner(driverId);
+      allow list:   if isAgent();
+      allow create: if isDelivery() && request.resource.data.driverId == request.auth.uid;
+      allow update: if isAgent() || isOwner(driverId);
+      allow delete: if isAdmin();
+
+      match /events/{eventId} {
+        allow read:   if isAgent() || isOwner(driverId);
+        allow create: if isDelivery() && request.auth.uid == driverId;
+        allow update: if isAdmin();
+        allow delete: if isAdmin();
+      }
+    }
+    
+    // Deliveries collection — delivery staff must read/update their deliveries
+    match /deliveries/{deliveryId} {
+      allow read: if isDelivery();
+      allow create: if isAgent();
+      allow update: if isDelivery();
+      allow delete: if isAdmin();
+      
+      // Delivery photos subcollection
+      match /photos/{photoId} {
+        allow read: if isDelivery();
+        allow create: if isDelivery();
+        allow update: if isDelivery();
+        allow delete: if isAdmin();
+      }
+    }
+    
+    // Fleet AI analyses collection
+    match /fleet_ai_analyses/{analysisId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+    
+    // Manifests collection
+    match /manifests/{manifestId} {
+      allow read: if true;
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+      
+      // Manifest rows subcollection
+      match /rows/{rowId} {
+        allow read: if true;
+        allow create: if isAgent();
+        allow update: if isAgent();
+        allow delete: if isAdmin();
+      }
+    }
+    
+    // Manifest USA Sea collection
+    match /manifest_usa_sea/{manifestId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+    
+    // Manifest Colombia Air collection
+    match /manifest_col_air/{manifestId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+    
+    // Audit logs collection — immutable append-only; delivery creates scan events
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isDelivery();
+      allow update: if false;
+      allow delete: if false;
+    }
+    
+    // Permissions collection — role configs; admin-only read
+    match /permissions/{permissionId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Settings collection
+    match /settings/{settingId} {
+      allow read: if isAuthenticated() || resource.data.isPublic == true;
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Custom taxes collection
+    match /customTaxes/{taxId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Consolidation rules collection
+    match /consolidationRules/{ruleId} {
+      allow read: if isAgent();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Scanner history collection
+    match /scannerHistory/{historyId} {
+      allow read: if isAgent();
+      allow create: if isDelivery();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+    
+    // Departments collection (payroll)
+    match /departments/{departmentId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Employees collection (payroll)
+    match /employees/{employeeId} {
+      allow read: if isAdmin() || isOwner(resource.data.userId);
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Pricing collection — needed by Nova manifest processor and agents
+    match /pricing/{pricingId} {
+      allow read: if isAgent();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Payroll settings collection — HR/finance data; admin-only
+    match /payrollSettings/{countryCode} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Payroll records collection
+    match /payroll/{payrollId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Payroll runs collection
+    match /payroll_runs/{runId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Time entries collection (attendance)
+    match /timeEntries/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // SL code counters — atomic sequence for BB and Mayorista routes
+    // Agents need read+write to run the Firestore transaction that reserves the next code.
+    match /sl_counters/{counterId} {
+      allow read: if isAgent();
+      allow write: if isAgent();
+    }
+
+    // Match feedback / learning collection
+    // Stores admin-confirmed name→slCode pairs for ML-assisted matching.
+    // Agents can read (needed during batch matching) and write (confirm matches).
+    // Only admins can delete entries.
+    match /match_feedback/{feedbackId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Unmatched route learning — stores name→ruta mappings for manifest rows without a customer.
+    // Agents can read (needed on every manifest open) and write (assign/confirm routes).
+    // Only admins can delete entries.
+    match /unmatched_route_learning/{docId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Nova AI agent interactions — per-user subcollections
+    // Each user can only read/write their own interaction history.
+    match /ai_manifest_interactions/{userId} {
+      allow read, write: if isAuthenticated() && isOwner(userId);
+
+      match /sessions/{sessionId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+      match /manifests/{manifestId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+      match /context/{contextId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+    }
+
+    // Pre-alerts collection — synced from SP2 via Cloud Functions (Admin SDK bypasses rules).
+    // Agents and admins can read; no client writes (mutations happen only through the sync job).
+    match /pre_alerts/{preAlertId} {
+      allow read: if isAgent();
+      allow create: if false;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // Shipping labels collection
+    match /shippingLabels/{labelId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Sync metadata — written exclusively by Cloud Functions via Admin SDK.
+    // Admins can read (for monitoring / manual trigger UI); never writable from client.
+    match /_sync_metadata/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Sync logs — append-only audit trail written by Cloud Functions via Admin SDK.
+    // Admins can read for observability; never writable from client.
+    match /_sync_logs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Nova AI learning loop — agents submit, patterns are admin-read-only
+    match /manifest_learning/{docId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    match /manifest_learning_patterns/{patternId} {
+      allow read: if isAgent();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Manifest encomiendas — mirror of packages with ruta=Encomiendas; bidirectional sync
+    // Agents (ADMIN, MANAGER, STAFF, AGENT) can read and write (ingest + cost updates)
+    // Delivery staff excluded — encomienda billing is internal
+    match /manifest_encomiendas/{trackingId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Manifest consolidations — snapshot of packages with consolidacion=true; supports
+    // manifest reassignment (updatedManifest field). Same access pattern as encomiendas.
+    match /manifest_consolidations/{trackingId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Dedicated consolidation manifests collection (starts empty).
+    // Items are added manually by agents via the "Agregar" flow in the
+    // Consolidation Manifests page.  Doc ID = tracking number (uppercased).
+    match /manifest_consolidation/{trackingId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAgent();
+    }
+
+    // Nova Terceros — Servicio de Terceros rows attached to a manifest customer group.
+    // Agents create and update rows; admins can delete. Delivery staff excluded.
+    match /nova_terceros/{docId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Temp customers — Nova assigns SL-NAN-XXXXX codes to unmatched manifest names.
+    // Agents can read (dedup queries + customer-matcher merge) and write (create/update via
+    // transaction or setDoc merge). The --meta-- counter doc is covered by the same rule.
+    // Only admins can delete entries.
+    match /temp_customers/{docId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Nova Learning — match_feedback: stores admin/AI confirmed name→slCode pairs.
+    // Admin and Manager can read (learning admin page) and write (promote/supersede/delete).
+    match /match_feedback/{docId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // Nova Learning — manifest_learning_patterns: ThumbsUp pattern approvals.
+    // Admin and Manager can read (learning admin page) and write (promote/supersede/delete).
+    match /manifest_learning_patterns/{docId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // Encomiendas — courier provider registry (admin panel + public read for address modal)
+    // Read: any authenticated agent (MANAGER, ADMIN, STAFF, AGENT)
+    // Write: ADMIN or MANAGER (management page roles)
+    // Delete: ADMIN only
+    match /encomiendas/{encomiendaId} {
+      allow read: if isAgent();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // Tracking failure logs — written by Cloud Functions only (Admin SDK)
+    match /tracking_failures/{failureId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Tracking alert state — idempotency guard; Cloud Functions only
+    match /tracking_alert_state/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // GTI manifests — stores pre-calculated GTI tiquete exports keyed by manifest number.
+    // Agents generate and re-export; download tracking counters are updated by agents.
+    // Only admins can delete historical exports.
+    match /gti_manifests/{manifestId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Audit logs — client writes own events; admin reads all; no updates or deletes from client
+    // userId field must match the authenticated user to prevent spoofing
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isDelivery() && request.resource.data.userId == request.auth.uid;
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}

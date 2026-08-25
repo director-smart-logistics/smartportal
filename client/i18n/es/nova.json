@@ -1,0 +1,81 @@
+{
+  "title": "Procesador de Manifiestos",
+  "subtitle": "Procesa archivos Excel/CSV con inteligencia artificial",
+  "welcomeTitle": "Procesador de Manifiestos",
+  "welcomeMessage": "Arrastra archivos Excel o CSV para procesarlos automáticamente con IA. Formatea tracking, nombres, calcula precios y más.",
+  "clearChat": "Limpiar",
+  "chatCleared": "Chat limpiado",
+  "chatClearedDesc": "El historial ha sido eliminado",
+  "dropzone": {
+    "title": "Arrastra archivos Excel o CSV aquí",
+    "subtitle": "o haz clic para seleccionar",
+    "formats": "Formatos: .xlsx, .xls, .csv",
+    "maxFiles": "máx. {{count}} archivos"
+  },
+  "files": {
+    "selected": "Archivos seleccionados",
+    "process": "Procesar {{count}} archivo(s) con IA"
+  },
+  "processing": {
+    "starting": "Iniciando procesamiento...",
+    "withAI": "Procesando con IA...",
+    "completed": "Procesamiento completado",
+    "error": "Error"
+  },
+  "steps": {
+    "readingFile": "Leyendo archivo",
+    "formattingTracking": "Formateando tracking a UPPERCASE",
+    "formattingNames": "Formateando nombres a UPPERCASE",
+    "verifyingNames": "Verificando nombres con IA",
+    "removingColumn": "Eliminando columna número de cliente",
+    "extractingManifest": "Extrayendo número de manifiesto",
+    "calculatingPrices": "Calculando precios (USA Aéreo)",
+    "addingColumns": "Agregando columnas slCode y ruta",
+    "generatingResult": "Generando resultado"
+  },
+  "results": {
+    "totalRows": "Filas totales",
+    "processed": "Procesadas",
+    "totalPrice": "Precio total",
+    "manifest": "Manifiesto",
+    "corrections": "Correcciones realizadas",
+    "row": "Fila"
+  },
+  "actions": {
+    "download": "Descargar CSV procesado"
+  },
+  "features": {
+    "uppercase": "Tracking y nombres en MAYÚSCULAS",
+    "aiVerification": "Verificación de nombres con IA",
+    "priceCalculation": "Cálculo automático de precios",
+    "csvExport": "Exportación a CSV"
+  },
+  "errors": {
+    "processingFailed": "Error procesando archivo",
+    "invalidFile": "Archivo inválido",
+    "emptyFile": "Archivo vacío"
+  },
+  "customerSearch_title": "Vincular cliente",
+  "customerSearch_manifestLabel": "Manifiesto:",
+  "customerSearch_closeAriaLabel": "Cerrar diálogo",
+  "customerSearch_searchPlaceholder": "Buscar por nombre, SL Code, cédula, correo, teléfono…",
+  "customerSearch_searchAriaLabel": "Buscar cliente",
+  "customerSearch_learningSection": "Nova Learning — asociaciones aprobadas",
+  "customerSearch_aiSection": "Sugerencias IA para \"{{name}}\"",
+  "customerSearch_aiLoading": "Buscando sugerencias con IA…",
+  "customerSearch_searchResultsCount": "Resultados de búsqueda ({{count}})",
+  "customerSearch_searching": "Buscando…",
+  "customerSearch_noResults": "Sin resultados para \"{{query}}\"",
+  "customerSearch_typeToSearch": "Escribe al menos 2 caracteres para buscar",
+  "customerSearch_cancel": "Cancelar",
+  "customerSearch_approved_one": "Aprobado manualmente {{count}} vez",
+  "customerSearch_approved_other": "Aprobado manualmente {{count}} veces",
+  "copyCell_copy": "Copiar",
+  "copyCell_copied": "¡Copiado!",
+  "copyCell_ariaLabel": "Copiar valor al portapapeles",
+  "copyCell_copiedAriaLive": "Valor copiado al portapapeles",
+  "multiMatch_title_one": "{{count}} fila requiere revisión",
+  "multiMatch_title_other": "{{count}} filas requieren revisión",
+  "multiMatch_subtitle": "Abre la tabla para asignar clientes",
+  "multiMatch_ariaLabel": "Revisión de coincidencias requerida"
+}

@@ -1,0 +1,58 @@
+{
+  "title": "Configuración de Precios",
+  "subtitle": "Configure los precios para diferentes sucursales y tipos de entrega",
+  "branch": "Sucursal",
+  "deliveryType": "Tipo de Entrega",
+  "category": "Categoría",
+  "branches": {
+    "mexico": "México",
+    "china": "China",
+    "colombia": "Colombia",
+    "other": "Otro"
+  },
+  "deliveryTypes": {
+    "air": "Aéreo",
+    "sea": "Marítimo",
+    "local": "Entrega Local"
+  },
+  "categories": {
+    "regular": "Artículos Regulares",
+    "restricted": "Artículos Restringidos",
+    "electronics": "Electrónicos"
+  },
+  "regularItems": {
+    "title": "Artículos Regulares",
+    "description": "Ropa, calzado, accesorios, adornos, bisutería, juguetes y otros artículos generales",
+    "tier1": "0g - 499g",
+    "tier2": "500g - 1kg",
+    "perKg": "Por kg adicional"
+  },
+  "restrictedItems": {
+    "title": "Artículos Restringidos",
+    "description": "Cosméticos, medicamentos, suplementos, alimentos y otros artículos regulados",
+    "basePrice": "Precio Base",
+    "trackingFee": "Tarifa de Rastreo",
+    "perKg": "Por kg adicional",
+    "note": "Los artículos restringidos requieren tarifa de rastreo adicional por paquete"
+  },
+  "electronics": {
+    "title": "Electrónicos",
+    "description": "Computadoras, pantallas, celulares, tablets, relojes, cámaras, consolas y otros electrónicos",
+    "requiresQuote": "Requiere Cotización Personalizada",
+    "chargePerTracking": "Se cobra por rastreo (sin consolidación)",
+    "contactCustomer": "Contacte servicio al cliente para cotización",
+    "note": "Los electrónicos se cotizan individualmente y se cobran por número de rastreo"
+  },
+  "weightTiers": "Niveles de Peso",
+  "pricing": "Precios",
+  "savePricing": "Guardar Configuración de Precios",
+  "pricingSaved": "Configuración de precios guardada exitosamente",
+  "pricingError": "Error al guardar configuración de precios",
+  "loadingPricing": "Cargando configuración de precios...",
+  "seedDefaultPricing": "Inicializar Precios Predeterminados",
+  "seedSuccess": "Precios predeterminados inicializados exitosamente",
+  "seedError": "Error al inicializar precios predeterminados",
+  "confirmSeed": "¿Está seguro de que desea inicializar los precios predeterminados? Esto restablecerá todos los precios a los valores predeterminados.",
+  "priceLabel": "Precio (USD)",
+  "enterPrice": "Ingrese precio"
+}

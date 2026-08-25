@@ -1,0 +1,76 @@
+{
+  "title": "Dashboard",
+  "overview": "Overview",
+  "welcome": "Welcome to SmartPortal",
+  "tagline": "Smart Logistics Dashboard",
+  "selectTimePeriod": "Select Time Period",
+  "deliveryTrends": "Monthly Delivery Trends",
+  "comparisonAndTrends": "Comparison and trends",
+  "packageStatus": "Package Status",
+  "distribution": "Distribution",
+  "totalPackages": "Total Packages",
+  "packagesInTransit": "In Transit",
+  "packagesDelivered": "Delivered",
+  "packagesFailed": "Failed",
+  "recentActivity": "Recent Activity",
+  "statistics": "Statistics",
+  "delivered": "Delivered",
+  "revenue": "Revenue",
+  "packageStatuses": {
+    "Pending": "Pending",
+    "Intake": "Intake",
+    "In Transit": "In Transit",
+    "Custom Released": "Custom Released",
+    "Consolidated": "Consolidated",
+    "Delivered": "Delivered",
+    "Failed": "Failed",
+    "Returned": "Returned"
+  },
+  "noPositionsAvailable": "No positions available",
+  "subtitle": "Enterprise analytics for business growth",
+  "timeRange": {
+    "lastMonth": "Last Month",
+    "last3Months": "Last 3 Months",
+    "last6Months": "Last 6 Months",
+    "lastYear": "Last Year"
+  },
+  "export": "Export",
+  "topMetrics": {
+    "totalRevenue": "Total Revenue",
+    "avgOrderValue": "Avg Order Value",
+    "deliverySuccess": "Delivery Success",
+    "profitMargin": "Profit Margin"
+  },
+  "charts": {
+    "performanceTrend": "Performance Trend",
+    "revenueGrowth": "Revenue Growth",
+    "monthlyCosts": "Monthly Costs",
+    "profitTrend": "Profit Trend",
+    "deliverySuccess": "Delivery Success",
+    "regionalMix": "Regional Mix"
+  },
+  "chartData": {
+    "efficiency": "Efficiency",
+    "revenue": "Revenue",
+    "cost": "Cost",
+    "profit": "Profit",
+    "delivered": "Delivered"
+  },
+  "regional": {
+    "title": "Regional Performance Details",
+    "region": "Region",
+    "packages": "Packages",
+    "revenue": "Revenue",
+    "cost": "Cost",
+    "margin": "Margin"
+  },
+  "summary": {
+    "title": "Executive Summary",
+    "revenuePerformance": "Revenue Performance",
+    "revenueText": "Revenue increased 35.9% (Jun: $39.2K vs Jan: $28.9K) demonstrating strong business growth across all regions.",
+    "operationalEfficiency": "Operational Efficiency",
+    "efficiencyText": "Delivery success rate at 98.2% with 220 packages delivered daily. On-time performance averaging 92.8% indicates excellent operational execution.",
+    "strategicFocus": "Strategic Focus",
+    "focusText": "Miami region leads with 35% revenue share and 78.9% margin. Capacity expansion in high-performing regions recommended."
+  }
+}

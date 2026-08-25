@@ -1,0 +1,63 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.pnpm-store/*
+.config/
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github/instructions/snyk_rules.instructions.md
+
+# Playwright session states
+playwright/.auth/
+playwright-report/
+test-results/
+
+# Firebase CLI exports (auth, firestore) — never commit at project root
+users.json
+firestore-export/
+
+# Local debug/inspection scripts (one-off Firestore queries, not for VCS)
+/test-*.mjs
+/test-*.ts
+/query-test.ts
+/query-test.mjs
+scratch/
+/scratch/
+scripts/*.mjs
+!scripts/deploy/**
+functions/*.js
+!functions/scripts/**
+
+.firebase/hosting.ZGlzdC9zcGE.cache
+
+*.webm
+
+coverage/.tmp/
+
+coverage/
+lighthouse-report.json

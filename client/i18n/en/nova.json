@@ -1,0 +1,81 @@
+{
+  "title": "Manifest Processor",
+  "subtitle": "Process Excel/CSV files with artificial intelligence",
+  "welcomeTitle": "Manifest Processor",
+  "welcomeMessage": "Drag Excel or CSV files to process them automatically with AI. Format tracking, names, calculate prices and more.",
+  "clearChat": "Clear",
+  "chatCleared": "Chat cleared",
+  "chatClearedDesc": "History has been cleared",
+  "dropzone": {
+    "title": "Drag Excel or CSV files here",
+    "subtitle": "or click to select",
+    "formats": "Formats: .xlsx, .xls, .csv",
+    "maxFiles": "max. {{count}} files"
+  },
+  "files": {
+    "selected": "Selected files",
+    "process": "Process {{count}} file(s) with AI"
+  },
+  "processing": {
+    "starting": "Starting processing...",
+    "withAI": "Processing with AI...",
+    "completed": "Processing completed",
+    "error": "Error"
+  },
+  "steps": {
+    "readingFile": "Reading file",
+    "formattingTracking": "Formatting tracking to UPPERCASE",
+    "formattingNames": "Formatting names to UPPERCASE",
+    "verifyingNames": "Verifying names with AI",
+    "removingColumn": "Removing customer number column",
+    "extractingManifest": "Extracting manifest number",
+    "calculatingPrices": "Calculating prices (USA Air)",
+    "addingColumns": "Adding slCode and route columns",
+    "generatingResult": "Generating result"
+  },
+  "results": {
+    "totalRows": "Total rows",
+    "processed": "Processed",
+    "totalPrice": "Total price",
+    "manifest": "Manifest",
+    "corrections": "Corrections made",
+    "row": "Row"
+  },
+  "actions": {
+    "download": "Download processed CSV"
+  },
+  "features": {
+    "uppercase": "Tracking & names in UPPERCASE",
+    "aiVerification": "AI name verification",
+    "priceCalculation": "Automatic price calculation",
+    "csvExport": "CSV export"
+  },
+  "errors": {
+    "processingFailed": "Error processing file",
+    "invalidFile": "Invalid file",
+    "emptyFile": "Empty file"
+  },
+  "customerSearch_title": "Link Customer",
+  "customerSearch_manifestLabel": "Manifest:",
+  "customerSearch_closeAriaLabel": "Close dialog",
+  "customerSearch_searchPlaceholder": "Search by name, SL Code, ID, email, phone…",
+  "customerSearch_searchAriaLabel": "Search customer",
+  "customerSearch_learningSection": "Nova Learning — Approved Associations",
+  "customerSearch_aiSection": "AI Suggestions for \"{{name}}\"",
+  "customerSearch_aiLoading": "Searching AI suggestions…",
+  "customerSearch_searchResultsCount": "Search results ({{count}})",
+  "customerSearch_searching": "Searching…",
+  "customerSearch_noResults": "No results for \"{{query}}\"",
+  "customerSearch_typeToSearch": "Type at least 2 characters to search",
+  "customerSearch_cancel": "Cancel",
+  "customerSearch_approved_one": "Manually approved {{count}} time",
+  "customerSearch_approved_other": "Manually approved {{count}} times",
+  "copyCell_copy": "Copy",
+  "copyCell_copied": "Copied!",
+  "copyCell_ariaLabel": "Copy value to clipboard",
+  "copyCell_copiedAriaLive": "Value copied to clipboard",
+  "multiMatch_title_one": "{{count}} row requires review",
+  "multiMatch_title_other": "{{count}} rows require review",
+  "multiMatch_subtitle": "Open the table to assign customers",
+  "multiMatch_ariaLabel": "Customer match review required"
+}

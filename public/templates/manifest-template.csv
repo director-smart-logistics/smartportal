@@ -1,0 +1,6 @@
+Tracking Number,Weight,Description,Guia,Customer Name,Origin,Destination,Customer ID
+TRK001,2.5,Electronics shipment,AWB-2024-001,John Doe,Miami FL,New York NY,CUST001
+TRK002,1.8,Clothing package,AWB-2024-002,Jane Smith,Los Angeles CA,Chicago IL,CUST002
+TRK003,3.2,Furniture delivery,AWB-2024-003,Robert Johnson,Denver CO,Boston MA,CUST003
+TRK004,0.9,Office supplies,AWB-2024-004,Maria Garcia,Houston TX,Seattle WA,
+TRK005,2.1,Books shipment,AWB-2024-005,David Lee,Phoenix AZ,Portland OR,CUST005

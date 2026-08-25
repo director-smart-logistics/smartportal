@@ -1,0 +1,533 @@
+/** @import must precede all other statements */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
+
+/* Remove number input spinners (up/down arrows) globally */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Print styles for calculator invoice preview */
+@media print {
+  /* Hide everything except the invoice preview */
+  body * {
+    visibility: hidden;
+  }
+  
+  [data-print-invoice],
+  [data-print-invoice] * {
+    visibility: visible;
+  }
+  
+  [data-print-invoice] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  
+  /* Clean page */
+  @page {
+    margin: 1cm;
+    size: A4;
+  }
+  
+  /* Preserve colors */
+  * {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+}
+
+@layer base {
+  /**
+   * Row fade-in animation for tables
+   */
+  @keyframes fadeInRow {
+    from {
+      opacity: 0;
+      transform: translateY(-5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /**
+   * Hide number input spinners/arrows
+   */
+  .no-spinners::-webkit-outer-spin-button,
+  .no-spinners::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .no-spinners[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  /**
+   * Accessibility Utilities
+   * Screen reader only content that becomes visible on focus
+   */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  .sr-only:focus,
+  .sr-only:active {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: inherit;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
+  /**
+   * Smooth focus transitions
+   */
+  *:focus-visible {
+    transition: outline-offset 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  /**
+   * Performance optimization for data tables
+   */
+  .data-table-container {
+    will-change: transform;
+  }
+
+  .table-row {
+    contain: layout style;
+  }
+
+  /**
+   * Tailwind CSS theme - Monochromatic Black & White
+   * tailwind.config.ts expects the following color variables to be expressed as HSL values.
+   * A different format will require also updating the theme in tailwind.config.ts.
+  */
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+    --primary: 350 96% 32%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 100%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 100%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 95%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 350 96% 32%;
+    --radius: 0.5rem;
+    --manifest-brand: 350 96% 32%;
+    --manifest-brand-light: 350 96% 42%;
+    --manifest-brand-subtle: 350 40% 96%;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 0 0% 3.9%;
+    --sidebar-primary: 350 96% 32%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 0 0% 95%;
+    --sidebar-accent-foreground: 0 0% 9%;
+    --sidebar-border: 0 0% 89.8%;
+    --sidebar-ring: 0 0% 3.9%;
+  }
+
+  .dark {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 350 80% 50%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+    --ring: 350 80% 60%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    --manifest-brand: 350 80% 50%;
+    --manifest-brand-light: 350 80% 60%;
+    --manifest-brand-subtle: 350 40% 12%;
+    --sidebar-background: 0 0% 3.9%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-primary: 350 80% 50%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 0 0% 14.9%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 0 0% 14.9%;
+    --sidebar-ring: 0 0% 83.1%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Google Sans Flex", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    font-optical-sizing: auto;
+  }
+
+  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  pre,
+  code {
+    overflow-x: auto;
+    white-space: pre;
+  }
+}
+
+/* ── Nova composer pill: light gray border + gradient glow shadow ─────────── */
+.nova-composer {
+  border: 1.5px solid #dadce0;
+  box-shadow:
+    0 2px 8px -2px rgba(31, 31, 31, 0.14),
+    0 4px 20px -4px rgba(168, 0, 16, 0.28);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.nova-composer:focus-within {
+  border-color: #c6cacd;
+  box-shadow:
+    0 2px 10px -2px rgba(31, 31, 31, 0.16),
+    0 6px 28px -4px rgba(232, 21, 45, 0.42);
+}
+
+/* ── Nova send button: gradient + shimmer sweep ──────────────────────────── */
+.nova-send-btn {
+  overflow: hidden;
+  background: #7a000e;
+  color: #ffffff;
+}
+
+.nova-send-btn::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -80%;
+  width: 55%;
+  height: 200%;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.38) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: skewX(-18deg);
+  animation: nova-shimmer 2.4s ease-in-out infinite;
+}
+
+@keyframes nova-shimmer {
+  0%   { left: -80%; }
+  55%  { left: 130%; }
+  100% { left: 130%; }
+}
+
+.nova-send-btn:hover {
+  filter: brightness(1.12);
+}
+
+/* ── Nova quick-action chips: light gray border ───────────────────────────── */
+.nova-chip {
+  border: 1.5px solid #dadce0;
+  background-color: #ffffff;
+  box-shadow:
+    0 2px 8px -2px rgba(31, 31, 31, 0.14),
+    0 4px 20px -4px rgba(168, 0, 16, 0.28);
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.nova-chip:hover:not(:disabled) {
+  background-color: #f1f3f4;
+  border-color: #c6cacd;
+}
+
+/* Print Styles */
+@media print {
+  /* Hide everything except the invoice preview */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Show only the invoice preview card and its children */
+  [data-testid="invoice-preview"],
+  [data-testid="invoice-preview"] * {
+    visibility: visible;
+  }
+  
+  /* Position invoice preview at the top with minimal margins */
+  [data-testid="invoice-preview"] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0.5cm !important;
+    margin: 0 !important;
+  }
+  
+  /* Remove shadows and borders for cleaner print */
+  [data-testid="invoice-preview"] {
+    box-shadow: none !important;
+    border: none !important;
+  }
+  
+  /* Optimize page breaks */
+  [data-testid="invoice-preview"] {
+    page-break-inside: avoid;
+  }
+  
+  /* Hide print button itself */
+  .print\\:hidden {
+    display: none !important;
+  }
+  
+  /* Minimal page margins for wider content */
+  @page {
+    margin: 0.5cm;
+  }
+}
+
+/* ── Global surface override: pure white backgrounds ────────────────────────
+   Forces all common off-white surface classes to render as pure white.
+   This applies to page wrappers, modals, dialogs, sheets, popovers, and cards
+   without touching intentional colored UI elements (badges, status chips, etc.)
+──────────────────────────────────────────────────────────────────────────── */
+@layer utilities {
+  /* Navbar ghost trigger: dark red hover with opacity leaning to black */
+  .nav-ghost-hover:hover,
+  .nav-ghost-hover[data-state="open"] {
+    background-color: hsl(350 96% 15% / 0.10);
+    color: hsl(var(--primary));
+  }
+
+  /* Dropdown NavLink item: subtle brand red tint on hover */
+  .nav-item-brand-hover:hover {
+    background-color: hsl(350 96% 15% / 0.07);
+    color: hsl(var(--primary));
+  }
+  .nav-item-brand-hover:hover .nav-item-icon {
+    color: hsl(var(--primary));
+  }
+
+  .bg-gray-50,
+  .bg-slate-50,
+  .bg-zinc-50,
+  .bg-neutral-50,
+  .bg-stone-50 {
+    --tw-bg-opacity: 1;
+    background-color: rgb(255 255 255 / var(--tw-bg-opacity)) !important;
+  }
+
+  .bg-slate-100,
+  .bg-gray-100,
+  .bg-zinc-100,
+  .bg-neutral-100 {
+    --tw-bg-opacity: 1;
+    background-color: rgb(255 255 255 / var(--tw-bg-opacity)) !important;
+  }
+
+  /* Dialog / Sheet / Modal overlay content areas */
+  [role="dialog"] > div {
+    background-color: white;
+  }
+}
+
+/* Spotlight Card Glow Effects */
+@layer components {
+  .spotlight-card {
+    position: relative;
+    background: linear-gradient(to bottom right, hsl(var(--border)), hsl(var(--border) / 0.5));
+  }
+  
+  .spotlight-card:hover {
+    background: linear-gradient(
+      135deg,
+      hsl(var(--border)),
+      hsl(var(--primary) / 0.2),
+      hsl(var(--border))
+    );
+    animation: border-glow 3s ease-in-out infinite;
+  }
+
+  @keyframes border-glow {
+    0%, 100% {
+      filter: brightness(1) drop-shadow(0 0 8px hsl(var(--primary) / 0.5));
+    }
+    50% {
+      filter: brightness(1.2) drop-shadow(0 0 16px hsl(var(--primary) / 0.8));
+    }
+  }
+
+  /* Enhanced shadow utilities for colored glows */
+  .hover\:shadow-blue-500\/50:hover {
+    box-shadow: 0 20px 25px -5px rgb(59 130 246 / 0.3), 0 8px 10px -6px rgb(59 130 246 / 0.3);
+  }
+
+  .hover\:shadow-green-500\/50:hover {
+    box-shadow: 0 20px 25px -5px rgb(34 197 94 / 0.3), 0 8px 10px -6px rgb(34 197 94 / 0.3);
+  }
+
+  .hover\:shadow-emerald-500\/50:hover {
+    box-shadow: 0 20px 25px -5px rgb(16 185 129 / 0.3), 0 8px 10px -6px rgb(16 185 129 / 0.3);
+  }
+
+  .hover\:shadow-orange-500\/50:hover {
+    box-shadow: 0 20px 25px -5px rgb(249 115 22 / 0.3), 0 8px 10px -6px rgb(249 115 22 / 0.3);
+  }
+
+  .hover\:shadow-primary\/50:hover {
+    box-shadow: 0 20px 25px -5px hsl(var(--primary) / 0.3), 0 8px 10px -6px hsl(var(--primary) / 0.3);
+  }
+
+  /* Clockwise Marching Ants for Unlinked Badges */
+  @keyframes marching-ants-clockwise {
+    from {
+      stroke-dashoffset: 0;
+    }
+    to {
+      stroke-dashoffset: -14;
+    }
+  }
+
+  .animate-marching-ants {
+    stroke-dasharray: 4 3;
+    animation: marching-ants-clockwise 1.2s linear infinite;
+  }
+
+  /* Custom Scrollbar Utilities */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-thumb-gray-300::-webkit-scrollbar-thumb {
+    background-color: rgb(209 213 219);
+    border-radius: 9999px;
+  }
+
+  .dark .scrollbar-thumb-gray-600::-webkit-scrollbar-thumb {
+    background-color: rgb(75 85 99);
+    border-radius: 9999px;
+  }
+
+  .scrollbar-track-transparent::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  /* Hover effect on scrollbar */
+  .scrollbar-thumb-gray-300::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(156 163 175);
+  }
+
+  .dark .scrollbar-thumb-gray-600::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(55 65 81);
+  }
+}
+
+/* Print Styles for Payslip */
+@media print {
+  /* Hide everything by default */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Show only payslip content */
+  #payslip-content,
+  #payslip-content * {
+    visibility: visible !important;
+  }
+  
+  /* Position payslip at top of page */
+  #payslip-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+  }
+  
+  /* Force black text and white background */
+  #payslip-content * {
+    color: black !important;
+    background-color: transparent !important;
+  }
+  
+  #payslip-content {
+    background-color: white !important;
+  }
+  
+  /* Ensure borders are visible */
+  #payslip-content .border-black {
+    border-color: black !important;
+  }
+  
+  #payslip-content .border-gray-200,
+  #payslip-content .border-gray-300 {
+    border-color: #d1d5db !important;
+  }
+  
+  /* Ensure background colors for table rows */
+  #payslip-content .bg-gray-100 {
+    background-color: #f3f4f6 !important;
+  }
+  
+  /* Page setup */
+  @page {
+    size: A4;
+    margin: 2cm;
+  }
+}

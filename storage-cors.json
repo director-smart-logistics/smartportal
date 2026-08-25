@@ -1,0 +1,23 @@
+[
+  {
+    "origin": [
+      "https://portal.smartlogisticscr.com",
+      "https://smart-portal-admin.web.app",
+      "https://smart-portal-admin.firebaseapp.com",
+      "http://localhost:5173",
+      "http://localhost:8080"
+    ],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Disposition",
+      "Content-Length",
+      "Range",
+      "Accept-Ranges",
+      "Authorization",
+      "x-goog-resumable",
+      "x-firebase-storage-version"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

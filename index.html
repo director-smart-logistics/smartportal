@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" prefix="og: https://ogp.me/ns#">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- Font preconnects (must be early in head for performance) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Google Sans Flex with display=swap and non-blocking load -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,100..1000&display=swap" />
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,100..1000&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+    <noscript>
+      <link href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,100..1000&display=swap" rel="stylesheet" />
+    </noscript>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    
+    <title>SmartLogistics | Logistics Management Platform</title>
+    <meta name="description" content="SmartLogistics - Complete logistics management platform for courier and shipping operations" />
+    <meta name="keywords" content="logistics, shipping, software, tracking, manifest, invoice, courier, delivery" />
+    <meta name="author" content="Joshua Briceno - FuseFlows.IO" />
+    <meta name="theme-color" content="#000000" />
+    
+    <!-- Prevent index.html from being cached so stale chunk URLs never break after a deploy -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
+    <!-- Security Policies (X-Frame-Options, X-Content-Type-Options, X-XSS-Protection set via server headers) -->
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
+    <meta http-equiv="Permissions-Policy" content="geolocation=(), microphone=(), camera=()" />
+    
+    <meta property="og:title" content="SmartLogistics | Logistics Management Platform" />
+    <meta property="og:description" content="SmartLogistics - Complete logistics management platform for courier and shipping operations" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://portal.smartlogisticscr.com" />
+    <meta property="og:image" content="https://portal.smartlogisticscr.com/images/logo.png" />
+    <meta property="og:image:alt" content="SmartLogistics - Logistics Management Platform" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:creator" content="@smartlogistics" />
+    <meta name="twitter:site" content="@smartlogistics" />
+    <meta name="twitter:title" content="SmartLogistics | Logistics Management Platform" />
+    <meta name="twitter:description" content="SmartLogistics - Complete logistics management platform for courier and shipping operations" />
+    <meta name="twitter:image" content="https://portal.smartlogisticscr.com/images/logo.png" />
+    <meta name="robots" content="index, follow" />
+  </head>
+
+  <body>
+    <div id="root" data-testid="root"></div>
+
+    <!-- sr seo optimizations -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "SmartLogistics",
+        "url": "https://portal.smartlogisticscr.com",
+        "description": "SmartLogistics - Complete logistics management platform for courier and shipping operations"
+      }
+    </script>
+    <!-- ChunkLoadError guard: auto-reload once when a JS chunk fails to load after a deploy -->
+    <script>
+      (function () {
+        var RELOAD_KEY = 'sl_chunk_reload';
+        function tryReload() {
+          if (!sessionStorage.getItem(RELOAD_KEY)) {
+            sessionStorage.setItem(RELOAD_KEY, '1');
+            window.location.reload();
+          }
+        }
+        window.addEventListener('error', function (e) {
+          var msg = (e && e.message) || '';
+          if (msg.indexOf('Failed to fetch dynamically imported module') !== -1 ||
+              msg.indexOf('Importing a module script failed') !== -1 ||
+              msg.indexOf('Expected a JavaScript') !== -1) {
+            tryReload();
+          }
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var msg = (e && e.reason && e.reason.message) || '';
+          if (msg.indexOf('Failed to fetch dynamically imported module') !== -1) {
+            tryReload();
+          }
+        });
+        // Clear the reload flag on successful page load so future deploys can retry
+        window.addEventListener('load', function () {
+          sessionStorage.removeItem(RELOAD_KEY);
+        });
+      })();
+    </script>
+    <script type="module" src="/client/App.tsx"></script>
+  </body>
+</html>

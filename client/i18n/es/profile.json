@@ -1,0 +1,23 @@
+{
+  "title": "Perfil",
+  "myProfile": "Mi Perfil",
+  "editProfile": "Editar Perfil",
+  "personalInfo": "Información Personal",
+  "fullName": "Nombre Completo",
+  "email": "Correo Electrónico",
+  "phone": "Número de Teléfono",
+  "role": "Rol",
+  "joinedDate": "Se Unió",
+  "changePassword": "Cambiar Contraseña",
+  "currentPassword": "Contraseña Actual",
+  "newPassword": "Nueva Contraseña",
+  "confirmNewPassword": "Confirmar Nueva Contraseña",
+  "updateSuccess": "Perfil actualizado exitosamente",
+  "passwordChangeSuccess": "Contraseña cambiada exitosamente",
+  "invalidPassword": "La contraseña actual es incorrecta",
+  "personalDetails": "Detalles Personales",
+  "address": "Dirección",
+  "city": "Ciudad",
+  "country": "País",
+  "zipCode": "Código Postal"
+}

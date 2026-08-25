@@ -1,0 +1,174 @@
+{
+  "hubs": [
+    {
+      "id": "miami",
+      "country": "Estados Unidos",
+      "countryCode": "US",
+      "city": "Miami",
+      "state": "FL",
+      "name": "Miami Address",
+      "icon": "mapPin",
+      "description": "Dirección principal para compras en Estados Unidos",
+      "hub": "MIAMI HUB",
+      "shippingMethods": {
+        "air": {
+          "name": "Aéreo",
+          "address": {
+            "line1": "8455 NW 68TH ST",
+            "city": "Doral",
+            "state": "Florida",
+            "zip": "33195-2865",
+            "country": "USA",
+            "phone": "786 615 2467"
+          },
+          "instructions": {
+            "es": "Envío rápido por avión (3-7 días). Usa esta dirección exacta. Tu nombre debe incluir tu código SL.",
+            "en": "Fast air shipping (3-7 days). Use this exact address. Your name must include your SL code."
+          }
+        },
+        "sea": {
+          "name": "Marítimo",
+          "address": {
+            "line1": "6305 NW 99 AVENUE",
+            "city": "Doral",
+            "state": "Florida",
+            "zip": "33178",
+            "country": "USA",
+            "phone": "305 477 1005"
+          },
+          "instructions": {
+            "es": "Envío económico por contenedor (15-30 días). Ideal para pedidos grandes. Tu nombre debe incluir tu código SL.",
+            "en": "Economical sea shipping (15-30 days). Ideal for large orders. Your name must include your SL code."
+          }
+        }
+      },
+      "active": true,
+      "priority": 1
+    },
+    {
+      "id": "china",
+      "country": "China",
+      "countryCode": "CN",
+      "city": "Guangzhou",
+      "state": "Cantón",
+      "name": "China Address",
+      "icon": "mapPin",
+      "description": "Dirección para compras en China (Aliexpress, Taobao, etc.)",
+      "hub": "CHINA HUB",
+      "shippingMethods": {
+        "air": {
+          "name": "Aéreo",
+          "address": {
+            "line1": "Warehouse 9, n. 46, Huangbangling Oeste 2a street Renhe",
+            "district": "Baiyun",
+            "state": "Cantón",
+            "zip": "510400",
+            "country": "China",
+            "contact": "Sra. Yin: +18148635554"
+          },
+          "instructions": {
+            "es": "Envío rápido por avión (5-10 días). Incluye tu código SL en el nombre del destinatario.",
+            "en": "Fast air shipping (5-10 days). Include your SL code in the recipient name."
+          }
+        },
+        "sea": {
+          "name": "Marítimo",
+          "address": {
+            "line1": "Almacén B04-B05, n.° 2003, Hulin Road, subdistrito de Yunpu, distrito de Huangpu",
+            "city": "Guangzhou",
+            "entity": "Guangzhou Guoli Tongyun Logistics Co., Ltd.",
+            "contact": "Sr. Hu +86 136 9099 2654 / Sr. Zhou +86 13923785770",
+            "phone": "+86 136 9099 2654",
+            "hours": "8:00-12:00, 14:00-18:00",
+            "notes": "Requiere factura para generar código QR antes del envío",
+            "country": "China"
+          },
+          "instructions": {
+            "es": "Envío económico por contenedor (20-40 días). Ideal para compras grandes. Incluye tu código SL.",
+            "en": "Economical sea shipping (20-40 days). Ideal for large purchases. Include your SL code."
+          }
+        },
+        "replicas": {
+          "name": "Réplicas",
+          "address": {
+            "line1": "广州市白云区机 场路 2721 号广花 货场内 M 区",
+            "city": "Guangzhou",
+            "district": "Baiyun",
+            "state": "Cantón",
+            "country": "China",
+            "contact": "冠誉 (Guanyu)",
+            "phone": "19926550381",
+            "notes": "Dirección exclusiva para envío de réplicas. Contactar agente antes de enviar."
+          },
+          "instructions": {
+            "es": "Dirección especial para réplicas. Solo usar para productos tipo réplica.",
+            "en": "Special address for replicas. Only use for replica-type products."
+          }
+        }
+      },
+      "active": true,
+      "priority": 2
+    },
+    {
+      "id": "colombia",
+      "country": "Colombia",
+      "countryCode": "CO",
+      "city": "Bogotá",
+      "state": "Bogotá D.C.",
+      "name": "Colombia Address",
+      "icon": "mapPin",
+      "description": "Dirección para compras en Colombia",
+      "hub": "BOGOTA HUB",
+      "shippingMethods": {
+        "air": {
+          "name": "Aéreo",
+          "address": {
+            "line1": "Parque Empresarial El Dorado-Trv. 93 #53-32",
+            "line2": "Bodega 73 - LTD EXPRESS",
+            "city": "Bogotá",
+            "country": "Colombia"
+          },
+          "instructions": {
+            "es": "MARCAR LA CAJA: SL + Smart ID + Nombre del cliente. Envío rápido por avión (4-8 días).",
+            "en": "MARK THE BOX: SL + Smart ID + Customer Name. Fast air shipping (4-8 days)."
+          }
+        }
+      },
+      "active": true,
+      "priority": 3
+    },
+    {
+      "id": "mexico",
+      "country": "México",
+      "countryCode": "MX",
+      "city": "Venustiano Carranza",
+      "state": "Ciudad de México",
+      "name": "Mexico Address",
+      "icon": "mapPin",
+      "description": "Dirección para compras en México",
+      "hub": "MEXICO HUB",
+      "shippingMethods": {
+        "air": {
+          "name": "Aéreo",
+          "address": {
+            "line1": "Secretaría del Trabajo 211",
+            "reference": "Edificio C, Dep 103",
+            "neighborhood": "4 Árboles",
+            "city": "Venustiano Carranza",
+            "state": "Ciudad de México",
+            "zip": "15730",
+            "country": "México",
+            "rfc": "DECJ680516CI5",
+            "phone": "5539286038"
+          },
+          "instructions": {
+            "es": "Envío rápido por avión (3-6 días). No olvides agregar tu código SL al nombre del destinatario.",
+            "en": "Fast air shipping (3-6 days). Don't forget to add your SL code to the recipient name."
+          }
+        }
+      },
+      "active": true,
+      "priority": 4
+    }
+  ]
+}

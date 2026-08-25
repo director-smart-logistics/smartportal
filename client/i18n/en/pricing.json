@@ -1,0 +1,58 @@
+{
+  "title": "Pricing Configuration",
+  "subtitle": "Configure pricing for different branches and delivery types",
+  "branch": "Branch",
+  "deliveryType": "Delivery Type",
+  "category": "Category",
+  "branches": {
+    "mexico": "Mexico",
+    "china": "China",
+    "colombia": "Colombia",
+    "other": "Other"
+  },
+  "deliveryTypes": {
+    "air": "Air",
+    "sea": "Sea",
+    "local": "Local Delivery"
+  },
+  "categories": {
+    "regular": "Regular Items",
+    "restricted": "Restricted Items",
+    "electronics": "Electronics"
+  },
+  "regularItems": {
+    "title": "Regular Items",
+    "description": "Clothing, shoes, accessories, decorations, jewelry, toys, and other general items",
+    "tier1": "0g - 499g",
+    "tier2": "500g - 1kg",
+    "perKg": "Per additional kg"
+  },
+  "restrictedItems": {
+    "title": "Restricted Items",
+    "description": "Cosmetics, medications, supplements, food, and other regulated items",
+    "basePrice": "Base Price",
+    "trackingFee": "Tracking Fee",
+    "perKg": "Per additional kg",
+    "note": "Restricted items require additional tracking fee per package"
+  },
+  "electronics": {
+    "title": "Electronics",
+    "description": "Computers, screens, phones, tablets, watches, cameras, consoles, and other electronics",
+    "requiresQuote": "Requires Custom Quote",
+    "chargePerTracking": "Charge per tracking (no consolidation)",
+    "contactCustomer": "Contact customer service for pricing",
+    "note": "Electronics are quoted individually and charged per tracking number"
+  },
+  "weightTiers": "Weight Tiers",
+  "pricing": "Pricing",
+  "savePricing": "Save Pricing Configuration",
+  "pricingSaved": "Pricing configuration saved successfully",
+  "pricingError": "Failed to save pricing configuration",
+  "loadingPricing": "Loading pricing configuration...",
+  "seedDefaultPricing": "Seed Default Pricing",
+  "seedSuccess": "Default pricing seeded successfully",
+  "seedError": "Failed to seed default pricing",
+  "confirmSeed": "Are you sure you want to seed default pricing? This will reset all pricing to default values.",
+  "priceLabel": "Price (USD)",
+  "enterPrice": "Enter price"
+}

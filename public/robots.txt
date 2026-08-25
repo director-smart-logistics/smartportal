@@ -1,0 +1,21 @@
+User-agent: *
+Disallow: /dashboard
+Disallow: /api
+Disallow: /_next
+Disallow: /admin
+Disallow: /auth
+Disallow: /profile
+Disallow: /search
+Disallow: /user
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Twitterbot
+Allow: /
+
+User-agent: facebookexternalhit
+Allow: /

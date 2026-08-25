@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codebase-memory": {
+      "command": "/Users/jbricenoz/.local/bin/codebase-memory-mcp",
+      "args": []
+    }
+  }
+}

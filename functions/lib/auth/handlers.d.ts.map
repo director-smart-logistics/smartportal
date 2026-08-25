@@ -1,0 +1,1 @@
+{"version":3,"file":"handlers.d.ts","sourceRoot":"","sources":["../../src/auth/handlers.ts"],"names":[],"mappings":"AAEA,OAAO,EAAE,QAAQ,EAAE,MAAM,UAAU,CAAC;AAEpC;;;GAGG;AACH,eAAO,MAAM,gBAAgB;;;;YAsI5B,CAAC;AAEF;;GAEG;AACH,eAAO,MAAM,YAAY;;;;;;;;;;YA2BxB,CAAC;AAEF;;GAEG;AACH,eAAO,MAAM,iBAAiB;;;YAe7B,CAAC;AAEF;;GAEG;AACH,eAAO,MAAM,aAAa;YAEkB,MAAM;UAAQ,QAAQ;;;;;YA8BjE,CAAC"}

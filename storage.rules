@@ -1,0 +1,114 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        request.auth.token.role in ['SUPER_ADMIN', 'ADMIN'];
+    }
+    
+    function isAgent() {
+      return isAuthenticated() && 
+        request.auth.token.role in ['SUPER_ADMIN', 'ADMIN', 'AGENT'];
+    }
+    
+    function isDelivery() {
+      return isAuthenticated() && 
+        request.auth.token.role in ['SUPER_ADMIN', 'ADMIN', 'AGENT', 'DELIVERY'];
+    }
+    
+    function isValidFileSize(maxSizeMB) {
+      return request.resource.size < maxSizeMB * 1024 * 1024;
+    }
+    
+    function isValidImageType() {
+      return request.resource.contentType.matches('image/.*');
+    }
+    
+    function isValidPdfType() {
+      return request.resource.contentType == 'application/pdf';
+    }
+    
+    // Invoice PDFs
+    match /invoices/{invoiceId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAgent() && isValidPdfType() && isValidFileSize(10);
+      allow delete: if isAdmin();
+    }
+    
+    // Quote PDFs
+    match /quotes/{quoteId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAgent() && isValidPdfType() && isValidFileSize(10);
+      allow delete: if isAdmin();
+    }
+    
+    // Delivery photos
+    match /deliveries/{deliveryId}/photos/{photoId} {
+      allow read: if isAuthenticated();
+      allow write: if isDelivery() && isValidImageType() && isValidFileSize(5);
+      allow delete: if isAdmin();
+    }
+    
+    // Route sessions photos (odometer, fuel, etc.)
+    match /route_sessions/{date}/{sessionId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isDelivery() && isValidImageType() && isValidFileSize(5);
+      allow delete: if isAdmin();
+    }
+    
+    // Package documents
+    match /packages/{packageId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAgent() && isValidFileSize(10);
+      allow delete: if isAdmin();
+    }
+    
+    // Manifest files
+    match /manifests/{manifestId}/{fileName} {
+      allow read: if isAgent();
+      allow write: if isAgent() && isValidFileSize(50);
+      allow delete: if isAdmin();
+    }
+    
+    // MLocker manifests (downloaded from mayoristas.milocker.net via proxy)
+    // Server-side proxy uses Admin SDK (bypasses rules). Client-side MEGA-MAN
+    // fusion uploads use the regular SDK, so agents need write permission here.
+    match /MLCARGO/{date}/{fileName} {
+      allow read: if isAgent();
+      allow write: if isAgent() && isValidFileSize(20);
+      allow delete: if isAdmin();
+    }
+    
+    // User avatars
+    match /users/{userId}/avatar/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && 
+        request.auth.uid == userId && 
+        isValidImageType() && 
+        isValidFileSize(2);
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Company assets (logos, etc.)
+    match /assets/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidFileSize(5);
+      allow delete: if isAdmin();
+    }
+    
+    // Temporary uploads (for processing)
+    match /temp/{userId}/{fileName} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && 
+        request.auth.uid == userId && 
+        isValidFileSize(50);
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+  }
+}

@@ -1,0 +1,1 @@
+export { slMLockerProxy } from './proxy';

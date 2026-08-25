@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="x-apple-disable-message-reformatting">
+    <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+    <title>Recibo de Envío - SmartLogistics</title>
+    <style type="text/css">
+        body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+        table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+        img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+        body { height: 100% !important; margin: 0 !important; padding: 0 !important; width: 100% !important; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        
+        @media only screen and (max-width: 620px) {
+            .main { width: 100% !important; }
+            .header-table { padding: 16px 12px !important; }
+            .mobile-stack { display: block !important; width: 100% !important; }
+            .items-table td, .items-table th { padding: 8px 6px !important; font-size: 10px !important; }
+            .invoice-info-table { width: auto !important; }
+        }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8fafc;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f1f5f9;">
+        <tr>
+            <td align="center" style="padding: 24px 16px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" width="600" class="main" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);">
+                    
+                    <tr>
+                        <td class="header-table" style="padding: 30px 24px 20px 24px; border-bottom: 2px solid #e2e8f0;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                                <tr>
+                                    <td width="50%" valign="top" class="mobile-stack" style="padding-bottom: 10px;">
+                                        <img src="https://smart-portal-admin.web.app/logo-inv.png" alt="SmartLogistics" width="140" style="display: block; border: 0; width: 140px; max-width: 140px; height: auto;">
+                                    </td>
+                                    <td width="50%" valign="top" align="right" class="mobile-stack" style="text-align: right;">
+                                        <div style="font-size: 22px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px; line-height: 1; margin-bottom: 4px; text-align: right;">TIQUETE ELECTRÓNICO</div>
+                                        {{CONSOLIDATION_BADGE}}
+                                        <table role="presentation" cellpadding="0" cellspacing="0" align="right" class="invoice-info-table">
+                                            <tr>
+                                                <td style="font-size: 11px; color: #64748b; padding: 2px 12px 2px 0; text-align: left;">N° Recibo:</td>
+                                                <td style="font-size: 11px; font-weight: 700; color: #0f172a; padding: 2px 0; font-family: ui-monospace, monospace;">{{INVOICE_NUMBER}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="font-size: 11px; color: #64748b; padding: 2px 12px 2px 0; text-align: left;">Fecha:</td>
+                                                <td style="font-size: 11px; font-weight: 600; color: #0f172a; padding: 2px 0;">{{INVOICE_DATE}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="font-size: 11px; color: #64748b; padding: 2px 12px 2px 0; text-align: left;">Pago:</td>
+                                                <td style="font-size: 11px; font-weight: 600; color: #0f172a; padding: 2px 0;">DE CONTADO</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="font-size: 11px; color: #64748b; padding: 2px 12px 2px 0; text-align: left;">Estado:</td>
+                                                <td style="padding: 2px 0;">
+                                                    <span style="display: inline-block; background-color: {{STATUS_BG_COLOR}}; color: {{STATUS_TEXT_COLOR}}; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 4px; text-transform: uppercase;">{{STATUS_LABEL}}</span>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <tr>
+                        <td style="padding: 20px 24px 0 24px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+                                <tr>
+                                    <td style="padding: 16px;">
+                                        <div style="font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;">Información del Cliente</div>
+                                        <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                                            <tr>
+                                                <td width="50%" valign="top" class="mobile-stack" style="padding-bottom: 8px;">
+                                                    <div style="font-size: 11px; color: #64748b;">Nombre:</div>
+                                                    <div style="font-size: 13px; font-weight: 600; color: #0f172a;">{{CUSTOMER_NAME}}</div>
+                                                </td>
+                                                <td width="50%" valign="top" class="mobile-stack" style="padding-bottom: 8px;">
+                                                    <div style="font-size: 11px; color: #64748b;">Email:</div>
+                                                    <div style="font-size: 13px; font-weight: 600; color: #0f172a;">{{CUSTOMER_EMAIL}}</div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td width="50%" valign="top" class="mobile-stack">
+                                                    <div style="font-size: 11px; color: #64748b;">SmartId:</div>
+                                                    <div style="font-size: 13px; font-weight: 600; color: #0f172a;">{{CUSTOMER_DNI}}</div>
+                                                </td>
+                                                <td width="50%" valign="top" class="mobile-stack">
+                                                    <div style="font-size: 11px; color: #64748b;">Ruta:</div>
+                                                    <div style="font-size: 13px; font-weight: 600; color: #0f172a;">{{CUSTOMER_ADDRESS}}</div>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    {{PERMIT_DISCLAIMER}}
+
+                    <tr>
+                        <td style="padding: 20px 24px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" class="items-table" style="border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="background-color: #0f172a; color: #ffffff; padding: 12px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; border-radius: 6px 0 0 0;">Descripción</th>
+                                        <th style="background-color: #0f172a; color: #ffffff; padding: 12px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;">Volumen</th>
+                                        <th style="background-color: #0f172a; color: #ffffff; padding: 12px; text-align: right; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; border-radius: 0 6px 0 0;">Precio</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {{ITEMS_ROWS}}
+                                </tbody>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <tr>
+                        <td style="padding: 0 24px 20px 24px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" width="240" align="right" class="totals-table" style="max-width: 240px;">
+                                <tr>
+                                    <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;">
+                                        <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                                            <tr>
+                                                <td style="font-size: 12px; font-weight: 600; color: #475569;">Subtotal:</td>
+                                                <td align="right" style="font-size: 12px; font-weight: 700; color: #0f172a;">{{CURRENCY_SYMBOL}}{{SUBTOTAL}}</td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                {{DISCOUNT_ROW}}
+                                {{TAX_ROW}}
+                                <tr>
+                                    <td style="padding-top: 8px;">
+                                        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0f172a; border-radius: 6px;">
+                                            <tr>
+                                                <td style="padding: 12px; font-size: 14px; font-weight: 800; color: #ffffff;">TOTAL:</td>
+                                                <td align="right" style="padding: 12px; font-size: 14px; font-weight: 800; color: #ffffff;">{{CURRENCY_SYMBOL}}{{TOTAL}}</td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                {{TC_CRC_ROW}}
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <tr>
+                        <td style="padding: 0 24px 20px 24px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+                                <tr>
+                                    <td style="padding: 16px;">
+                                        <div style="font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;">🏦 Información de Pago</div>
+                                        <div style="font-size: 12px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">DA SMART LOGISTICS</div>
+                                        <div style="font-size: 11px; color: #475569;">Ced. Jur. 3102843818</div>
+                                        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top: 12px;">
+                                            <tr>
+                                                <td style="font-size: 11px; color: #475569; padding: 2px 0;"><strong>BAC Colones:</strong> CR17010200009534930951</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="font-size: 11px; color: #475569; padding: 2px 0;"><strong>BAC Dólares:</strong> CR75010200009534930877</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="font-size: 11px; color: #475569; padding: 2px 0;"><strong>SINPE Móvil:</strong> 7105-7790</td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    {{NOTES_ROW}}
+
+                    <tr>
+                        <td style="padding: 0 24px 20px 24px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px;">
+                                <tr>
+                                    <td style="padding: 16px;">
+                                        <div style="font-size: 10px; font-weight: 800; color: #92400e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;">⚠️ Condiciones de Servicio</div>
+                                        <div style="font-size: 11px; color: #78350f; line-height: 1.6;">
+                                            • En caso de consolidación se otorgan dos semanas o bien 10 paquetes máximo, acorde a los términos y condiciones de la página.<br>
+                                            • En Caso de no ser recibido el paquete en ruta podria devengar costos de bodegaje ver terminos y condiciones.<br>
+                                            • En caso de encomienda, los envíos se realizan con el corte de las 4PM del día en que se envía la factura; posterior a eso, todo lo que se cancela se asigna a la próxima ruta hábil.<br>
+                                            • Los paquetes con permiso de importación <strong>no se consolidan</strong> y se facturan de forma individual.<br><br>
+                                            <strong>Métodos aceptados:</strong> Transferencia bancaria, SINPE Móvil o Efectivo.<br><br>
+                                            Para más detalles sobre términos y condiciones ingresa a nuestra página web: <a href="https://www.smartlogisticscr.com/terms" target="_blank" rel="noopener noreferrer" style="color: #92400e; font-weight: 700;">www.smartlogisticscr.com/terms</a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="padding: 0 24px 20px 24px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fef2f2; border: 1px solid #ef4444; border-radius: 8px;">
+                                <tr>
+                                    <td style="padding: 16px;">
+                                        <div style="font-size: 11px; color: #991b1b; line-height: 1.5;">
+                                            <strong>ℹ️ Comparta su comprobante:</strong> Es importante que comparta su comprobante de pago para confirmación ya sea en el WhatsApp de ruta de entrega o el WhatsApp de facturación <strong>7105-7790</strong>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="padding: 20px 24px; background-color: #f8fafc; border-top: 2px solid #e2e8f0; text-align: center;">
+                            <div style="font-size: 13px; font-weight: 600; color: #0f172a; margin-bottom: 8px;">¡Gracias por confiar en SmartLogistics!</div>
+                            <div style="font-size: 11px; color: #64748b; margin-bottom: 4px;">SmartLogistics Premium Courier Service | Miami, FL | San José, Costa Rica</div>
+                            <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">www.smartlogisticscr.com | info@smartlogisticscr.com</div>
+                            <div style="font-size: 10px; color: #94a3b8; font-style: italic; margin-bottom: 4px;">Este documento fue generado electrónicamente y es válido sin firma física.</div>
+                            <div style="font-size: 9px; color: #94a3b8; font-style: italic;">Este documento no es una factura digital, ni es válida para efectos tributarios.</div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+        <tr>
+            <td align="center" style="padding: 16px;">
+                <div style="font-size: 10px; color: #94a3b8; text-align: center;">Este es un correo transaccional relacionado con tu factura. No es necesario darse de baja.</div>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

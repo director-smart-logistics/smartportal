@@ -1,0 +1,32 @@
+{
+  "title": "Filters",
+  "required": "Required",
+  "description": "Apply at least one filter to search packages. This helps manage large datasets efficiently.",
+  "manifestNumber": "Manifest Number",
+  "manifestPlaceholder": "Search manifest...",
+  "type": "Type",
+  "selectType": "Select type",
+  "dateFrom": "Date From",
+  "dateTo": "Date To",
+  "dateRange": "Date Range",
+  "selectDateRange": "Select date range...",
+  "today": "Today",
+  "yesterday": "Yesterday",
+  "thisWeek": "This Week",
+  "selectDate": "Select date...",
+  "custom": "Custom",
+  "search": "Search",
+  "clear": "Clear",
+  "applyToLoad": "Configure filters and click Search to load packages",
+  "atLeastOneRequired": "Please apply at least one filter before searching",
+  "noResults": "No packages found with the applied filters",
+  "loading": "Loading packages...",
+  "activeFilters": "Active Filters",
+  "types": {
+    "air": "Air",
+    "sea": "Sea",
+    "freight": "Freight",
+    "local": "Local",
+    "other": "Other"
+  }
+}

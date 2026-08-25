@@ -1,0 +1,23 @@
+{
+  "title": "Profile",
+  "myProfile": "My Profile",
+  "editProfile": "Edit Profile",
+  "personalInfo": "Personal Information",
+  "fullName": "Full Name",
+  "email": "Email Address",
+  "phone": "Phone Number",
+  "role": "Role",
+  "joinedDate": "Joined",
+  "changePassword": "Change Password",
+  "currentPassword": "Current Password",
+  "newPassword": "New Password",
+  "confirmNewPassword": "Confirm New Password",
+  "updateSuccess": "Profile updated successfully",
+  "passwordChangeSuccess": "Password changed successfully",
+  "invalidPassword": "Current password is incorrect",
+  "personalDetails": "Personal Details",
+  "address": "Address",
+  "city": "City",
+  "country": "Country",
+  "zipCode": "Zip Code"
+}

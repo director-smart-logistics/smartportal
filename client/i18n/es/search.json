@@ -1,0 +1,18 @@
+{
+  "title": "Navegación Rápida",
+  "placeholder": "Escribe un comando o busca...",
+  "suggestions": "Sugerencias",
+  "noResults": "No se encontraron resultados",
+  "quickLinks": "Enlaces Rápidos",
+  "packages": "Paquetes",
+  "packagesDesc": "Administrar y rastrear paquetes",
+  "tracking": "Rastreo",
+  "trackingDesc": "Rastreo de paquetes en tiempo real",
+  "timeEntry": "Registro de Tiempo",
+  "timeEntryDesc": "Registrar entradas de tiempo de empleados",
+  "recentPages": "Páginas Recientes",
+  "pressToOpen": "Presiona {key} para abrir",
+  "pressToClose": "Presiona Esc para cerrar",
+  "navigateTo": "Navegar a {page}",
+  "keyboardShortcut": "Ctrl+K"
+}

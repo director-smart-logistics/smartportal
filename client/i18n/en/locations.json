@@ -1,0 +1,9 @@
+{
+  "title": "Locations",
+  "origin": "Origin Location",
+  "destination": "Destination Location",
+  "miami": "Miami Warehouse",
+  "sanJose": "San Jose Hub",
+  "usa": "USA",
+  "costaRica": "Costa Rica"
+}

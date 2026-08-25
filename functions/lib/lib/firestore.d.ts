@@ -1,0 +1,42 @@
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
+export declare const db: FirebaseFirestore.Firestore;
+export declare const usersRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const customersRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const packagesRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const deliveriesRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const routesRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const invoicesRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const settingsRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const permissionsRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const auditLogsRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const auditRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const scannerHistoryRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const quotesRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const manifestsRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const departmentsRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const employeesRef: () => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const userProfileRef: (userId: string) => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const trackingHistoryRef: (packageId: string) => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const invoiceItemsRef: (invoiceId: string) => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const quoteItemsRef: (quoteId: string) => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const routePackagesRef: (routeId: string) => FirebaseFirestore.CollectionReference<FirebaseFirestore.DocumentData, FirebaseFirestore.DocumentData>;
+export declare const serverTimestamp: () => FieldValue;
+export declare const toTimestamp: (date: Date) => Timestamp;
+export declare const fromTimestamp: (timestamp: Timestamp) => Date;
+export declare function getDocument<T>(collection: FirebaseFirestore.CollectionReference, id: string): Promise<T | null>;
+export declare function listDocuments<T>(collection: FirebaseFirestore.CollectionReference, options?: {
+    limit?: number;
+    orderBy?: string;
+    orderDirection?: "asc" | "desc";
+    where?: Array<{
+        field: string;
+        op: FirebaseFirestore.WhereFilterOp;
+        value: unknown;
+    }>;
+}): Promise<T[]>;
+export declare function createDocument<T extends Record<string, unknown>>(collection: FirebaseFirestore.CollectionReference, data: Omit<T, "id" | "createdAt" | "updatedAt">, id?: string): Promise<T>;
+export declare function updateDocument<T extends Record<string, unknown>>(collection: FirebaseFirestore.CollectionReference, id: string, data: Partial<Omit<T, "id" | "createdAt">>): Promise<T | null>;
+export declare function deleteDocument(collection: FirebaseFirestore.CollectionReference, id: string): Promise<boolean>;
+export declare function createBatch(): FirebaseFirestore.WriteBatch;
+export declare function runTransaction<T>(fn: (transaction: FirebaseFirestore.Transaction) => Promise<T>): Promise<T>;
+//# sourceMappingURL=firestore.d.ts.map
