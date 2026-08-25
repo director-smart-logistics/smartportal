@@ -189,7 +189,7 @@ export function useNovaResolvedRows({
 
       const effName = resolveEffectiveCustomerName({
         overrideName: matchOverrides[idx]?.fullName || nameOverrides[idx],
-        contactName: contact?.fullName,
+        contactName: (contact as any)?.fullName,
         preAlertName,
         manifestConsigneeName: row.nombre,
         savedCustomerName: row.nombreCliente,
