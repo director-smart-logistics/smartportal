@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getRouteAbbreviation } from '../DriverRouteWizard';
+import { getRouteAbbreviation, StartRouteWizard, ActiveRouteView } from '../DriverRouteWizard';
 
 describe('DriverRouteWizard — Route Abbreviation & Manifest Selection Logic', () => {
   it('correctly maps known route names to compact abbreviations', () => {
@@ -47,6 +47,11 @@ describe('DriverRouteWizard — Route Abbreviation & Manifest Selection Logic', 
 
     expect(district).toBe('San Rafael');
     expect(fullAddress).toBe('150m este de la plaza, San Rafael, La Unión');
+  });
+
+  it('exports StartRouteWizard and ActiveRouteView components', () => {
+    expect(StartRouteWizard).toBeDefined();
+    expect(ActiveRouteView).toBeDefined();
   });
 });
 

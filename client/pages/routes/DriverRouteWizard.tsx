@@ -38,6 +38,7 @@ import { useDriverMetrics } from '@/lib/hooks/useDriverMetrics';
 import { syncPackagesToSmartWeb, syncPackagesToSmartWebWithTimeout, type SP1PackageForSync } from '@/lib/services/sync-smartweb-service';
 import { markInvoicesAsPaidForTrackings, annulInvoicesByTrackingsAndManifest, safeFormatDate } from '@/lib/services/invoice-service';
 import { pushStatusToSp2 } from '@/lib/services/sync-invoices-service';
+import { getRecentManifests } from '@/lib/services/manifest-processor/queries';
 import { analyzeDashboardImage, isDashboardAIEnabled } from '@/lib/services/route-ai-analyzer';
 import { extractDistrictFromAddress } from '@/lib/utils/location-utils';
 
@@ -3165,7 +3166,7 @@ function PackageList({
               extractDistrictFromAddress(address) ||
               extractDistrictFromAddress(customerProfile?.fullAddress) ||
               extractDistrictFromAddress(customerProfile?.exactAddress) ||
-              pkgs.find(p => (p as any).district)?.district ||
+              (pkgs.find(p => (p as any).district) as any)?.district ||
               extractDistrictFromAddress(pkgs.find(p => p.deliveryAddress)?.deliveryAddress) ||
               null;
 
@@ -3305,7 +3306,7 @@ function PackageList({
                                 className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-emerald-500 text-white bg-emerald-600 hover:bg-emerald-700 dark:border-emerald-600 dark:bg-emerald-700 dark:hover:bg-emerald-600 transition-all active:scale-95 duration-100 shadow-sm text-sm font-extrabold uppercase tracking-wide shrink-0"
                                 onClick={e => {
                                   e.stopPropagation();
-                                  trackEvent('nav_google_maps_click', { customerName, coords: customerProfile?.coordinates, address });
+                                  trackEvent('nav_google_maps_click', { customerName, coords: customerProfile?.coordinates, address } as any);
                                 }}
                                 title="Abrir en Google Maps"
                               >

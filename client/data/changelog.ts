@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1594',
+    date: '2026-08-26',
+    layer: 'fe',
+    type: 'fix',
+    title: 'Corrección de Carga de Manifiestos en Asistente de Sesiones de Ruta',
+    description:
+      '1. **Restauración de Importación de Manifiestos (`DriverRouteWizard.tsx`)**: Se reincorporó `getRecentManifests` faltante en el asistente de ruta para choferes (`StartRouteWizard`), solucionando el ReferenceError y permitiendo la selección inmediata de manifiestos.\\n' +
+      '2. **Ajuste de Tipos TypeScript y Pruebas**: Tipado seguro en extracción de distritos y telemetría.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(routes): restore getRecentManifests import in DriverRouteWizard (v0.0.1594)',
+  },
+  {
     version: '0.0.1590',
     date: '2026-08-25',
     layer: 'both',

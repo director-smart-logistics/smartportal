@@ -2,6 +2,15 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1594] - 2026-08-26
+
+### Fixed (Route Session Manifest Loading Resolution)
+- **Corrección de Carga de Manifiestos en Sesiones de Ruta (`DriverRouteWizard.tsx`):**
+  - Restaurada la importación faltante de `getRecentManifests` requerida para la inicialización y consulta de manifiestos disponibles en el asistente de ruta del chofer (`StartRouteWizard`).
+  - Resuelto error en tiempo de ejecución (`ReferenceError: getRecentManifests is not defined`) que impedía listar manifiestos al iniciar sesión de ruta.
+- **Certificación de Pruebas Automatizadas:**
+  - 18 pruebas del módulo de rutas pasando al 100% con 0 errores.
+
 ## [0.0.1590] - 2026-08-25
 
 ### Added & Hardened (Universal Costa Rica District Parser & Relocated Muted Gray District Badge in Customer Card)
