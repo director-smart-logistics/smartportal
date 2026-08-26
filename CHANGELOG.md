@@ -2,6 +2,15 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1595] - 2026-08-26
+
+### Fixed (Scanner-Standard Route Abbreviations in Driver Route Sessions)
+- **Alineación de Abreviaciones de Rutas con el Escáner (`DriverRouteWizard.tsx`):**
+  - Actualizado el diccionario y lógica de mapeo de rutas para reflejar las abreviaciones oficiales del escáner y bodega: `Cartago 1` → `C1`, `Cartago 2` → `C2`, `Heredia` → `H`, `Alajuela` → `A`, `San Jose Centro` → `SJ`, `San Jose Escazu` → `SJ-E`, `San Jose Coronado` → `SJ-C`, `Occidente` → `OCC`, `Encomiendas` → `ENC`, `Retira` → `RET`.
+  - Soporte completo para sesiones multi-ruta combinadas (ej. `Cartago 1 + Cartago 2` → `C1 + C2`).
+- **Certificación de Pruebas Automatizadas:**
+  - 18 pruebas unitarias del módulo de rutas pasando al 100% con 0 errores.
+
 ## [0.0.1594] - 2026-08-26
 
 ### Fixed (Route Session Manifest Loading Resolution)

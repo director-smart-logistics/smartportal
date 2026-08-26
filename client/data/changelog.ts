@@ -26,6 +26,18 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1595',
+    date: '2026-08-26',
+    layer: 'fe',
+    type: 'fix',
+    title: 'Alineación de Abreviaciones de Rutas con el Escáner (C1, C2, H, A, etc.)',
+    description:
+      '1. **Abreviaciones Oficiales del Escáner (`DriverRouteWizard.tsx`)**: Se mapearon las abreviaciones oficiales en las tarjetas y cabeceras de sesión de ruta (`Cartago 1` → `C1`, `Cartago 2` → `C2`, `Heredia` → `H`, `Alajuela` → `A`, `San Jose Centro` → `SJ`, etc.).\\n' +
+      '2. **Soporte de Rutas Combinadas**: Múltiples rutas seleccionadas se combinan limpiamente (ej. `Cartago 1 + Cartago 2` → `C1 + C2`).',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(routes): align route abbreviations with scanner standards (v0.0.1595)',
+  },
+  {
     version: '0.0.1594',
     date: '2026-08-26',
     layer: 'fe',

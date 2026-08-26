@@ -2,15 +2,19 @@ import { describe, it, expect } from 'vitest';
 import { getRouteAbbreviation, StartRouteWizard, ActiveRouteView } from '../DriverRouteWizard';
 
 describe('DriverRouteWizard — Route Abbreviation & Manifest Selection Logic', () => {
-  it('correctly maps known route names to compact abbreviations', () => {
-    expect(getRouteAbbreviation('San Jose Centro')).toBe('SJC');
-    expect(getRouteAbbreviation('San Jose Escazu')).toBe('SJE');
-    expect(getRouteAbbreviation('Cartago 1')).toBe('CAR1');
-    expect(getRouteAbbreviation('Alajuela')).toBe('ALA');
-    expect(getRouteAbbreviation('Heredia')).toBe('HED');
+  it('correctly maps known route names to scanner-standard abbreviations', () => {
+    expect(getRouteAbbreviation('San Jose Centro')).toBe('SJ');
+    expect(getRouteAbbreviation('San Jose Escazu')).toBe('SJ-E');
+    expect(getRouteAbbreviation('San Jose Coronado')).toBe('SJ-C');
+    expect(getRouteAbbreviation('Cartago 1')).toBe('C1');
+    expect(getRouteAbbreviation('Cartago 2')).toBe('C2');
+    expect(getRouteAbbreviation('Cartago 1 + Cartago 2')).toBe('C1 + C2');
+    expect(getRouteAbbreviation('Alajuela')).toBe('A');
+    expect(getRouteAbbreviation('Heredia')).toBe('H');
     expect(getRouteAbbreviation('Occidente')).toBe('OCC');
-    expect(getRouteAbbreviation('Retorno')).toBe('RET');
+    expect(getRouteAbbreviation('Retira')).toBe('RET');
     expect(getRouteAbbreviation('Encomienda')).toBe('ENC');
+    expect(getRouteAbbreviation('Encomiendas')).toBe('ENC');
     expect(getRouteAbbreviation('')).toBe('');
   });
 

@@ -44,32 +44,78 @@ import { extractDistrictFromAddress } from '@/lib/utils/location-utils';
 
 const ENABLE_GOOGLE_MAPS = false;
 
-// ─── Route Abbreviation Helper ────────────────────────────────────────────────
+// ─── Route Abbreviation Helper (Mirrors Scanner and Bodega definitions) ────────
+const ROUTE_ABBR_SCANNER: Record<string, string> = {
+  'Cartago 1': 'C1',
+  'Cartago 2': 'C2',
+  'Cartago': 'C1',
+  'Heredia': 'H',
+  'Alajuela': 'A',
+  'San Jose Centro': 'SJ',
+  'San Jose Escazu': 'SJ-E',
+  'San Jose Coronado': 'SJ-C',
+  'Occidente': 'OCC',
+  'Encomiendas': 'ENC',
+  'Encomienda': 'ENC',
+  'Retira': 'RET',
+  'RETIRA': 'RET',
+  'Pickup': 'RET',
+  'Limon': 'L',
+  'Limón': 'L',
+  'Puntarenas': 'P',
+  'Guanacaste': 'G',
+  'Devolver': 'DEV',
+  'Desconocida': 'DES',
+};
+
+function getSingleRouteAbbreviation(routeName: string): string {
+  if (!routeName) return '';
+  const r = routeName.trim();
+  if (ROUTE_ABBR_SCANNER[r]) return ROUTE_ABBR_SCANNER[r];
+
+  const lower = r.toLowerCase();
+  if (lower === 'todas' || lower === 'all') return 'Todas';
+
+  // Cartago: C1, C2
+  if (lower.includes('cartago 1') || lower.includes('cartago1') || lower === 'c1' || lower === 'c-1') return 'C1';
+  if (lower.includes('cartago 2') || lower.includes('cartago2') || lower === 'c2' || lower === 'c-2') return 'C2';
+  if (lower.includes('cartago')) return lower.includes('2') ? 'C2' : 'C1';
+
+  // San Jose routes
+  if (lower.includes('escazu') || lower.includes('escazú') || lower.includes('sj-e') || lower === 'sje' || lower.includes('sjoe')) return 'SJ-E';
+  if (lower.includes('coronado') || lower.includes('sj-co') || lower.includes('sjoco')) return 'SJ-C';
+  if (lower.includes('centro') || lower.includes('sj-c') || lower === 'sjc' || lower.includes('sjoc')) return 'SJ';
+  if (lower === 'san jose' || lower === 'san josé' || lower === 'sj') return 'SJ';
+
+  // Heredia -> H, Alajuela -> A
+  if (lower.includes('heredia') || lower === 'hed' || lower === 'h') return 'H';
+  if (lower.includes('alajuela') || lower === 'ala' || lower === 'a') return 'A';
+
+  // Other routes
+  if (lower.includes('occidente') || lower === 'occ') return 'OCC';
+  if (lower.includes('encomienda') || lower === 'enc') return 'ENC';
+  if (lower.includes('retira') || lower === 'ret' || lower === 'pickup') return 'RET';
+  if (lower.includes('guanacaste') || lower === 'gua' || lower === 'g') return 'G';
+  if (lower.includes('puntarenas') || lower === 'pun' || lower === 'p') return 'P';
+  if (lower.includes('limon') || lower.includes('limón') || lower === 'lim' || lower === 'l') return 'L';
+  if (lower.includes('devolver') || lower === 'dev') return 'DEV';
+
+  if (/^[A-Z0-9-]{1,5}$/i.test(r)) return r.toUpperCase();
+
+  return r.substring(0, 3).toUpperCase();
+}
+
 export function getRouteAbbreviation(routeName: string): string {
   if (!routeName) return '';
   const r = routeName.trim();
-  const lower = r.toLowerCase();
-
-  if (lower === 'todas' || lower === 'all') return 'Todas';
-
-  if (lower.includes('coronado') || lower.includes('sj-c') || lower === 'sjc' || lower.includes('sjoco')) return 'SJC';
-  if (lower.includes('escazu') || lower.includes('escazú') || lower.includes('sj-e') || lower === 'sje' || lower.includes('sjoe')) return 'SJE';
-  if (lower.includes('centro') || lower === 'sj' || lower === 'sjoc') return 'SJC';
-  if (lower.includes('alajuela') || lower === 'ala') return 'ALA';
-  if (lower.includes('heredia') || lower === 'hed' || lower === 'h') return 'HED';
-  if (lower.includes('cartago 1') || lower.includes('cartago1') || lower === 'c1' || lower === 'c-1') return 'CAR1';
-  if (lower.includes('cartago 2') || lower.includes('cartago2') || lower === 'c2' || lower === 'c-2') return 'CAR2';
-  if (lower.includes('cartago')) return 'CAR';
-  if (lower.includes('occidente') || lower === 'occ') return 'OCC';
-  if (lower.includes('encomienda') || lower === 'enc') return 'ENC';
-  if (lower.includes('retira') || lower === 'ret') return 'RET';
-  if (lower.includes('guanacaste') || lower === 'gua') return 'GUA';
-  if (lower.includes('puntarenas') || lower === 'pun') return 'PUN';
-  if (lower.includes('limon') || lower.includes('limón') || lower === 'lim') return 'LIM';
-
-  if (/^[A-Z0-9-]{2,5}$/.test(r)) return r;
-
-  return r.substring(0, 3).toUpperCase();
+  if (r.includes('+')) {
+    return r
+      .split('+')
+      .map(part => getSingleRouteAbbreviation(part.trim()))
+      .filter(Boolean)
+      .join(' + ');
+  }
+  return getSingleRouteAbbreviation(r);
 }
 
 // ─── Admin Notification Modal ─────────────────────────────────────────────────
