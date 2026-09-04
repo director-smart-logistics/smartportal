@@ -203,13 +203,19 @@ const calcDynamicRenta = (gross: number, brackets: { upTo: number; rate: number 
 // Overlap check helper
 const getOverlapDays = (leave: UnpaidLeaveRecord, periodStart: Date, periodEnd: Date) => {
   const leaveStart = new Date(leave.startDate + "T00:00:00");
-  const leaveEnd = new Date(leave.endDate + "T23:59:59");
+  const leaveEnd = new Date(leave.endDate + "T00:00:00");
+  const pStart = new Date(format(periodStart, "yyyy-MM-dd") + "T00:00:00");
+  const pEnd = new Date(format(periodEnd, "yyyy-MM-dd") + "T00:00:00");
   
-  const overlapStart = new Date(Math.max(leaveStart.getTime(), periodStart.getTime()));
-  const overlapEnd = new Date(Math.min(leaveEnd.getTime(), periodEnd.getTime()));
+  const overlapStart = new Date(Math.max(leaveStart.getTime(), pStart.getTime()));
+  const overlapEnd = new Date(Math.min(leaveEnd.getTime(), pEnd.getTime()));
   
   if (overlapStart > overlapEnd) return 0;
-  return Math.round((overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  const calendarDays = Math.round((overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  if (typeof leave.days === "number" && leave.days > 0) {
+    return Math.min(leave.days, calendarDays);
+  }
+  return calendarDays;
 };
 
 const getCurrentWeekNumber = () => {
@@ -447,20 +453,25 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
           unpaidDays += getOverlapDays(l, pStart, pEnd);
         }
       });
-      const unpaidDiscountMonthly = (baseSalaryMonthly / 30) * unpaidDays;
 
-      // 2. Gross salary monthly is base salary minus unpaid leave discount
-      const grossMonthly = Math.max(0, baseSalaryMonthly - unpaidDiscountMonthly);
+      // Daily salary based on standard 30-day commercial month in CR
+      const dailyRate = baseSalaryMonthly / 30;
 
-      // 3. Taxes & CCSS calculated monthly (for progressive tax correctness)
-      const settings = getCountrySettings(emp.countryCode || "CR");
-      const ccssMonthly = calcDynamicCCSS(grossMonthly, settings.employeeSocialSecurityRate);
-      const rentaMonthly = calcDynamicRenta(grossMonthly, settings.incomeTaxBrackets, !!emp.spouseDependent, emp.childrenCount || 0);
-      
-      // 4. Scale to cycle frequency
+      // Base salary scaled to pay period frequency (e.g. monthly / 4.33 for weekly)
       const baseSalaryCycle = Math.round(toCycleSalary(baseSalaryMonthly, period.frequency) * 100) / 100;
-      const unpaidDiscountCycle = Math.round(toCycleSalary(unpaidDiscountMonthly, period.frequency) * 100) / 100;
-      const grossCycle = Math.round(toCycleSalary(grossMonthly, period.frequency) * 100) / 100;
+
+      // Unpaid leave discount for the missed days in this cycle (full daily rate per missed day)
+      const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100;
+
+      // Gross salary for this cycle (base salary minus unpaid leave discount)
+      const grossCycle = Math.max(0, Math.round((baseSalaryCycle - unpaidDiscountCycle) * 100) / 100);
+
+      // Taxes & CCSS calculated on gross monthly equivalent (for progressive tax correctness)
+      const grossMonthlyEquivalent = toMonthly(grossCycle, period.frequency);
+      const settings = getCountrySettings(emp.countryCode || "CR");
+      const ccssMonthly = calcDynamicCCSS(grossMonthlyEquivalent, settings.employeeSocialSecurityRate);
+      const rentaMonthly = calcDynamicRenta(grossMonthlyEquivalent, settings.incomeTaxBrackets, !!emp.spouseDependent, emp.childrenCount || 0);
+      
       const ccssCycle = Math.round(toCycleSalary(ccssMonthly, period.frequency) * 100) / 100;
       const rentaCycle = Math.round(toCycleSalary(rentaMonthly, period.frequency) * 100) / 100;
 
@@ -959,7 +970,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
               </tr>
               ${line.unpaidLeaveDays > 0 ? `
               <tr style="color: #b91c1c;">
-                <td>Permiso sin Goce (${line.unpaidLeaveDays} días)</td>
+                <td>Rebajo Permiso sin Goce (${line.unpaidLeaveDays} ${line.unpaidLeaveDays === 1 ? 'día' : 'días'})</td>
                 <td style="text-align: right; color: #a1a1aa;">—</td>
                 <td style="text-align: right; font-weight: 600; color: #b91c1c;">-${formatCRC(line.unpaidLeaveDiscount)}</td>
               </tr>
@@ -1141,7 +1152,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
                 </tr>
                 ${line.unpaidLeaveDays > 0 ? `
                 <tr style="color: #b91c1c;">
-                  <td class="concepts-td" style="padding: 10px 12px; border-bottom: 1px solid #f4f4f5;">Permiso sin Goce (${line.unpaidLeaveDays} días)</td>
+                  <td class="concepts-td" style="padding: 10px 12px; border-bottom: 1px solid #f4f4f5;">Rebajo Permiso sin Goce (${line.unpaidLeaveDays} ${line.unpaidLeaveDays === 1 ? 'día' : 'días'})</td>
                   <td class="concepts-td" style="text-align: right; padding: 10px 12px; border-bottom: 1px solid #f4f4f5; color: #a1a1aa;">—</td>
                   <td class="concepts-td" style="text-align: right; padding: 10px 12px; border-bottom: 1px solid #f4f4f5; color: #b91c1c; font-weight: 600;">-${formatCRC(line.unpaidLeaveDiscount)}</td>
                 </tr>
@@ -2034,7 +2045,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
                               <span className="text-sm font-medium">{line.employeeName}</span>
                               {line.unpaidLeaveDays > 0 && (
                                 <div className="text-xs text-red-600">
-                                  Dcto. Suspensión: -{formatCRC(line.unpaidLeaveDiscount)}
+                                  Rebajo sin Goce: -{formatCRC(line.unpaidLeaveDiscount)} ({line.unpaidLeaveDays} {line.unpaidLeaveDays === 1 ? 'día' : 'días'})
                                 </div>
                               )}
                             </TableCell>
@@ -2319,7 +2330,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
                           </tr>
                           {previewLine.unpaidLeaveDays > 0 ? (
                             <tr className="text-red-800">
-                              <td className="py-2.5 px-3">Permiso sin Goce ({previewLine.unpaidLeaveDays} días)</td>
+                              <td className="py-2.5 px-3">Rebajo Permiso sin Goce ({previewLine.unpaidLeaveDays} {previewLine.unpaidLeaveDays === 1 ? 'día' : 'días'})</td>
                               <td className="py-2.5 px-3 text-right text-zinc-400">—</td>
                               <td className="py-2.5 px-3 text-right font-semibold text-red-700">-{formatCRC(previewLine.unpaidLeaveDiscount)}</td>
                             </tr>

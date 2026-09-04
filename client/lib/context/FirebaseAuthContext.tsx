@@ -200,8 +200,10 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       setUser(null);
       setFirebaseUser(null);
 
-      localStorage.removeItem("authToken");
-      localStorage.removeItem("isAuthenticated");
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("isAuthenticated");
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Logout failed";
       setError(message);

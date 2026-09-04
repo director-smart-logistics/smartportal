@@ -1392,7 +1392,7 @@ const PayrollBenefits = memo(function PayrollBenefits() {
                 </tr>
                 ${line.unpaidLeaveDays > 0 ? `
                 <tr style="color: #b91c1c;">
-                  <td class="concepts-td" style="padding: 10px 12px; border-bottom: 1px solid #f4f4f5;">Permiso sin Goce (${line.unpaidLeaveDays} días)</td>
+                  <td class="concepts-td" style="padding: 10px 12px; border-bottom: 1px solid #f4f4f5;">Rebajo Permiso sin Goce (${line.unpaidLeaveDays} ${line.unpaidLeaveDays === 1 ? 'día' : 'días'})</td>
                   <td class="concepts-td" style="text-align: right; padding: 10px 12px; border-bottom: 1px solid #f4f4f5; color: #a1a1aa;">—</td>
                   <td class="concepts-td" style="text-align: right; padding: 10px 12px; border-bottom: 1px solid #f4f4f5; color: #b91c1c; font-weight: 600;">-${formatCRC(line.unpaidLeaveDiscount)}</td>
                 </tr>
@@ -3144,7 +3144,7 @@ const PayrollBenefits = memo(function PayrollBenefits() {
                                   {line.employeeName}
                                   {line.unpaidLeaveDays > 0 && (
                                     <div className="text-[10px] text-destructive">
-                                      Dcto. Suspensión: -{formatCRC(line.unpaidLeaveDiscount)} ({line.unpaidLeaveDays} días)
+                                      Rebajo sin Goce: -{formatCRC(line.unpaidLeaveDiscount)} ({line.unpaidLeaveDays} {line.unpaidLeaveDays === 1 ? 'día' : 'días'})
                                     </div>
                                   )}
                                 </TableCell>
@@ -3448,11 +3448,11 @@ const PayrollBenefits = memo(function PayrollBenefits() {
                   <Info className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" />
                   <div>
                     <span className="font-semibold block mb-0.5">Selección automática de fecha final</span>
-                    La fecha final se ajusta automáticamente al mismo día de inicio. Si la suspensión comprende más de 1 día, por favor verifica y ajusta la fecha final.
+                    La fecha final se ajusta automáticamente al mismo día de inicio. Si el permiso comprende más de 1 día, por favor verifica y ajusta la fecha final.
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Días de Suspensión</Label>
+                  <Label>Días sin Goce de Salario</Label>
                   <Input
                     type="number"
                     min="1"
@@ -3473,7 +3473,7 @@ const PayrollBenefits = memo(function PayrollBenefits() {
                 <div className="space-y-1.5">
                   <Label>Motivo / Razón</Label>
                   <Textarea
-                    placeholder="Escriba la razón de la suspensión..."
+                    placeholder="Escriba el motivo del permiso sin goce / rebajo..."
                     value={unpaidForm.reason}
                     onChange={(e) => setUnpaidForm((f) => ({ ...f, reason: e.target.value }))}
                   />

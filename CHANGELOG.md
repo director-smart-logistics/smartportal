@@ -2,6 +2,22 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1598] - 2026-09-04
+
+### Fixed & Hardened (Payroll Unpaid Leave Calculation & Terminology Alignment)
+- **Corrección en Cálculo de Solapamiento de Fechas (`PayrollRunWizard.tsx`):**
+  - Corregido error en `getOverlapDays` que causaba la duplicación de días al comparar límites horarios (`00:00:00` vs `23:59:59` con `+ 1`), asegurando que permisos de 1 día (o cualquier número registrado) retornen exactamente la cantidad correcta de días sin duplicarse.
+  - Implementado límite estricto con `leave.days` como salvaguarda adicional.
+- **Corrección en Fórmula de Deducción Semanal de Permisos sin Goce (`PayrollRunWizard.tsx`):**
+  - Eliminada la división indebida entre `4.33` sobre la deducción por ausencia; el sistema ahora rebaja la tarifa diaria completa ($\text{Salario Base Mensual} / 30$) en la semana en la que ocurrió el permiso.
+- **Actualización de Terminología (`PayrollRunWizard.tsx`, `PayrollBenefits.tsx`):**
+  - Reemplazado `Dcto. Suspensión` por `Rebajo sin Goce: -₡... (X días)` en el asistente de nómina.
+  - Actualizado a `Rebajo Permiso sin Goce` en las colillas/boletas de pago oficiales HTML y previas de correo.
+  - Actualizados los títulos y textos de ayuda en el modal de gestión de permisos sin goce a `Días sin Goce de Salario` y `Escriba el motivo del permiso sin goce / rebajo...`.
+- **Suite de Pruebas Automatizadas y Certificación:**
+  - Creada nueva suite de pruebas en `client/pages/payroll/__tests__/PayrollUnpaidLeaveCalculations.spec.ts`.
+  - 179 suites y 2.390 pruebas pasando al 100% (0 errores, 0 regresiones).
+
 ## [0.0.1595] - 2026-08-26
 
 ### Fixed (Scanner-Standard Route Abbreviations in Driver Route Sessions)
