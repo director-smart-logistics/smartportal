@@ -100,59 +100,70 @@ describe('Payroll Unpaid Leave Overlap & Calculation Suite', () => {
     });
   });
 
-  describe('Payroll Weekly Calculations with Unpaid Leave (Production Case)', () => {
-    it('calculates exact 1-day unpaid deduction and gross for Rodrigo Bonilla (₡550,000 monthly base)', () => {
+  describe('Payroll Weekly Calculations with Unpaid Leave (6-day work week standard)', () => {
+    it('calculates exact 1-day unpaid deduction (1/6th of week) and gross for Rodrigo Bonilla (₡550,000 monthly base)', () => {
       const monthlyBase = 550000;
-      const dailyRate = monthlyBase / 30; // ₡18,333.3333
-      const weeklyBase = Math.round(toCycleSalary(monthlyBase, 'weekly') * 100) / 100; // ₡127,020.78
+      const weeklyBase = Math.round(toCycleSalary(monthlyBase, 'weekly') * 100) / 100; // ₡127,020.79
+      const dailyRate = weeklyBase / 6; // ₡21,170.13 (1 of 6 working days in week)
       const unpaidDays = 1;
 
-      const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100; // ₡18,333.33
-      const grossCycle = Math.max(0, Math.round((weeklyBase - unpaidDiscountCycle) * 100) / 100); // ₡108,687.45
-      const ccssCycle = Math.round(grossCycle * 0.1083 * 100) / 100; // ₡11,770.85
-      const netCycle = Math.round((grossCycle - ccssCycle) * 100) / 100; // ₡96,916.60
+      const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100; // ₡21,170.13
+      const grossCycle = Math.max(0, Math.round((weeklyBase - unpaidDiscountCycle) * 100) / 100); // ₡105,850.66
+      const ccssCycle = Math.round(grossCycle * 0.1083 * 100) / 100; // ₡11,463.63
+      const netCycle = Math.round((grossCycle - ccssCycle) * 100) / 100; // ₡94,387.03
 
-      expect(unpaidDiscountCycle).toBe(18333.33);
+      expect(unpaidDiscountCycle).toBe(21170.13);
       expect(weeklyBase).toBe(127020.79);
-      expect(grossCycle).toBe(108687.46);
-      expect(ccssCycle).toBe(11770.85);
-      expect(netCycle).toBe(96916.61);
+      expect(grossCycle).toBe(105850.66);
+      expect(ccssCycle).toBe(11463.63);
+      expect(netCycle).toBe(94387.03); // Exactly matches HR calculation (94k)
     });
 
     it('calculates exact 1-day unpaid deduction and gross for Juan Carlos Gonzalez (₡450,000 monthly base)', () => {
       const monthlyBase = 450000;
-      const dailyRate = monthlyBase / 30; // ₡15,000.00
       const weeklyBase = Math.round(toCycleSalary(monthlyBase, 'weekly') * 100) / 100; // ₡103,926.10
+      const dailyRate = weeklyBase / 6; // ₡17,321.02
       const unpaidDays = 1;
 
-      const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100; // ₡15,000.00
-      const grossCycle = Math.max(0, Math.round((weeklyBase - unpaidDiscountCycle) * 100) / 100); // ₡88,926.10
-      const ccssCycle = Math.round(grossCycle * 0.1083 * 100) / 100; // ₡9,630.70
-      const netCycle = Math.round((grossCycle - ccssCycle) * 100) / 100; // ₡79,295.40
+      const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100; // ₡17,321.02
+      const grossCycle = Math.max(0, Math.round((weeklyBase - unpaidDiscountCycle) * 100) / 100); // ₡86,605.08
+      const ccssCycle = Math.round(grossCycle * 0.1083 * 100) / 100; // ₡9,379.33
+      const netCycle = Math.round((grossCycle - ccssCycle) * 100) / 100; // ₡77,225.75
 
-      expect(unpaidDiscountCycle).toBe(15000.00);
+      expect(unpaidDiscountCycle).toBe(17321.02);
       expect(weeklyBase).toBe(103926.10);
-      expect(grossCycle).toBe(88926.10);
-      expect(ccssCycle).toBe(9630.70);
-      expect(netCycle).toBe(79295.40);
+      expect(grossCycle).toBe(86605.08);
+      expect(ccssCycle).toBe(9379.33);
+      expect(netCycle).toBe(77225.75);
     });
 
     it('calculates exact 1-day unpaid deduction and gross for Rodolfo Martinez (₡500,000 monthly base)', () => {
       const monthlyBase = 500000;
-      const dailyRate = monthlyBase / 30; // ₡16,666.6667
       const weeklyBase = Math.round(toCycleSalary(monthlyBase, 'weekly') * 100) / 100; // ₡115,473.44
+      const dailyRate = weeklyBase / 6; // ₡19,245.57
       const unpaidDays = 1;
 
-      const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100; // ₡16,666.67
-      const grossCycle = Math.max(0, Math.round((weeklyBase - unpaidDiscountCycle) * 100) / 100); // ₡98,806.77
-      const ccssCycle = Math.round(grossCycle * 0.1083 * 100) / 100; // ₡10,700.77
-      const netCycle = Math.round((grossCycle - ccssCycle) * 100) / 100; // ₡88,106.00
+      const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100; // ₡19,245.57
+      const grossCycle = Math.max(0, Math.round((weeklyBase - unpaidDiscountCycle) * 100) / 100); // ₡96,227.87
+      const ccssCycle = Math.round(grossCycle * 0.1083 * 100) / 100; // ₡10,421.48
+      const netCycle = Math.round((grossCycle - ccssCycle) * 100) / 100; // ₡85,806.39
 
-      expect(unpaidDiscountCycle).toBe(16666.67);
+      expect(unpaidDiscountCycle).toBe(19245.57);
       expect(weeklyBase).toBe(115473.44);
-      expect(grossCycle).toBe(98806.77);
-      expect(ccssCycle).toBe(10700.77);
-      expect(netCycle).toBe(88106.00);
+      expect(grossCycle).toBe(96227.87);
+      expect(ccssCycle).toBe(10421.48);
+      expect(netCycle).toBe(85806.39);
+    });
+
+    it('calculates exact 1-day unpaid deduction for monthly employee using 30-day base', () => {
+      const monthlyBase = 550000;
+      const dailyRate = monthlyBase / 30; // ₡18,333.33
+      const unpaidDays = 1;
+      const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100;
+      const grossCycle = monthlyBase - unpaidDiscountCycle;
+
+      expect(unpaidDiscountCycle).toBe(18333.33);
+      expect(grossCycle).toBe(531666.67);
     });
   });
 });

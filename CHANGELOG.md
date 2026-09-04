@@ -2,6 +2,16 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1599] - 2026-09-04
+
+### Fixed (Payroll Frequency-Aware Unpaid Leave Daily Rate Divisor)
+- **Cálculo de Rebajo Diario por Frecuencia de Pago (`PayrollRunWizard.tsx`):**
+  - Implementado divisor específico según frecuencia de nómina:
+    - **Nómina Semanal:** El valor de 1 día de ausencia sin goce se calcula sobre la base de la jornada ordinaria semanal de 6 días laborales ($\text{Salario Semanal} / 6$). En el caso de Rodrigo Bonilla (salario base mensual ₡550.000 / semana ₡127.020,79), el rebajo de 1 día es exactamente $\mathbf{₡21.170,13}$, dejando el salario bruto en $\mathbf{₡105.850,66}$ y el neto a pagar tras CCSS (10,83%) en $\mathbf{₡94.387,03}$ (coincidencia exacta con el cálculo de Recursos Humanos).
+    - **Nómina Quincenal / Mensual:** Mantiene el divisor sobre mes comercial de 30 días ($\text{Salario Mensual} / 30$).
+- **Certificación de Pruebas Unitarias (`PayrollUnpaidLeaveCalculations.spec.ts`):**
+  - 179 suites de prueba y 2.391 pruebas pasando al 100% en verde con 0 regresiones.
+
 ## [0.0.1598] - 2026-09-04
 
 ### Fixed & Hardened (Payroll Unpaid Leave Calculation & Terminology Alignment)

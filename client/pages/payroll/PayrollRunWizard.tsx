@@ -454,11 +454,15 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
         }
       });
 
-      // Daily salary based on standard 30-day commercial month in CR
-      const dailyRate = baseSalaryMonthly / 30;
-
       // Base salary scaled to pay period frequency (e.g. monthly / 4.33 for weekly)
       const baseSalaryCycle = Math.round(toCycleSalary(baseSalaryMonthly, period.frequency) * 100) / 100;
+
+      // Daily salary based on pay period frequency:
+      // - Weekly: standard 6-day working week in CR (weekly salary / 6)
+      // - Biweekly / Monthly / Others: standard 30-day commercial month (monthly salary / 30)
+      const dailyRate = period.frequency === "weekly"
+        ? baseSalaryCycle / 6
+        : baseSalaryMonthly / 30;
 
       // Unpaid leave discount for the missed days in this cycle (full daily rate per missed day)
       const unpaidDiscountCycle = Math.round(dailyRate * unpaidDays * 100) / 100;
