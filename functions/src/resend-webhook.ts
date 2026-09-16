@@ -5,8 +5,11 @@
  */
 
 import * as functions from "firebase-functions";
+import { getApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
+
+const getPortalDb = () => getFirestore(getApp(), "portal");
 
 interface ResendWebhookEvent {
   type: "email.sent" | "email.delivered" | "email.delivery_delayed" | "email.complained" | "email.bounced" | "email.opened" | "email.clicked";
@@ -76,12 +79,12 @@ function mapEventToStatus(
 }
 
 /**
- * Find invoice by Resend message ID
+ * Find invoice by Resend message ID in the portal database
  */
 async function findInvoiceByMessageId(
   messageId: string
 ): Promise<string | null> {
-  const db = getFirestore();
+  const db = getPortalDb();
   
   try {
     const invoicesRef = db.collection("invoices");
@@ -108,28 +111,54 @@ async function findInvoiceByMessageId(
 
     return null;
   } catch (error) {
-    logger.error("Error finding invoice by message ID:", error);
+    logger.error("Error finding invoice by message ID in portal database:", error);
     return null;
   }
 }
 
 /**
- * Update invoice email status
+ * Update invoice email status in the portal database with hierarchy protection
  */
 async function updateInvoiceEmailStatus(
   invoiceId: string,
   statusLog: EmailStatusLog
 ): Promise<void> {
-  const db = getFirestore();
+  const db = getPortalDb();
   const invoiceRef = db.collection("invoices").doc(invoiceId);
 
   try {
-    await invoiceRef.update({
-      emailStatus: statusLog.status,
-      emailStatusUpdatedAt: statusLog.timestamp,
-      emailStatusLogs: FieldValue.arrayUnion(statusLog),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    const docSnap = await invoiceRef.get();
+    if (docSnap.exists) {
+      const currentStatus = docSnap.data()?.emailStatus;
+      const HIERARCHY: Record<string, number> = {
+        sent: 10,
+        opened: 20,
+        clicked: 25,
+        delivered: 30,
+        bounced: 40,
+        failed: 40,
+        complained: 50,
+      };
+      const currentRank = HIERARCHY[currentStatus] || 0;
+      const newRank = HIERARCHY[statusLog.status] || 0;
+      
+      // Never degrade higher status with a delayed or lower-rank event
+      const targetStatus = newRank >= currentRank ? statusLog.status : currentStatus;
+
+      await invoiceRef.update({
+        emailStatus: targetStatus,
+        emailStatusUpdatedAt: statusLog.timestamp,
+        emailStatusLogs: FieldValue.arrayUnion(statusLog),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    } else {
+      await invoiceRef.update({
+        emailStatus: statusLog.status,
+        emailStatusUpdatedAt: statusLog.timestamp,
+        emailStatusLogs: FieldValue.arrayUnion(statusLog),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
 
     logger.info(`Updated invoice ${invoiceId} email status to ${statusLog.status}`);
   } catch (error) {
@@ -251,7 +280,7 @@ export const checkEmailStatus = functions.https.onCall(async (request) => {
       };
     }
 
-    const db = getFirestore();
+    const db = getPortalDb();
     const invoiceDoc = await db.collection("invoices").doc(invoiceId).get();
     const invoiceData = invoiceDoc.data();
 
@@ -285,7 +314,7 @@ export const slRefreshEmailStatus = functions.https.onCall(async (request) => {
     throw new functions.https.HttpsError("invalid-argument", "invoiceId is required");
   }
 
-  const db = getFirestore();
+  const db = getPortalDb();
   const invoiceSnap = await db.collection("invoices").doc(invoiceId).get();
   if (!invoiceSnap.exists) {
     throw new functions.https.HttpsError("not-found", "Invoice not found");
@@ -381,7 +410,7 @@ export const syncEmailStatuses = functions.https.onCall(async (request) => {
 
   logger.info("Starting manual email status sync");
 
-  const db = getFirestore();
+  const db = getPortalDb();
   const now = new Date();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 

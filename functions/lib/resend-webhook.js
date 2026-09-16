@@ -40,8 +40,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.syncEmailStatuses = exports.slRefreshEmailStatus = exports.checkEmailStatus = exports.resendWebhook = void 0;
 const functions = __importStar(require("firebase-functions"));
+const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
 const firebase_functions_1 = require("firebase-functions");
+const getPortalDb = () => (0, firestore_1.getFirestore)((0, app_1.getApp)(), "portal");
 /**
  * Verify Resend webhook signature
  * Security measure to ensure webhook authenticity
@@ -78,10 +80,10 @@ function mapEventToStatus(eventType) {
     }
 }
 /**
- * Find invoice by Resend message ID
+ * Find invoice by Resend message ID in the portal database
  */
 async function findInvoiceByMessageId(messageId) {
-    const db = (0, firestore_1.getFirestore)();
+    const db = getPortalDb();
     try {
         const invoicesRef = db.collection("invoices");
         // Primary: match lastResendMessageId (most recent send)
@@ -103,23 +105,48 @@ async function findInvoiceByMessageId(messageId) {
         return null;
     }
     catch (error) {
-        firebase_functions_1.logger.error("Error finding invoice by message ID:", error);
+        firebase_functions_1.logger.error("Error finding invoice by message ID in portal database:", error);
         return null;
     }
 }
 /**
- * Update invoice email status
+ * Update invoice email status in the portal database with hierarchy protection
  */
 async function updateInvoiceEmailStatus(invoiceId, statusLog) {
-    const db = (0, firestore_1.getFirestore)();
+    const db = getPortalDb();
     const invoiceRef = db.collection("invoices").doc(invoiceId);
     try {
-        await invoiceRef.update({
-            emailStatus: statusLog.status,
-            emailStatusUpdatedAt: statusLog.timestamp,
-            emailStatusLogs: firestore_1.FieldValue.arrayUnion(statusLog),
-            updatedAt: firestore_1.FieldValue.serverTimestamp(),
-        });
+        const docSnap = await invoiceRef.get();
+        if (docSnap.exists) {
+            const currentStatus = docSnap.data()?.emailStatus;
+            const HIERARCHY = {
+                sent: 10,
+                opened: 20,
+                clicked: 25,
+                delivered: 30,
+                bounced: 40,
+                failed: 40,
+                complained: 50,
+            };
+            const currentRank = HIERARCHY[currentStatus] || 0;
+            const newRank = HIERARCHY[statusLog.status] || 0;
+            // Never degrade higher status with a delayed or lower-rank event
+            const targetStatus = newRank >= currentRank ? statusLog.status : currentStatus;
+            await invoiceRef.update({
+                emailStatus: targetStatus,
+                emailStatusUpdatedAt: statusLog.timestamp,
+                emailStatusLogs: firestore_1.FieldValue.arrayUnion(statusLog),
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            });
+        }
+        else {
+            await invoiceRef.update({
+                emailStatus: statusLog.status,
+                emailStatusUpdatedAt: statusLog.timestamp,
+                emailStatusLogs: firestore_1.FieldValue.arrayUnion(statusLog),
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            });
+        }
         firebase_functions_1.logger.info(`Updated invoice ${invoiceId} email status to ${statusLog.status}`);
     }
     catch (error) {
@@ -219,7 +246,7 @@ exports.checkEmailStatus = functions.https.onCall(async (request) => {
                 error: "Invoice not found for this message ID",
             };
         }
-        const db = (0, firestore_1.getFirestore)();
+        const db = getPortalDb();
         const invoiceDoc = await db.collection("invoices").doc(invoiceId).get();
         const invoiceData = invoiceDoc.data();
         return {
@@ -247,7 +274,7 @@ exports.slRefreshEmailStatus = functions.https.onCall(async (request) => {
     if (!invoiceId) {
         throw new functions.https.HttpsError("invalid-argument", "invoiceId is required");
     }
-    const db = (0, firestore_1.getFirestore)();
+    const db = getPortalDb();
     const invoiceSnap = await db.collection("invoices").doc(invoiceId).get();
     if (!invoiceSnap.exists) {
         throw new functions.https.HttpsError("not-found", "Invoice not found");
@@ -325,7 +352,7 @@ exports.syncEmailStatuses = functions.https.onCall(async (request) => {
         throw new functions.https.HttpsError("permission-denied", "Only admins can sync email statuses");
     }
     firebase_functions_1.logger.info("Starting manual email status sync");
-    const db = (0, firestore_1.getFirestore)();
+    const db = getPortalDb();
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     try {
