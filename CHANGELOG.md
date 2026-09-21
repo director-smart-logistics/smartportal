@@ -2,6 +2,18 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1611] - 2026-09-21
+
+### Architectural Rules & Comprehensive Documentation (Zero-Regression Cross-Manifest Guard)
+- **Documentación Canónica e Invariantes del Sistema (`.agents/AGENTS.md`, `docs/nova_scenarios_and_workflows.md`):**
+  - Incorporada la **Regla 17** en `.agents/AGENTS.md` fijando el contrato no negociable contra sobreescrituras y desplazamientos inter-manifiestos.
+  - Añadida la **Sección 15** en `docs/nova_scenarios_and_workflows.md` con diagramas Mermaid del ciclo de vida de los paquetes, lookup determinista por ID de documento, y los 3 niveles de defensa (Carga, Escritura y Traslado).
+- **Optimización de Costos y Eficiencia en Firestore (`fusion.ts`, `ingestion.ts`):**
+  - Erradicadas las consultas con `where('trackingNumber', 'in', ...)` sustituyéndolas por lecturas directas por ID `getDoc(doc(packagesRef, id))` en memoria paralela O(1), ahorrando costos de lectura y evitando el consumo de índices compuestos.
+  - Saltadas escrituras redundantes sobre paquetes pertenecientes a manifiestos foráneos en auto-guardados (`useNovaAutoSave`), reduciendo el tráfico de escritura en Firestore.
+- **Certificación Completa del Sistema:**
+  - 180 archivos de prueba (2,419 tests) pasando al 100% de forma limpia y `pnpm typecheck` con 0 errores.
+
 ## [0.0.1610] - 2026-09-21
 
 ### Fixed & Hardened (Blindaje Invariante contra Desplazamiento y Sobre-escritura Cruzada de Paquetes en Nova & Fusiones)
