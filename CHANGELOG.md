@@ -2,6 +2,16 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1615] - 2026-09-21
+
+### Added & Improved (Modal de Confirmación Visual Guiada para Encomiendas)
+- **Modal de Confirmación Visual con Vista Previa (`EncomiendaStatusConfirmDialog`):**
+  - Implementado un modal enriquecido e interactivo para todas las acciones de cambio de estado tanto a nivel bulk como individual.
+  - Muestra el resumen del ámbito (Manifiesto o Cliente), conteo total de paquetes, tabla de vista previa con tracking, cliente, peso y transición de estado visual (`[En Aduanas] ➜ [En Ruta]` o `[En Aduanas] ➜ [Entregado]`).
+  - Incluye feedback operativo explicativo y barra de progreso durante la sincronización a SmartWeb y SP2.
+- **Integración Unificada en Flujos Individuales y Masivos:**
+  - Vinculado a las acciones de "Limpiar pagados" en el encabezado del manifiesto, a los botones masivos de selección "Ruta" / "Entregar", y a las acciones individuales por cliente "Poner en Ruta" / "Entregar".
+
 ## [0.0.1614] - 2026-09-21
 
 ### Added & Improved (Botón Inteligente de Limpieza / Despacho de Manifiestos de Encomiendas)

@@ -834,6 +834,168 @@ function PackageRow({
   );
 }
 
+// ─── Encomienda Status Confirm Dialog ──────────────────────────────────────────
+
+interface StatusConfirmModalProps {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+  targetStatus: 'route' | 'delivered';
+  scopeLabel: string;
+  packages: EncomiendaManifestRow[];
+  loading: boolean;
+}
+
+function EncomiendaStatusConfirmDialog({
+  open,
+  onClose,
+  onConfirm,
+  targetStatus,
+  scopeLabel,
+  packages,
+  loading,
+}: StatusConfirmModalProps) {
+  const isDelivered = targetStatus === 'delivered';
+  const targetLabel = isDelivered ? 'Entregado' : 'En Ruta';
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v && !loading) onClose(); }}>
+      <DialogContent className="max-w-lg p-6 rounded-xl bg-background border border-border shadow-xl">
+        <DialogHeader className="space-y-1.5 pb-3 border-b border-border">
+          <DialogTitle className="flex items-center gap-2 text-base font-bold">
+            {isDelivered ? (
+              <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400">
+                <CheckCircle className="h-5 w-5" />
+              </div>
+            ) : (
+              <div className="p-1.5 rounded-lg bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-400">
+                <Truck className="h-5 w-5" />
+              </div>
+            )}
+            <span>
+              {isDelivered ? "Confirmar Entrega de Paquetes" : "Confirmar Puesta en Ruta"}
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-2">
+          {/* Scope and count summary */}
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/40 border border-border/60">
+            <div className="flex flex-col min-w-0">
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Ámbito</span>
+              <span className="text-sm font-semibold text-foreground truncate">{scopeLabel}</span>
+            </div>
+            <div className="flex flex-col items-end shrink-0">
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Total</span>
+              <Badge variant="secondary" className="font-bold">
+                {packages.length} paquete{packages.length !== 1 ? 's' : ''}
+              </Badge>
+            </div>
+          </div>
+
+          {/* Package list preview */}
+          <div className="space-y-1.5">
+            <span className="text-xs font-semibold text-foreground flex items-center justify-between">
+              <span>Paquetes a actualizar:</span>
+              <span className="text-[11px] text-muted-foreground font-normal">{packages.length} registros</span>
+            </span>
+            <div className="max-h-48 overflow-y-auto rounded-lg border border-border/60 divide-y divide-border/40 bg-muted/10 p-1">
+              {packages.map((pkg, idx) => {
+                const currentLabel = pkg.statusLabel || (pkg.status ? (LIVE_STATUS_LABELS[pkg.status] || pkg.status) : 'En Aduanas');
+                return (
+                  <div key={pkg.tracking || idx} className="flex items-center justify-between gap-2 p-2 text-xs hover:bg-muted/30 transition-colors rounded">
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-bold text-foreground truncate">{pkg.tracking}</span>
+                        {pkg.weight > 0 && (
+                          <span className="text-[10px] text-muted-foreground">({pkg.weight} kg)</span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-muted-foreground truncate">{pkg.customerName || pkg.slCode}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={cn(
+                        "text-[10px] font-medium px-2 py-0.5 rounded-full",
+                        STATUS_COLORS[pkg.status || 'customs'] ?? "bg-muted text-muted-foreground"
+                      )}>
+                        {currentLabel}
+                      </span>
+                      <ArrowLeftRight className="h-3 w-3 text-muted-foreground/60" />
+                      <span className={cn(
+                        "text-[10px] font-bold px-2 py-0.5 rounded-full",
+                        isDelivered
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
+                          : "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300 border border-orange-300 dark:border-orange-700"
+                      )}>
+                        {targetLabel}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Operational impact explanation */}
+          <div className={cn(
+            "p-3 rounded-lg text-xs leading-relaxed border",
+            isDelivered
+              ? "bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/50 text-emerald-900 dark:text-emerald-300"
+              : "bg-orange-50/60 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800/50 text-orange-900 dark:text-orange-300"
+          )}>
+            {isDelivered ? (
+              <p>
+                <strong>Efecto en el sistema:</strong> Los paquetes se marcarán como <strong>Entregados</strong> y se sincronizarán con SmartWeb y SP2. Si todos los paquetes del manifiesto quedan entregados, el manifiesto se archivará y desaparecerá automáticamente de esta vista activa.
+              </p>
+            ) : (
+              <p>
+                <strong>Efecto en el sistema:</strong> Los paquetes cambiarán a estado <strong>En Ruta de Entrega</strong> y se sincronizarán con SmartWeb y SP2 para reflejar que van en camino con el proveedor de encomienda.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Dialog footer buttons */}
+        <div className="flex items-center justify-end gap-2 pt-4 border-t border-border mt-4">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onClose}
+            disabled={loading}
+            className="h-8 px-3 text-xs"
+          >
+            Cancelar
+          </Button>
+          <Button
+            size="sm"
+            onClick={onConfirm}
+            disabled={loading}
+            className={cn(
+              "h-8 px-4 text-xs font-semibold gap-1.5 text-white",
+              isDelivered
+                ? "bg-emerald-600 hover:bg-emerald-700"
+                : "bg-orange-600 hover:bg-orange-700"
+            )}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Actualizando...
+              </>
+            ) : (
+              <>
+                {isDelivered ? <CheckCircle className="h-3.5 w-3.5" /> : <Truck className="h-3.5 w-3.5" />}
+                Confirmar {isDelivered ? "Entrega" : "Puesta en Ruta"} ({packages.length})
+              </>
+            )}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Customer group ─────────────────────────────────────────────────────────
 
 interface CustomerGroupProps {
@@ -929,34 +1091,27 @@ function CustomerGroup({
     });
   }, [rows]);
 
-  const handleCustomerMoveToRoute = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!customerEligibleForRoute.length || updatingCustomerStatus) return;
-    setUpdatingCustomerStatus('route');
-    try {
-      await updatePackagesStatus(customerEligibleForRoute, 'route', 'customer_packages_to_route', auditLog);
-      toast({
-        title: "Puesto en Ruta",
-        description: `${customerEligibleForRoute.length} paquete${customerEligibleForRoute.length !== 1 ? 's' : ''} de ${customerName} puestos en ruta.`,
-      });
-      onMutationSuccess();
-    } catch (err) {
-      toast({ title: "Error al actualizar", description: String(err), variant: "destructive" });
-    } finally {
-      setUpdatingCustomerStatus(null);
-    }
-  };
+  const [statusConfirm, setStatusConfirm] = useState<{
+    targetStatus: 'route' | 'delivered';
+    packages: EncomiendaManifestRow[];
+  } | null>(null);
 
-  const handleCustomerDeliver = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!customerEligibleForDeliver.length || updatingCustomerStatus) return;
-    setUpdatingCustomerStatus('delivered');
+  const handleConfirmStatus = async () => {
+    if (!statusConfirm || !statusConfirm.packages.length || updatingCustomerStatus) return;
+    const { targetStatus, packages } = statusConfirm;
+    setUpdatingCustomerStatus(targetStatus);
     try {
-      await updatePackagesStatus(customerEligibleForDeliver, 'delivered', 'customer_packages_delivered', auditLog);
+      await updatePackagesStatus(
+        packages,
+        targetStatus,
+        targetStatus === 'delivered' ? 'customer_packages_delivered' : 'customer_packages_to_route',
+        auditLog
+      );
       toast({
-        title: "Entrega completada",
-        description: `${customerEligibleForDeliver.length} paquete${customerEligibleForDeliver.length !== 1 ? 's' : ''} de ${customerName} marcados como entregados.`,
+        title: targetStatus === 'delivered' ? "Entrega completada" : "Puesto en Ruta",
+        description: `${packages.length} paquete${packages.length !== 1 ? 's' : ''} de ${customerName} ${targetStatus === 'delivered' ? 'marcados como entregados' : 'puestos en ruta'}.`,
       });
+      setStatusConfirm(null);
       onMutationSuccess();
     } catch (err) {
       toast({ title: "Error al actualizar", description: String(err), variant: "destructive" });
@@ -1735,11 +1890,14 @@ function CustomerGroup({
                 size="sm"
                 variant="outline"
                 className="h-7 px-2.5 text-[11px] font-medium gap-1.5 shrink-0 border-orange-300 text-orange-700 hover:bg-orange-50 dark:border-orange-700/60 dark:text-orange-400 dark:hover:bg-orange-950/20 bg-background"
-                onClick={handleCustomerMoveToRoute}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setStatusConfirm({ targetStatus: 'route', packages: customerEligibleForRoute });
+                }}
                 disabled={!!updatingCustomerStatus}
                 title={`Factura pagada: poner ${customerEligibleForRoute.length} paquete(s) en ruta`}
               >
-                {updatingCustomerStatus === 'route' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
+                <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
                 Poner en Ruta ({customerEligibleForRoute.length})
               </Button>
             )}
@@ -1749,11 +1907,14 @@ function CustomerGroup({
                 size="sm"
                 variant="outline"
                 className="h-7 px-2.5 text-[11px] font-medium gap-1.5 shrink-0 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/60 dark:text-emerald-400 dark:hover:bg-emerald-950/20 bg-background"
-                onClick={handleCustomerDeliver}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setStatusConfirm({ targetStatus: 'delivered', packages: customerEligibleForDeliver });
+                }}
                 disabled={!!updatingCustomerStatus}
                 title={`Factura pagada: marcar ${customerEligibleForDeliver.length} paquete(s) como entregados`}
               >
-                {updatingCustomerStatus === 'delivered' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
+                <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 Entregar ({customerEligibleForDeliver.length})
               </Button>
             )}
@@ -2079,6 +2240,19 @@ function CustomerGroup({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Status Confirmation Dialog ── */}
+      {statusConfirm && (
+        <EncomiendaStatusConfirmDialog
+          open={!!statusConfirm}
+          onClose={() => { if (!updatingCustomerStatus) setStatusConfirm(null); }}
+          onConfirm={handleConfirmStatus}
+          targetStatus={statusConfirm.targetStatus}
+          scopeLabel={`Cliente: ${customerName} (${slCode || 'Sin SL'})`}
+          packages={statusConfirm.packages}
+          loading={!!updatingCustomerStatus}
+        />
+      )}
     </div>
   );
 }
@@ -2226,17 +2400,29 @@ function ManifestCard({
 
   const [cleanPopoverOpen, setCleanPopoverOpen] = useState(false);
   const [cleaningAction, setCleaningAction] = useState<string | null>(null);
+  const [statusConfirm, setStatusConfirm] = useState<{
+    targetStatus: 'route' | 'delivered';
+    packages: EncomiendaManifestRow[];
+    scopeLabel: string;
+  } | null>(null);
 
-  const handleCleanMoveToRoute = useCallback(async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!paidRowsInCustoms.length || cleaningAction) return;
-    setCleaningAction('route');
+  const handleConfirmManifestStatus = async () => {
+    if (!statusConfirm || !statusConfirm.packages.length || cleaningAction) return;
+    const { targetStatus, packages } = statusConfirm;
+    setCleaningAction(targetStatus);
     try {
-      await updatePackagesStatus(paidRowsInCustoms, 'route', 'manifest_clean_to_route', auditLog);
+      await updatePackagesStatus(
+        packages,
+        targetStatus,
+        targetStatus === 'delivered' ? 'manifest_clean_delivered' : 'manifest_clean_to_route',
+        auditLog
+      );
       toast({
-        title: "Paquetes en ruta",
-        description: `${paidRowsInCustoms.length} paquete${paidRowsInCustoms.length !== 1 ? 's' : ''} pagados movidos a En Ruta en Manifiesto ${manifestNumber}.`,
+        title: targetStatus === 'delivered' ? "Manifiesto limpiado y archivado" : "Paquetes en ruta",
+        description: `${packages.length} paquete${packages.length !== 1 ? 's' : ''} ${targetStatus === 'delivered' ? 'marcados como entregados' : 'movidos a En Ruta'}.`,
       });
+      setStatusConfirm(null);
+      setSelectedSlCodes(new Set());
       setCleanPopoverOpen(false);
       onMutationSuccess?.();
     } catch (err) {
@@ -2244,26 +2430,7 @@ function ManifestCard({
     } finally {
       setCleaningAction(null);
     }
-  }, [paidRowsInCustoms, cleaningAction, manifestNumber, toast, onMutationSuccess, auditLog]);
-
-  const handleCleanDeliver = useCallback(async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!paidRowsNotDelivered.length || cleaningAction) return;
-    setCleaningAction('delivered');
-    try {
-      await updatePackagesStatus(paidRowsNotDelivered, 'delivered', 'manifest_clean_delivered', auditLog);
-      toast({
-        title: "Manifiesto limpiado y archivado",
-        description: `${paidRowsNotDelivered.length} paquete${paidRowsNotDelivered.length !== 1 ? 's' : ''} pagados marcados como entregados.`,
-      });
-      setCleanPopoverOpen(false);
-      onMutationSuccess?.();
-    } catch (err) {
-      toast({ title: "Error al actualizar", description: String(err), variant: "destructive" });
-    } finally {
-      setCleaningAction(null);
-    }
-  }, [paidRowsNotDelivered, cleaningAction, toast, onMutationSuccess, auditLog]);
+  };
 
   const handleBulkDeliver = useCallback(async () => {
     if (selectedPackagesForDelivery.length === 0 || deliveringSelected) return;
@@ -2622,14 +2789,17 @@ function ManifestCard({
                         size="sm"
                         variant="outline"
                         className="w-full justify-start text-xs h-8 gap-2 border-orange-300 text-orange-800 hover:bg-orange-50 dark:border-orange-700 dark:text-orange-300 dark:hover:bg-orange-950/40"
-                        onClick={handleCleanMoveToRoute}
-                        disabled={!!cleaningAction}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCleanPopoverOpen(false);
+                          setStatusConfirm({
+                            targetStatus: 'route',
+                            packages: paidRowsInCustoms,
+                            scopeLabel: `Manifiesto ${manifestNumber} (Pagados en Aduana)`,
+                          });
+                        }}
                       >
-                        {cleaningAction === 'route' ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-600" />
-                        ) : (
-                          <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
-                        )}
+                        <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
                         <span>Mover <strong>{paidRowsInCustoms.length} en aduana</strong> a "En Ruta"</span>
                       </Button>
                     )}
@@ -2638,14 +2808,17 @@ function ManifestCard({
                       size="sm"
                       variant="outline"
                       className="w-full justify-start text-xs h-8 gap-2 border-emerald-300 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-                      onClick={handleCleanDeliver}
-                      disabled={!!cleaningAction}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCleanPopoverOpen(false);
+                        setStatusConfirm({
+                          targetStatus: 'delivered',
+                          packages: paidRowsNotDelivered,
+                          scopeLabel: `Manifiesto ${manifestNumber} (Todos los Pagados)`,
+                        });
+                      }}
                     >
-                      {cleaningAction === 'delivered' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
-                      ) : (
-                        <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                      )}
+                      <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                       <span>Marcar <strong>{paidRowsNotDelivered.length} pagados</strong> como Entregados</span>
                     </Button>
                   </div>
@@ -2679,15 +2852,17 @@ function ManifestCard({
                   <Button
                     size="sm"
                     className="h-7 px-2.5 text-[11px] font-medium gap-1.5 shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white flex"
-                    onClick={handleBulkDeliver}
-                    disabled={deliveringSelected}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStatusConfirm({
+                        targetStatus: 'delivered',
+                        packages: selectedPackagesForDelivery,
+                        scopeLabel: `Selección (${selectedSlCodes.size} clientes) - Manifiesto ${manifestNumber}`,
+                      });
+                    }}
                     title={`Marcar ${totalRouteSelectedRows} paquete${totalRouteSelectedRows !== 1 ? 's' : ''} como entregados`}
                   >
-                    {deliveringSelected ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <CheckCircle className="h-3.5 w-3.5" />
-                    )}
+                    <CheckCircle className="h-3.5 w-3.5" />
                     Entregar ({totalRouteSelectedRows})
                   </Button>
                 )}
@@ -2696,15 +2871,17 @@ function ManifestCard({
                   <Button
                     size="sm"
                     className="h-7 px-2.5 text-[11px] font-medium gap-1.5 shrink-0 bg-orange-600 hover:bg-orange-700 text-white flex"
-                    onClick={handleBulkMoveToRoute}
-                    disabled={movingToRouteSelected}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStatusConfirm({
+                        targetStatus: 'route',
+                        packages: selectedPackagesForRoute,
+                        scopeLabel: `Selección (${selectedSlCodes.size} clientes) - Manifiesto ${manifestNumber}`,
+                      });
+                    }}
                     title={`Poner ${totalEligibleForRoute} paquete${totalEligibleForRoute !== 1 ? 's' : ''} en ruta de entrega`}
                   >
-                    {movingToRouteSelected ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <MapPin className="h-3.5 w-3.5" />
-                    )}
+                    <MapPin className="h-3.5 w-3.5" />
                     Ruta ({totalEligibleForRoute})
                   </Button>
                 )}
