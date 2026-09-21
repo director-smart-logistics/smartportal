@@ -42,7 +42,8 @@ import {
   Sparkles,
   Scale,
   Copy,
-  MapPin
+  MapPin,
+  Truck
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layouts/DashboardLayout";
 import { useAudit } from "@/hooks/use-audit";
@@ -233,6 +234,85 @@ function WhatsAppIcon({ className }: { className?: string }) {
 
 function waLink(phone: string) {
   return `https://wa.me/${phone.replace(/\D/g, '')}`;
+}
+
+const ROUTE_STATUS_KEYS = ['route', 'on_route', 'in_route', 'on_rute', 'on-route', 'in-route'];
+
+/**
+ * Shared helper to update package status in Firestore (packages and manifest_encomiendas),
+ * sync to SmartWeb/SP2, and log audit event.
+ */
+async function updatePackagesStatus(
+  pkgs: EncomiendaManifestRow[],
+  targetStatus: 'route' | 'delivered',
+  auditActionName: string,
+  userAuditLog?: any
+) {
+  if (!pkgs.length) return;
+  const syncedAt = new Date().toISOString();
+  const statusLabel = targetStatus === 'delivered' ? 'Entregado' : 'En Ruta';
+  const batch = writeBatch(db);
+
+  for (const p of pkgs) {
+    const pkgRef = doc(db, 'packages', p.tracking.toUpperCase());
+    batch.update(pkgRef, {
+      status: targetStatus,
+      statusLabel,
+      updatedAt: syncedAt,
+    });
+
+    const encRef = doc(db, 'manifest_encomiendas', p.tracking.toUpperCase());
+    batch.update(encRef, {
+      status: targetStatus,
+      statusLabel,
+      updatedAt: syncedAt,
+    });
+  }
+
+  await batch.commit();
+
+  // Sync to SmartWeb
+  const pkgsToSync = pkgs.map((p) => ({
+    id: p.tracking.toUpperCase(),
+    trackingNumber: p.tracking,
+    slCode: p.slCode || '',
+    customerName: p.customerName || '',
+    status: targetStatus,
+    weight: p.weight,
+    description: p.description || '',
+    ruta: p.ruta || 'Encomiendas',
+    manifestNumber: p.manifestNumber || '',
+    forceSync: true,
+    allowCreate: true,
+  }));
+
+  try {
+    await syncPackagesToSmartWeb(pkgsToSync);
+    const syncBatch = writeBatch(db);
+    for (const p of pkgs) {
+      const pkgRef = doc(db, 'packages', p.tracking.toUpperCase());
+      syncBatch.update(pkgRef, {
+        smartwebSynced: true,
+        smartwebSyncedAt: syncedAt,
+        smartwebSyncSource: `encomienda_${targetStatus}`,
+      });
+    }
+    await syncBatch.commit();
+  } catch (syncErr) {
+    console.warn(`[encomienda ${targetStatus} smartweb sync failed]`, syncErr);
+  }
+
+  userAuditLog?.({
+    action: auditActionName,
+    category: 'package',
+    result: 'success',
+    resource: 'encomiendas',
+    metadata: {
+      status: targetStatus,
+      count: pkgs.length,
+      trackings: pkgs.map((p) => p.tracking),
+    },
+  });
 }
 
 interface LiveInvoiceContextType {
@@ -802,11 +882,13 @@ function CustomerGroup({
   const [pendingEnc, setPendingEnc] = useState<Encomienda | null>(null);
   const [assigningEnc, setAssigningEnc] = useState(false);
   const { toast } = useToast();
+  const { log: auditLog } = useAudit();
   const [globalDesc, setGlobalDesc] = useState("SERVICIO DE TERCERO");
   const [globalCost, setGlobalCost] = useState("");
   const [globalCurrency, setGlobalCurrency] = useState<'USD' | 'CRC'>('USD');
   const [globalSaving, setGlobalSaving] = useState(false);
   const [lookingInvoice, setLookingInvoice] = useState(false);
+  const [updatingCustomerStatus, setUpdatingCustomerStatus] = useState<string | null>(null);
 
   // ── Temp customer creation state ────────────────────────────────────────────
   const [tempDialogOpen, setTempDialogOpen]       = useState(false);
@@ -832,6 +914,56 @@ function CustomerGroup({
     const key = `${slCode}_${manifestNumber}`;
     return liveInvoiceByCustomerManifest.get(key) || (firstTracking ? liveInvoiceByTracking.get(firstTracking.toUpperCase()) : null);
   }, [slCode, manifestNumber, firstTracking, liveInvoiceByCustomerManifest, liveInvoiceByTracking]);
+
+  const isCustomerPaid = (invoiceFromMap?.status || '').toLowerCase() === 'paid';
+  const customerEligibleForRoute = useMemo(() => {
+    return rows.filter((r) => {
+      const effectiveStatus = (r.status || '').toLowerCase();
+      return !ROUTE_STATUS_KEYS.includes(effectiveStatus) && effectiveStatus !== 'delivered';
+    });
+  }, [rows]);
+  const customerEligibleForDeliver = useMemo(() => {
+    return rows.filter((r) => {
+      const effectiveStatus = (r.status || '').toLowerCase();
+      return effectiveStatus !== 'delivered';
+    });
+  }, [rows]);
+
+  const handleCustomerMoveToRoute = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!customerEligibleForRoute.length || updatingCustomerStatus) return;
+    setUpdatingCustomerStatus('route');
+    try {
+      await updatePackagesStatus(customerEligibleForRoute, 'route', 'customer_packages_to_route', auditLog);
+      toast({
+        title: "Puesto en Ruta",
+        description: `${customerEligibleForRoute.length} paquete${customerEligibleForRoute.length !== 1 ? 's' : ''} de ${customerName} puestos en ruta.`,
+      });
+      onMutationSuccess();
+    } catch (err) {
+      toast({ title: "Error al actualizar", description: String(err), variant: "destructive" });
+    } finally {
+      setUpdatingCustomerStatus(null);
+    }
+  };
+
+  const handleCustomerDeliver = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!customerEligibleForDeliver.length || updatingCustomerStatus) return;
+    setUpdatingCustomerStatus('delivered');
+    try {
+      await updatePackagesStatus(customerEligibleForDeliver, 'delivered', 'customer_packages_delivered', auditLog);
+      toast({
+        title: "Entrega completada",
+        description: `${customerEligibleForDeliver.length} paquete${customerEligibleForDeliver.length !== 1 ? 's' : ''} de ${customerName} marcados como entregados.`,
+      });
+      onMutationSuccess();
+    } catch (err) {
+      toast({ title: "Error al actualizar", description: String(err), variant: "destructive" });
+    } finally {
+      setUpdatingCustomerStatus(null);
+    }
+  };
 
   const liveManualItems = useMemo(() => {
     const items = invoiceFromMap?.invoiceItems ?? invoiceFromMap?.items ?? [];
@@ -1598,6 +1730,34 @@ function CustomerGroup({
           )}
 
           <div className="ml-auto flex items-center gap-2 shrink-0">
+            {!readOnly && isCustomerPaid && customerEligibleForRoute.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-[11px] font-medium gap-1.5 shrink-0 border-orange-300 text-orange-700 hover:bg-orange-50 dark:border-orange-700/60 dark:text-orange-400 dark:hover:bg-orange-950/20 bg-background"
+                onClick={handleCustomerMoveToRoute}
+                disabled={!!updatingCustomerStatus}
+                title={`Factura pagada: poner ${customerEligibleForRoute.length} paquete(s) en ruta`}
+              >
+                {updatingCustomerStatus === 'route' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
+                Poner en Ruta ({customerEligibleForRoute.length})
+              </Button>
+            )}
+
+            {!readOnly && isCustomerPaid && customerEligibleForDeliver.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-[11px] font-medium gap-1.5 shrink-0 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/60 dark:text-emerald-400 dark:hover:bg-emerald-950/20 bg-background"
+                onClick={handleCustomerDeliver}
+                disabled={!!updatingCustomerStatus}
+                title={`Factura pagada: marcar ${customerEligibleForDeliver.length} paquete(s) como entregados`}
+              >
+                {updatingCustomerStatus === 'delivered' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
+                Entregar ({customerEligibleForDeliver.length})
+              </Button>
+            )}
+
             {!readOnly && onMoveToTransitoria && (
               <Button
                 size="sm"
@@ -1965,7 +2125,7 @@ function ManifestCard({
   const { toast } = useToast();
   const { log: auditLog } = useAudit();
   const context = useContext(LiveInvoiceContext);
-  const { onMutationSuccess } = context || {};
+  const { liveInvoiceByTracking, liveInvoiceByCustomerManifest, onMutationSuccess } = context || {};
 
   const [selectedSlCodes, setSelectedSlCodes] = useState<Set<string>>(new Set());
   const [localGroupsOpen, setLocalGroupsOpen] = useState<boolean | null>(null);
@@ -2020,95 +2180,96 @@ function ManifestCard({
     const allSelectedPkgs = targets.flatMap((c) => c.rows);
     return allSelectedPkgs.filter(p => {
       const effectiveStatus = (p.status || '').toLowerCase();
-      return ['route', 'on_route', 'in_route', 'on_rute', 'on-route', 'in-route'].includes(effectiveStatus);
+      return ROUTE_STATUS_KEYS.includes(effectiveStatus);
     });
   }, [byCustomer, selectedSlCodes]);
 
   const totalRouteSelectedRows = selectedPackagesForDelivery.length;
-
-  const ROUTE_STATUS_KEYS = ['route', 'on_route', 'in_route', 'on_rute', 'on-route', 'in-route'];
 
   const selectedPackagesForRoute = useMemo(() => {
     const targets = byCustomer.filter((c) => selectedSlCodes.has(c.slCode));
     const allSelectedPkgs = targets.flatMap((c) => c.rows);
     return allSelectedPkgs.filter(p => {
       const effectiveStatus = (p.status || '').toLowerCase();
-      return !ROUTE_STATUS_KEYS.includes(effectiveStatus);
+      return !ROUTE_STATUS_KEYS.includes(effectiveStatus) && effectiveStatus !== 'delivered';
     });
   }, [byCustomer, selectedSlCodes]);
 
   const totalEligibleForRoute = selectedPackagesForRoute.length;
 
+  const getRowInvoice = useCallback((r: EncomiendaManifestRow) => {
+    if (!r.slCode || r.slCode.startsWith('__')) {
+      return liveInvoiceByTracking?.get(r.tracking.toUpperCase());
+    }
+    const manifestKey = `${r.slCode.toUpperCase()}_${manifestNumber}`;
+    return liveInvoiceByCustomerManifest?.get(manifestKey)
+      || (r.tracking ? liveInvoiceByTracking?.get(r.tracking.toUpperCase()) : null);
+  }, [manifestNumber, liveInvoiceByCustomerManifest, liveInvoiceByTracking]);
+
+  const paidRowsInCustoms = useMemo(() => {
+    return rows.filter((r) => {
+      const inv = getRowInvoice(r);
+      const isPaid = (inv?.status || '').toLowerCase() === 'paid';
+      const effectiveStatus = (r.status || '').toLowerCase();
+      return isPaid && !ROUTE_STATUS_KEYS.includes(effectiveStatus) && effectiveStatus !== 'delivered';
+    });
+  }, [rows, getRowInvoice]);
+
+  const paidRowsNotDelivered = useMemo(() => {
+    return rows.filter((r) => {
+      const inv = getRowInvoice(r);
+      const isPaid = (inv?.status || '').toLowerCase() === 'paid';
+      const effectiveStatus = (r.status || '').toLowerCase();
+      return isPaid && effectiveStatus !== 'delivered';
+    });
+  }, [rows, getRowInvoice]);
+
+  const [cleanPopoverOpen, setCleanPopoverOpen] = useState(false);
+  const [cleaningAction, setCleaningAction] = useState<string | null>(null);
+
+  const handleCleanMoveToRoute = useCallback(async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!paidRowsInCustoms.length || cleaningAction) return;
+    setCleaningAction('route');
+    try {
+      await updatePackagesStatus(paidRowsInCustoms, 'route', 'manifest_clean_to_route', auditLog);
+      toast({
+        title: "Paquetes en ruta",
+        description: `${paidRowsInCustoms.length} paquete${paidRowsInCustoms.length !== 1 ? 's' : ''} pagados movidos a En Ruta en Manifiesto ${manifestNumber}.`,
+      });
+      setCleanPopoverOpen(false);
+      onMutationSuccess?.();
+    } catch (err) {
+      toast({ title: "Error al actualizar", description: String(err), variant: "destructive" });
+    } finally {
+      setCleaningAction(null);
+    }
+  }, [paidRowsInCustoms, cleaningAction, manifestNumber, toast, onMutationSuccess, auditLog]);
+
+  const handleCleanDeliver = useCallback(async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!paidRowsNotDelivered.length || cleaningAction) return;
+    setCleaningAction('delivered');
+    try {
+      await updatePackagesStatus(paidRowsNotDelivered, 'delivered', 'manifest_clean_delivered', auditLog);
+      toast({
+        title: "Manifiesto limpiado y archivado",
+        description: `${paidRowsNotDelivered.length} paquete${paidRowsNotDelivered.length !== 1 ? 's' : ''} pagados marcados como entregados.`,
+      });
+      setCleanPopoverOpen(false);
+      onMutationSuccess?.();
+    } catch (err) {
+      toast({ title: "Error al actualizar", description: String(err), variant: "destructive" });
+    } finally {
+      setCleaningAction(null);
+    }
+  }, [paidRowsNotDelivered, cleaningAction, toast, onMutationSuccess, auditLog]);
+
   const handleBulkDeliver = useCallback(async () => {
     if (selectedPackagesForDelivery.length === 0 || deliveringSelected) return;
     setDeliveringSelected(true);
     try {
-      const syncedAt = new Date().toISOString();
-      const batch = writeBatch(db);
-      
-      for (const p of selectedPackagesForDelivery) {
-        const pkgRef = doc(db, 'packages', p.tracking.toUpperCase());
-        batch.update(pkgRef, {
-          status: "delivered",
-          statusLabel: "Entregado",
-          updatedAt: syncedAt
-        });
-
-        const encRef = doc(db, 'manifest_encomiendas', p.tracking.toUpperCase());
-        batch.update(encRef, {
-          status: "delivered",
-          statusLabel: "Entregado",
-          updatedAt: syncedAt
-        });
-      }
-      
-      await batch.commit();
-      
-      // Sync to SP2/SmartWeb reactively
-      const pkgsToSync = selectedPackagesForDelivery.map(p => ({
-        id: p.tracking.toUpperCase(),
-        trackingNumber: p.tracking,
-        slCode: p.slCode || '',
-        customerName: p.customerName || '',
-        status: 'delivered',
-        weight: p.weight,
-        description: p.description || '',
-        ruta: p.ruta || 'Encomiendas',
-        manifestNumber: p.manifestNumber || '',
-        forceSync: true,
-        allowCreate: true
-      }));
-
-      try {
-        await syncPackagesToSmartWeb(pkgsToSync);
-        
-        // Stamp packages as synced
-        const syncBatch = writeBatch(db);
-        for (const p of selectedPackagesForDelivery) {
-          const pkgRef = doc(db, 'packages', p.tracking.toUpperCase());
-          syncBatch.update(pkgRef, {
-            smartwebSynced: true,
-            smartwebSyncedAt: syncedAt,
-            smartwebSyncSource: "bulk_delivery",
-          });
-        }
-        await syncBatch.commit();
-      } catch (syncErr) {
-        console.warn("[bulk delivery smartweb sync failed]", syncErr);
-      }
-
-      auditLog({
-        action: 'packages_bulk_updated',
-        category: 'package',
-        result: 'success',
-        resource: 'encomiendas',
-        metadata: {
-          status: 'delivered',
-          count: selectedPackagesForDelivery.length,
-          trackings: selectedPackagesForDelivery.map(p => p.tracking)
-        }
-      });
-
+      await updatePackagesStatus(selectedPackagesForDelivery, 'delivered', 'packages_bulk_updated', auditLog);
       toast({
         title: "Entrega completada",
         description: `${selectedPackagesForDelivery.length} paquete${selectedPackagesForDelivery.length !== 1 ? 's' : ''} marcados como entregados.`,
@@ -2116,18 +2277,6 @@ function ManifestCard({
       setSelectedSlCodes(new Set());
       onMutationSuccess?.();
     } catch (err) {
-      auditLog({
-        action: 'packages_bulk_updated',
-        category: 'package',
-        result: 'error',
-        resource: 'encomiendas',
-        errorMessage: err instanceof Error ? err.message : String(err),
-        metadata: {
-          status: 'delivered',
-          count: selectedPackagesForDelivery.length
-        }
-      });
-
       toast({
         title: "Error al entregar",
         description: String(err),
@@ -2136,78 +2285,13 @@ function ManifestCard({
     } finally {
       setDeliveringSelected(false);
     }
-  }, [selectedPackagesForDelivery, deliveringSelected, toast, onMutationSuccess]);
+  }, [selectedPackagesForDelivery, deliveringSelected, toast, onMutationSuccess, auditLog]);
 
   const handleBulkMoveToRoute = useCallback(async () => {
     if (selectedPackagesForRoute.length === 0 || movingToRouteSelected) return;
     setMovingToRouteSelected(true);
     try {
-      const syncedAt = new Date().toISOString();
-      const batch = writeBatch(db);
-      
-      for (const p of selectedPackagesForRoute) {
-        const pkgRef = doc(db, 'packages', p.tracking.toUpperCase());
-        batch.update(pkgRef, {
-          status: "route",
-          statusLabel: "En Ruta",
-          updatedAt: syncedAt
-        });
-
-        const encRef = doc(db, 'manifest_encomiendas', p.tracking.toUpperCase());
-        batch.update(encRef, {
-          status: "route",
-          statusLabel: "En Ruta",
-          updatedAt: syncedAt
-        });
-      }
-      
-      await batch.commit();
-      
-      // Sync to SP2/SmartWeb reactively
-      const pkgsToSync = selectedPackagesForRoute.map(p => ({
-        id: p.tracking.toUpperCase(),
-        trackingNumber: p.tracking,
-        slCode: p.slCode || '',
-        customerName: p.customerName || '',
-        status: 'route',
-        weight: p.weight,
-        description: p.description || '',
-        ruta: p.ruta || 'Encomiendas',
-        manifestNumber: p.manifestNumber || '',
-        forceSync: true,
-        allowCreate: true
-      }));
-
-      try {
-        await syncPackagesToSmartWeb(pkgsToSync);
-        
-        // Stamp packages as synced
-        const syncBatch = writeBatch(db);
-        for (const p of selectedPackagesForRoute) {
-          const pkgRef = doc(db, 'packages', p.tracking.toUpperCase());
-          syncBatch.update(pkgRef, {
-            smartwebSynced: true,
-            smartwebSyncedAt: syncedAt,
-            smartwebSyncSource: "bulk_route",
-          });
-        }
-        await syncBatch.commit();
-      } catch (syncErr) {
-        console.warn("[bulk route smartweb sync failed]", syncErr);
-      }
-
-      auditLog({
-        action: 'packages_bulk_updated',
-        category: 'package',
-        result: 'success',
-        resource: 'encomiendas',
-        metadata: {
-          status: 'route',
-          count: selectedPackagesForRoute.length,
-          trackings: selectedPackagesForRoute.map(p => p.tracking)
-        }
-      });
-
+      await updatePackagesStatus(selectedPackagesForRoute, 'route', 'packages_bulk_updated', auditLog);
       toast({
         title: "Puesto en Ruta",
         description: `${selectedPackagesForRoute.length} paquete${selectedPackagesForRoute.length !== 1 ? 's' : ''} movidos a En Ruta de Entrega.`,
@@ -2215,18 +2299,6 @@ function ManifestCard({
       setSelectedSlCodes(new Set());
       onMutationSuccess?.();
     } catch (err) {
-      auditLog({
-        action: 'packages_bulk_updated',
-        category: 'package',
-        result: 'error',
-        resource: 'encomiendas',
-        errorMessage: err instanceof Error ? err.message : String(err),
-        metadata: {
-          status: 'route',
-          count: selectedPackagesForRoute.length
-        }
-      });
-
       toast({
         title: "Error al poner en ruta",
         description: String(err),
@@ -2235,7 +2307,7 @@ function ManifestCard({
     } finally {
       setMovingToRouteSelected(false);
     }
-  }, [selectedPackagesForRoute, movingToRouteSelected, toast, onMutationSuccess]);
+  }, [selectedPackagesForRoute, movingToRouteSelected, toast, onMutationSuccess, auditLog]);
 
   const handleBulkDelete = useCallback(async () => {
     const targets = byCustomer.filter((c) => selectedSlCodes.has(c.slCode));
@@ -2513,6 +2585,78 @@ function ManifestCard({
             }
             Manifiesto
           </Button>
+
+          {!readOnly && paidRowsNotDelivered.length > 0 && (
+            <Popover open={cleanPopoverOpen} onOpenChange={setCleanPopoverOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2.5 text-[11px] font-semibold gap-1.5 shrink-0 border-amber-400/80 bg-amber-50/80 text-amber-900 hover:bg-amber-100 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50 shadow-xs"
+                  onClick={(e) => e.stopPropagation()}
+                  title={`Este manifiesto tiene ${paidRowsNotDelivered.length} paquete(s) con factura pagada pendientes de despacho o entrega`}
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 animate-pulse" />
+                  Limpiar pagados ({paidRowsNotDelivered.length})
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                className="w-80 p-3 shadow-lg z-50 bg-popover"
+                align="end"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="space-y-2.5">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      Limpiar / Despachar Manifiesto
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
+                      Hay <strong className="text-foreground">{paidRowsNotDelivered.length} paquete(s)</strong> con factura pagada en este manifiesto. Elige la acción adecuada:
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-2 pt-1">
+                    {paidRowsInCustoms.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full justify-start text-xs h-8 gap-2 border-orange-300 text-orange-800 hover:bg-orange-50 dark:border-orange-700 dark:text-orange-300 dark:hover:bg-orange-950/40"
+                        onClick={handleCleanMoveToRoute}
+                        disabled={!!cleaningAction}
+                      >
+                        {cleaningAction === 'route' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-600" />
+                        ) : (
+                          <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
+                        )}
+                        <span>Mover <strong>{paidRowsInCustoms.length} en aduana</strong> a "En Ruta"</span>
+                      </Button>
+                    )}
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full justify-start text-xs h-8 gap-2 border-emerald-300 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                      onClick={handleCleanDeliver}
+                      disabled={!!cleaningAction}
+                    >
+                      {cleaningAction === 'delivered' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
+                      ) : (
+                        <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                      )}
+                      <span>Marcar <strong>{paidRowsNotDelivered.length} pagados</strong> como Entregados</span>
+                    </Button>
+                  </div>
+
+                  <p className="text-[10px] text-muted-foreground/80 italic border-t border-border/50 pt-1.5">
+                    * Al marcar todos los paquetes como entregados, el manifiesto se archivará y desaparecerá automáticamente de esta lista.
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
           {selectedSlCodes.size > 0 && (() => {
             const totalSelectedRows = byCustomer
               .filter((c) => selectedSlCodes.has(c.slCode))

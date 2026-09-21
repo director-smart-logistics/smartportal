@@ -2,6 +2,21 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1614] - 2026-09-21
+
+### Added & Improved (Botón Inteligente de Limpieza / Despacho de Manifiestos de Encomiendas)
+- **Botón de Limpieza en Encabezado de Manifiesto (`EncomiendaManifests.tsx` - `ManifestCard`):**
+  - Incorporado botón inteligente contextual `Limpiar pagados ({N})` que aparece automáticamente cuando un manifiesto contiene paquetes con facturas en estado `paid` pero cuyo estado de paquete aún es `customs` (En Aduanas) o pendiente de entrega.
+  - Ofrece dos acciones inmediatas:
+    1. **🚚 Mover a "En Ruta"**: Actualiza los paquetes en aduana a `status: 'route'` y `statusLabel: 'En Ruta'`, sincronizando con SmartWeb/SP2 y registrando auditoría.
+    2. **✅ Marcar como "Entregados" y Archivar**: Actualiza los paquetes a `status: 'delivered'`, archivando el manifiesto y haciéndolo desaparecer automáticamente de la vista activa de encomiendas.
+- **Acciones Rápidas por Cliente (`CustomerGroup`):**
+  - Añadidos botones de 1 solo clic `Poner en Ruta` y `Entregar` en el encabezado de cada cliente cuando su factura está pagada, agilizando el despacho sin requerir selección manual de checkboxes.
+- **Helper Unificado de Estado de Paquetes (`updatePackagesStatus`):**
+  - Centralizada la lógica de persistencia en batch de Firestore (`packages` y `manifest_encomiendas`), sincronización reactiva a SmartWeb/SP2 y logging de auditoría.
+- **Pruebas Automatizadas (`EncomiendaManifestCleanFlow.spec.tsx`):**
+  - Suite de pruebas validando la detección de paquetes pagados en aduana, la transición a ruta y la exclusión de paquetes entregados del snapshot activo. Total de 181 suites pasando al 100% (2,423 pruebas).
+
 ## [0.0.1612] - 2026-09-21
 
 ### Fixed & Hardened (Resolución Canónica de Nombres en Pre-Alertas sin Perfil Completo en BD)
