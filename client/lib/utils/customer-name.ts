@@ -125,13 +125,16 @@ export function resolveCustomerFullName(
 
 /**
  * Checks if a string is a synthetic placeholder name like "Cliente Pre-alertado (SL123)",
- * "SL-NAN-123", "SIN-NOMBRE", etc.
+ * "SL2601002", "SL-NAN-123", "SIN-NOMBRE", etc.
  */
 export function isSyntheticPlaceholderName(name: string | undefined | null): boolean {
   if (!name) return true;
-  const lower = name.trim().toLowerCase();
-  if (!lower) return true;
+  const clean = name.trim();
+  if (!clean) return true;
+  const lower = clean.toLowerCase();
   if (lower.includes('pre-alerta') || lower.includes('prealerta')) return true;
+  // Raw locker codes (e.g. SL2601002, SL4859, SL-123, SL_999, SL-NAN-01) are identifiers, not human names
+  if (/^sl[-_]?\d+$/i.test(clean) || /^sl[-_]?nan/i.test(clean)) return true;
   if (lower.startsWith('sl-') || lower.startsWith('sl_')) return true;
   if (lower === 'cliente' || lower === 'usuario' || lower === 'sin-codigo' || lower === 'sin codigo') return true;
   return false;

@@ -2,6 +2,17 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1612] - 2026-09-21
+
+### Fixed & Hardened (Resolución Canónica de Nombres en Pre-Alertas sin Perfil Completo en BD)
+- **Detección Universal de Códigos de Casillero como Nombres Sintéticos (`customer-name.ts` - `isSyntheticPlaceholderName`):**
+  - Actualizado el filtro sintético para detectar patrones de casillero puro `/^sl[-_]?\d+$/i` y `/^sl[-_]?nan/i`.
+  - Cuando un paquete es pre-alertado por una cuenta en SP2 cuyo perfil carece de nombres o fue registrado únicamente con su código (ej. `SL2601002`), el sistema reconoce que el código no es un nombre humano y hace fallback limpio en cascada hacia el nombre real del consignatario del manifiesto courier (`SHARLYNN DIAZ`).
+- **Unificación de Nombres en Encabezados de Grupo (`NovaTableModal.tsx`):**
+  - Implementado `resolveEffectiveCustomerName` en `groupDisplayName` y `displayName` del encabezado de cliente en Nova Table, asegurando paridad visual 100% idéntica entre la tabla interactiva, los modales de búsqueda, el selector de rutas y la facturación.
+- **Pruebas de Regresión (`customer-name.spec.ts`):**
+  - 34 pruebas pasando al 100% cubriendo casilleros puros (`SL2601002`, `SL4859`, `SL100`, etc.), 180 suites completas pasando (2,420 tests) y `pnpm typecheck` con 0 errores.
+
 ## [0.0.1611] - 2026-09-21
 
 ### Architectural Rules & Comprehensive Documentation (Zero-Regression Cross-Manifest Guard)

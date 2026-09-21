@@ -235,6 +235,7 @@ import { useNovaResolvedRows } from "@/hooks/use-nova-resolved-rows";
 import { useNovaPriceCalcs } from "@/hooks/use-nova-price-calcs";
 import { useNovaDownloads } from "@/hooks/use-nova-downloads";
 import { formatCustomerDetailDate, parseDateSafe } from "@/lib/utils/date-utils";
+import { resolveEffectiveCustomerName } from "@/lib/utils/customer-name";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -277,6 +278,9 @@ type GroupEntry = {
     precioConPermiso: number;
     matchScore: number;
     matchSource?: "pre_alert" | "name";
+    hasPreAlert?: boolean;
+    preAlertSlCode?: string;
+    preAlert?: Record<string, any>;
     originalData: Record<string, unknown>;
   };
   originalIdx: number;
@@ -7026,12 +7030,14 @@ export const ResultSummary = memo(function ResultSummary({
                           const isGroupUnlinked = !effectiveSlCode || groupKey.startsWith("__unmatched__") || unlinkedRows.has(firstIdx);
                           const groupDisplayName = isGroupUnlinked
                             ? (nameOverrides[firstIdx] || firstRow.nombre || "")
-                            : (matchOverrides[firstIdx]?.fullName ||
-                               nameOverrides[firstIdx] ||
-                               cc?.fullName ||
-                               firstRow.nombreCliente ||
-                               firstRow.nombre ||
-                               "");
+                            : resolveEffectiveCustomerName({
+                                overrideName: matchOverrides[firstIdx]?.fullName || nameOverrides[firstIdx],
+                                contactName: cc?.fullName,
+                                preAlertName: (firstRow.preAlert?.displayName || firstRow.preAlert?.fullName || firstRow.preAlert?.name || firstRow.preAlert?.clientName),
+                                savedCustomerName: firstRow.nombreCliente,
+                                manifestConsigneeName: firstRow.nombre,
+                                slCode: effectiveSlCode,
+                              });
                           const divergentEntries =
                             effectiveSlCode &&
                               dataOriginPolicy.showDivergentBadges
@@ -7189,11 +7195,14 @@ export const ResultSummary = memo(function ResultSummary({
                                       const isRowUnlinked = !effectiveSlCode || unlinkedRows.has(firstIdx) || groupKey.startsWith("__unmatched__");
                                       const displayName = isRowUnlinked
                                         ? (nameOverrides[firstIdx] || firstRow.nombre)
-                                        : (mo?.fullName ||
-                                           nameOverrides[firstIdx] ||
-                                           cc?.fullName ||
-                                           firstRow.nombreCliente ||
-                                           firstRow.nombre);
+                                        : resolveEffectiveCustomerName({
+                                            overrideName: mo?.fullName || nameOverrides[firstIdx],
+                                            contactName: cc?.fullName,
+                                            preAlertName: (firstRow.preAlert?.displayName || firstRow.preAlert?.fullName || firstRow.preAlert?.name || firstRow.preAlert?.clientName),
+                                            savedCustomerName: firstRow.nombreCliente,
+                                            manifestConsigneeName: firstRow.nombre,
+                                            slCode: effectiveSlCode,
+                                          });
                                       // `uppercase` Tailwind utility forces capitalization at
                                       // the CSS layer (text-transform: uppercase) so the operator
                                       // sees a consistent caps presentation across the whole

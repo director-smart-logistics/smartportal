@@ -176,12 +176,16 @@ describe('resolveCustomerFullName', () => {
 });
 
 describe('isSyntheticPlaceholderName', () => {
-  it('identifies synthetic pre-alert names', () => {
+  it('identifies synthetic pre-alert names and raw locker codes', () => {
     expect(isSyntheticPlaceholderName('Cliente Pre-alertado (SL262179)')).toBe(true);
     expect(isSyntheticPlaceholderName('Cliente Pre-Alerta')).toBe(true);
     expect(isSyntheticPlaceholderName('Prealerta')).toBe(true);
     expect(isSyntheticPlaceholderName('SL-NAN-999')).toBe(true);
     expect(isSyntheticPlaceholderName('SL-123')).toBe(true);
+    expect(isSyntheticPlaceholderName('SL_999')).toBe(true);
+    expect(isSyntheticPlaceholderName('SL2601002')).toBe(true);
+    expect(isSyntheticPlaceholderName('sl4859')).toBe(true);
+    expect(isSyntheticPlaceholderName('SL100')).toBe(true);
     expect(isSyntheticPlaceholderName('Cliente')).toBe(true);
     expect(isSyntheticPlaceholderName('Usuario')).toBe(true);
     expect(isSyntheticPlaceholderName('SIN-CODIGO')).toBe(true);
@@ -193,10 +197,22 @@ describe('isSyntheticPlaceholderName', () => {
     expect(isSyntheticPlaceholderName('DAYANA MARIA JIMENEZ ESQUIVEL')).toBe(false);
     expect(isSyntheticPlaceholderName('DAYANA JIMENEZ')).toBe(false);
     expect(isSyntheticPlaceholderName('JUAN PEREZ')).toBe(false);
+    expect(isSyntheticPlaceholderName('SHARLYNN DIAZ')).toBe(false);
   });
 });
 
 describe('resolveEffectiveCustomerName', () => {
+  it('falls back to manifestConsigneeName when contact profile and preAlert only contain raw SL code (Sharlynn Diaz SL2601002 case)', () => {
+    const res = resolveEffectiveCustomerName({
+      contactName: 'SL2601002',
+      preAlertName: 'SL2601002',
+      savedCustomerName: 'SL2601002',
+      manifestConsigneeName: 'SHARLYNN DIAZ',
+      slCode: 'SL2601002',
+    });
+    expect(res).toBe('SHARLYNN DIAZ');
+  });
+
   it('prioritizes registered contact profile over synthetic pre-alert string', () => {
     const res = resolveEffectiveCustomerName({
       savedCustomerName: 'Cliente Pre-alertado (SL262179)',
