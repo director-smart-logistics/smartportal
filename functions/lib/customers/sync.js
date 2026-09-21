@@ -19,6 +19,8 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.slForceSyncCustomerFromSP2 = exports.slSyncCustomerFromSp2 = exports.slUpdateCustomerProfile = exports.triggerCustomerSync = void 0;
+exports.resolveCustomerFullNameHelper = resolveCustomerFullNameHelper;
+exports.transformUserToCustomer = transformUserToCustomer;
 // import { onSchedule } from "firebase-functions/v2/scheduler";
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
@@ -179,25 +181,9 @@ function toISOString(timestamp) {
     return null;
 }
 /**
- * Transform SP2 User to SP1 Customer
- * Uses slCode as document ID (unique identifier)
+ * Helper to resolve customer full name
  */
-function transformUserToCustomer(sp2User, existingCustomer, addresses, defaultAddress, paymentMethods, defaultPaymentMethod) {
-    const now = new Date().toISOString();
-    // BUG-NAME-FROM-DISPLAYNAME evolution (Rule C, 2026-04-28):
-    // - Rule A (legacy): displayName || firstName+lastName — broke for SP2
-    //   handles like "Fran92MJ (Fran92MJ)" overwriting "Francisco Mejia".
-    // - Rule B (0.0.591): firstName+lastName || displayName — broke for SP1
-    //   customers with empty lastName: "Jesus" + "" + "JESUS ARRIETA CLAVERIA"
-    //   produced fullName="Jesus", destroying Nova name-based matching at scale.
-    // - Rule C (this fix): prefer displayName ONLY when it has strictly MORE
-    //   name tokens than firstName+lastName AND does NOT look like a handle
-    //   (no digits, no special chars, no repeated tokens). Otherwise use the
-    //   structured form. This is the SINGLE SOURCE OF TRUTH for fullName
-    //   resolution — mirrored verbatim in:
-    //     - client/lib/utils/customer-name.ts (tested in customer-name.spec.ts)
-    //     - functions/scripts/run-customer-sync.ts
-    //   Any rule change here MUST be ported to those copies and the tests.
+function resolveCustomerFullNameHelper(firstName, lastName, displayName) {
     const looksLikeHandle = (n) => {
         const c = n.trim();
         if (!c)
@@ -212,13 +198,42 @@ function transformUserToCustomer(sp2User, existingCustomer, addresses, defaultAd
             return true;
         return false;
     };
-    const computedName = `${(sp2User.firstName || '').trim()} ${(sp2User.lastName || '').trim()}`.trim();
-    const display = (sp2User.displayName || '').trim();
+    const normalizeForNameComparison = (str) => {
+        return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    };
+    const fName = (firstName || '').trim();
+    const lName = (lastName || '').trim();
+    const computedName = `${fName} ${lName}`.trim();
+    const display = (displayName || '').trim();
     const computedTokens = computedName ? computedName.split(/\s+/).length : 0;
     const displayTokens = display ? display.split(/\s+/).length : 0;
-    const fullName = (display && !looksLikeHandle(display) && displayTokens > computedTokens)
-        ? display
-        : (computedName || display || 'Usuario');
+    let fullName = computedName || display || 'Usuario';
+    if (display && !looksLikeHandle(display) && displayTokens > computedTokens) {
+        if (fName) {
+            const normDisplay = normalizeForNameComparison(display);
+            const normFirst = normalizeForNameComparison(fName);
+            const firstTokenOfFirst = normFirst.split(/\s+/)[0];
+            const normLast = lName ? normalizeForNameComparison(lName) : '';
+            const lastTokenOfLast = normLast ? normLast.split(/\s+/).slice(-1)[0] : '';
+            const startsWithFirst = normDisplay.startsWith(normFirst) || normDisplay.startsWith(firstTokenOfFirst);
+            const alignsWithLast = !normLast || normDisplay.endsWith(normLast) || (lastTokenOfLast ? normDisplay.endsWith(lastTokenOfLast) : false) || normDisplay.includes(normLast);
+            if (startsWithFirst && alignsWithLast) {
+                fullName = display;
+            }
+        }
+        else if (!computedName) {
+            fullName = display;
+        }
+    }
+    return fullName;
+}
+/**
+ * Transform SP2 User to SP1 Customer
+ * Uses slCode as document ID (unique identifier)
+ */
+function transformUserToCustomer(sp2User, existingCustomer, addresses, defaultAddress, paymentMethods, defaultPaymentMethod) {
+    const now = new Date().toISOString();
+    const fullName = resolveCustomerFullNameHelper(sp2User.firstName, sp2User.lastName, sp2User.displayName);
     const initialRouteHistory = [];
     if (!existingCustomer && sp2User.ruta) {
         initialRouteHistory.push({
@@ -302,6 +317,7 @@ function transformUserToCustomer(sp2User, existingCustomer, addresses, defaultAd
         createdAt: existingCustomer?.createdAt || toISOString(sp2User.createdAt) || now,
         updatedAt: now,
         lastLoginAt: toISOString(sp2User.lastLoginAt),
+        profileLastUpdatedAt: toISOString(sp2User.updatedAt) || toISOString(sp2User.createdAt) || now,
         sp2CreatedAt: existingCustomer?.sp2CreatedAt || toISOString(sp2User.createdAt) || now,
         sp2UpdatedAt: toISOString(sp2User.updatedAt),
     };
@@ -543,9 +559,10 @@ async function processUserDoc(doc, sp2Firestore, stats) {
         const emailToUse = sp1IsNewer ? (existingCustomer.email || sp2User.email || '') : (sp2User.email || existingCustomer.email || '');
         const dniToUse = sp1IsNewer ? (existingCustomer.dni || sp2User.dni || null) : (sp2User.dni || existingCustomer.dni || null);
         const phoneToUse = sp1IsNewer ? (existingCustomer.phone || sp2User.phone || null) : (sp2User.phone || existingCustomer.phone || null);
-        const fullNameToUse = sp1IsNewer ? existingCustomer.fullName : cleanCustomer.fullName;
         const firstToUse = sp1IsNewer ? existingCustomer.firstName : cleanCustomer.firstName;
         const lastToUse = sp1IsNewer ? existingCustomer.lastName : cleanCustomer.lastName;
+        const rawFullNameToUse = sp1IsNewer ? existingCustomer.fullName : cleanCustomer.fullName;
+        const fullNameToUse = resolveCustomerFullNameHelper(firstToUse, lastToUse, rawFullNameToUse);
         const updatedData = removeUndefined({
             ...cleanCustomer,
             ruta: rutaToUse,
@@ -907,9 +924,10 @@ exports.slSyncCustomerFromSp2 = (0, https_1.onRequest)({ cors: false, invoker: '
         else {
             paymentMethods = (existingCustomer?.paymentMethods ?? []).filter((p) => p.id);
         }
-        const defaultAddress = addresses.find((a) => a.isDefault && a.isActive) ?? addresses[0] ?? createEmptyAddressSchema();
+        const mergedAddresses = preserveSp1AddressFields(addresses, existingCustomer?.addresses ?? undefined);
+        const defaultAddress = mergedAddresses.find((a) => a.isDefault && a.isActive) ?? mergedAddresses[0] ?? createEmptyAddressSchema();
         const defaultPaymentMethod = paymentMethods.find((p) => p.isDefault && p.isActive) ?? paymentMethods[0] ?? createEmptyPaymentMethodSchema();
-        const customer = transformUserToCustomer(sp2User, existingCustomer, addresses.length ? addresses : [createEmptyAddressSchema()], defaultAddress, paymentMethods.length ? paymentMethods : [createEmptyPaymentMethodSchema()], defaultPaymentMethod);
+        const customer = transformUserToCustomer(sp2User, existingCustomer, mergedAddresses.length ? mergedAddresses : [createEmptyAddressSchema()], defaultAddress, paymentMethods.length ? paymentMethods : [createEmptyPaymentMethodSchema()], defaultPaymentMethod);
         const cleanCustomer = removeUndefined(customer);
         if (existingCustomer) {
             const sp1AdminTs = existingCustomer.sp1AdminUpdatedAt
@@ -1064,7 +1082,7 @@ exports.slForceSyncCustomerFromSP2 = (0, https_1.onCall)({ cors: true }, async (
                 id: slCode,
                 slCode: customerData.slCode,
                 email: customerData.email,
-                fullName: customerData.fullName,
+                fullName: resolveCustomerFullNameHelper(customerData.firstName, customerData.lastName, customerData.fullName),
             }
         };
     }

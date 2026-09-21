@@ -123,7 +123,7 @@ import { bulkUpdateInvoicesExchangeRate, recomputeInvoiceCRC } from "@/lib/servi
 import { parseInvoiceJQL } from "@/lib/utils/invoice-jql";
 import { deleteTempCustomer } from "@/lib/services/temp-customers-service";
 import { replaceInvoiceNumberPrefix, isTempSlCode, isOrphanSlCode, isOrphanInvoiceNumber, TEMP_WARNING_TITLE } from "@/lib/utils/invoice-reassign";
-import { cn } from "@/lib/utils";
+import { cn, extractInvoiceEmissionDate } from "@/lib/utils";
 import { getRouteColor, ROUTE_COLORS } from "@/lib/utils/route-colors";
 import { getCustomerServiceSuggestion } from "@/lib/services/encomienda-suggestions";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
@@ -1090,7 +1090,7 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
         (inv.slCode ?? "").toLowerCase().includes(term) ||
         (inv.customer?.slCode ?? "").toLowerCase().includes(term) ||
         slCodeNorm.includes(termNorm) ||
-        (inv.totalAmount ?? 0).toFixed(2).includes(term) ||
+        (Number(inv.totalAmount ?? 0)).toFixed(2).includes(term) ||
         (inv.manifestNumber ?? "").toLowerCase().includes(term) ||
         (inv.customer?.ruta ?? "").toLowerCase().includes(term) ||
         (inv.notes ?? "").toLowerCase().includes(term) ||
@@ -3179,13 +3179,14 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
           invoiceNumber: invoice.invoiceNumber,
         };
         const willPromoteStatus = !invoice.status || invoice.status === 'draft';
+        const isSuccessSend = Boolean(resendMessageId);
         const emailUpdateData: Record<string, any> = {
-          emailSent: true,
+          emailSent: isSuccessSend,
           emailSentAt: nowIso,
           lastResendMessageId: resendMessageId,
           emailSendLogs: arrayUnion(emailLog),
-          emailStatus: 'sent',
-          ...(willPromoteStatus ? { status: 'sent' } : {}),
+          emailStatus: isSuccessSend ? 'sent' : 'failed',
+          ...(isSuccessSend && willPromoteStatus ? { status: 'sent' } : {}),
         };
         if (resendMessageId) {
           emailUpdateData.emailResendIds = arrayUnion(resendMessageId);
@@ -3196,12 +3197,15 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
         setLiveInvoiceData(prev => {
           const next = new Map(prev);
           const current = next.get(invoiceId) || {};
+          const existingLogs = current.emailSendLogs || [];
           next.set(invoiceId, {
             ...current,
-            emailSent: true,
+            emailSent: isSuccessSend,
             emailSentAt: nowIso,
-            emailStatus: 'sent',
-            ...(willPromoteStatus ? { status: 'sent' } : {}),
+            lastResendMessageId: resendMessageId,
+            emailStatus: isSuccessSend ? 'sent' : 'failed',
+            emailSendLogs: [...existingLogs, emailLog],
+            ...(isSuccessSend && willPromoteStatus ? { status: 'sent' } : {}),
           });
           return next;
         });
@@ -3383,6 +3387,7 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
       const inv = invoices.find(i => i.id === invoiceId);
       if (inv) {
         const now = new Date().toISOString();
+        const invoiceEmissionDate = extractInvoiceEmissionDate(inv) || now;
         const slCode = inv.slCode || inv.customerId || '';
         const custName = (inv as any).clientName || inv.customer?.fullName || slCode;
         const ruta = inv.customer?.ruta || (inv as any).clientRoute || '';
@@ -3406,9 +3411,10 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
             manifestNumber: manifest,
             invoiceId,
             invoiceNumber: inv.invoiceNumber,
+            invoiceDate: invoiceEmissionDate,
             invoiceStatus: 'annulled',
             status: '',
-            movedAt: now,
+            movedAt: invoiceEmissionDate,
           }));
 
         if (items.length > 0) {
@@ -3466,15 +3472,14 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
                 invoiceStatus: deleteField(), // FIX: Limpiar el estado de factura residual
                 annulledInvoiceId: invoiceId,
                 annulledInvoiceNumber: inv.invoiceNumber || invoiceId,
+                annulledInvoiceDate: invoiceEmissionDate,
                 annulledAt: now2,
-                ...(!data.firstConsolidatedAt ? { firstConsolidatedAt: now2 } : {}),
+                invoicedAt: invoiceEmissionDate,
+                firstConsolidatedAt: data.firstConsolidatedAt
+                  ? (new Date(data.firstConsolidatedAt).getTime() < new Date(invoiceEmissionDate).getTime() ? data.firstConsolidatedAt : invoiceEmissionDate)
+                  : invoiceEmissionDate,
                 smartwebSynced: false,
                 smartwebSyncSource: 'transitoria',
-                invoicedAt: (inv as any).createdAt
-                  ? (typeof (inv as any).createdAt.toDate === 'function'
-                      ? (inv as any).createdAt.toDate().toISOString()
-                      : String((inv as any).createdAt))
-                  : now2,
                 statusHistory: arrayUnion({
                   status: targetManifest ? 'customs' : 'consolidated',
                   changedAt: now2,
@@ -4050,7 +4055,7 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
     setBulkActionConfirmed(false);
 
     if (type === 'annul') {
-      const inv = invoices.find(i => i.id === invoiceId) || invoice;
+      const inv = invoices.find(i => i.id === invoiceId) || (invoicesById as any)?.get?.(invoiceId);
       const slCode = (inv as any)?.slCode || inv?.customerId || (inv as any)?.clientSlCode || '';
       
       const cachedCust = slCode ? getCustomerBySlCode(slCode) : null;

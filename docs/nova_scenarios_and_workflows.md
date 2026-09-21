@@ -268,7 +268,13 @@ La siguiente tabla describe exactamente qué campos cambian en Firestore en cada
 *   **Proceso**:
     1.  En la colección `packages`, los trackings se actualizan con `manifestNumber = B`.
     2.  Al abrir el manifiesto `A`, el control de reasignaciones asíncrono detecta que los paquetes están ahora asignados a `B` y los excluye de `A`.
-    3.  Al abrir el manifiesto `B`, la consulta de base de datos extrae los paquetes por su nuevo `manifestNumber` y los muestra listos para facturar en su nuevo destino.
+### Escenario 7: Desvinculación de Tracking ("Crear Grupo Separado")
+*   **Acción**: El operador detecta que una fila fue asociada erróneamente por el motor de matching o por reglas aprendidas a un cliente homónimo (ej. `LUIS RODRIGUEZ` asociado erróneamente a `CARLOS LUIS UMAÑA RODRIGUEZ`), y hace clic en *"Crear grupo separado"* (Desvincular tracking).
+*   **Comportamiento del Sistema**:
+    1.  **Aislamiento en Memoria (`unlinkedRows`)**: La fila se incluye en el conjunto `unlinkedRows`, aislándose en su propio grupo independiente `unlinked_row_${i}`.
+    2.  **Resolución de Nombre Limpia**: El encabezado de grupo (`groupDisplayName`), la celda de nombre (`displayName`) y el resolver de filas (`useNovaResolvedRows`) revierten inmediatamente a `row.nombre` (el nombre real del consignatario del manifiesto), suprimiendo cualquier residuo del cliente anterior y la etiqueta `[• sin registro]`.
+    3.  **Purga Activa de Aprendizaje (`forgetMatchFeedback`)**: Se ejecuta de forma deduplicada y no bloqueante la eliminación de todas las reglas asociadas a ese nombre en `match_feedback`, `manifest_learning_patterns` y `unmatched_route_learning` en Firestore, garantizando que futuras revalidaciones o reaperturas del manifiesto no reasocien al cliente incorrecto.
+    4.  **Cero Sobrecostos en Firebase**: La resolución de nombres y agrupación se ejecuta 100% en la memoria RAM del navegador, y la purga a Firestore se deduplica para enviar exactamente 1 consulta por nombre único, sin bucles de lectura/escritura.
 
 ---
 
@@ -512,7 +518,7 @@ graph LR
 
 ---
 
-## 13. Arquitectura del Bloqueo Permanente de Precios Cero (Zero-Price Lock)
+## 14. Arquitectura del Bloqueo Permanente de Precios Cero (Zero-Price Lock)
 
 ### A. Causa Raíz de la Regresión (Post-Mortem Técnico)
 En JavaScript, el operador de coalescencia nula (`??`) evalúa el número `0` como un valor existente (ya que `0 !== null && 0 !== undefined`). En una refactorización previa realizada por la IA, se introdujo la expresión `(loadedFromFirestore ? row.precio : undefined) ?? fallback`. 
@@ -537,6 +543,62 @@ Para erradicar permanentemente esta vulnerabilidad, se implementó un bloqueo mu
 2. **Aislamiento de Tarifas**: Para ítems con `peso === 0`, el lock NO fuerza cobro de franjas mínimas de peso ($8.00); el precio se mantiene en `$0.00` de forma segura.
 3. **Tarifas de Desalmacenaje / Trámite Manual**: Si el operador asigna un costo manual de trámite DUA vía override de precio (ej. `$45.00`), este valor se respeta con máxima prioridad.
 4. **Liberación Aduanal y Transición Automática**: En el momento en que aduana libera el paquete y el operador ingresa su peso real (`peso > 0`), el badge DUA se retira y el motor de tarifas calcula automáticamente el costo exacto según las tablas tarifarias vigentes.
+
+---
+
+## 15. Arquitectura del Guardián contra Colisión Inter-Manifiestos y Secuestro de Paquetes (Cross-Manifest Invariant Protection)
+
+### A. Post-Mortem y Diagnóstico del Fallo
+Cuando paquetes son trasladados o consolidados entre manifiestos (por ejemplo, desde un manifiesto fusionado `SL-MEGA-MAN-17-09-2026` hacia un nuevo manifiesto Courier `18-09-2026DAN`):
+1. El documento de la colección global `packages/{tracking}` se actualizaba correctamente con `manifestNumber = '18-09-2026DAN'`.
+2. Sin embargo, el documento del manifiesto origen `manifests/SL-MEGA-MAN-17-09-2026` conservaba el snapshot del paquete en su arreglo JSON `packages[]`.
+3. Al reabrir el manifiesto origen en Nova, la consulta de suplementos ejecutaba `where('trackingNumber', 'in', chunk)`. Como los documentos en Firestore están indexados por ID de documento o por el campo `tracking` (en mayúsculas), la consulta fallaba en empatar el registro existente.
+4. Como consecuencia, el cargador asumía erróneamente que el paquete era un "suplemento perdido" y lo inyectaba a la tabla en memoria.
+5. Al activarse el auto-guardado (`useNovaAutoSave`) o al guardar manualmente, `ingestManifestToPackages` y `upsertManifestPackageOverrides` sobreescribían a ciegas `packages/{tracking}.manifestNumber` de vuelta a `SL-MEGA-MAN-17-09-2026`, **secuestrando el paquete del manifiesto destino y corrompiendo los montos y conteos de facturas**.
+
+```mermaid
+graph TD
+    subgraph Origen ["Manifiesto Origen (SL-MEGA-MAN-17-09-2026)"]
+        Snap[manifests.packages Array Retiene Tracking]
+    end
+    
+    subgraph Destino ["Manifiesto Destino (18-09-2026DAN)"]
+        Pkg[packages/TRACKING tiene manifestNumber = 18-09-2026DAN]
+    end
+
+    Snap -->|Recarga en Nova| LoadCheck{¿Consulta Documento por ID?}
+    LoadCheck -->|Tier 1: getDoc| ReadDoc[Lee packages/TRACKING]
+    ReadDoc --> TargetCheck{¿manifestNumber en targetMnSet?}
+    TargetCheck -->|No: Pertenece a 18-09-2026DAN| Exclude[Excluir de Memoria]
+    
+    subgraph WriteGuard ["Tier 2: Invariant Guard en Escritura (ingestion.ts)"]
+        SaveReq[Guardado / Auto-Guardado] --> CheckAllowed{¿currentManifest en allowedSourceSet?}
+        CheckAllowed -->|No| SkipWrite[OMITIR ESCRITURA: Bloqueo de Secuestro]
+        CheckAllowed -->|Sí| WriteDoc[Actualizar packages/{tracking}]
+    end
+```
+
+### B. Arquitectura de Protección en 3 Capas
+
+1. **Capa 1: Búsqueda Determinista por Document-ID en `fusion.ts`**:
+   - Se erradicaron las consultas ambiguas `where('trackingNumber', 'in', ...)`.
+   - Se utiliza lookup directo por ID de documento: `getDoc(doc(db, 'packages', trackingId))`.
+2. **Capa 2: Whitelist Estricta de Manifiestos (`targetMnSet`) en Carga**:
+   - Se construye el conjunto de manifiestos válidos `targetMnSet = { megaManId, ...fusedFrom, ...fusedManifests }`.
+   - Si un paquete reside en la colección global con un `manifestNumber` ajeno (ej. `18-09-2026DAN`), se **descarta de inmediato** de `embeddedSupplement`.
+3. **Capa 3: Guardián de Invariantes en Tiempo de Escritura (`ingestion.ts`)**:
+   - En `upsertManifestPackageOverrides` e `ingestManifestToPackages`, se calcula `allowedSourceSet = { manifestNumber, ...allowedSourceManifests, ...row.manifiesto }`.
+   - Si un paquete en Firestore tiene `currentManifest` fuera de `allowedSourceSet` y no existe override explícito de manifiesto, el sistema **omite la escritura de `manifestNumber` y sus overrides**.
+4. **Capa 4: Limpieza Bidireccional de Contenedores Padre (`manifest-consolidation-service.ts`)**:
+   - Al trasladar paquetes (`movePackagesBetweenManifestDocs`), el sistema detecta si el origen o destino pertenecen a un `MEGA-MAN` o `ENC-MEGA-MAN` y purga atómicamente los trackings movidos de sus arreglos embebidos `packages[]`.
+
+### C. Cobertura de Pruebas Automatizadas
+- [`client/lib/services/manifest-processor/__tests__/manifest-processor.round-trip.spec.ts`](file:///Users/jbricenoz/Workspace/smartlogistics/smart-portal-1/client/lib/services/manifest-processor/__tests__/manifest-processor.round-trip.spec.ts):
+  - `should NOT overwrite manifestNumber for foreign packages not belonging to manifest context`
+  - `should allow updating package if currentManifest is in allowedSourceManifests (e.g. source manifest in fusion)`
+  - `should allow explicit manifest relocation when rowManifestOverrides is provided`
+  - `should protect foreign package from being overwritten during ingestManifestToPackages`
+
 
 
 

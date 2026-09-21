@@ -64,6 +64,8 @@ export const PackageSchema = z.object({
   tax: safeNumber.optional(),
 }).passthrough();
 
+import { resolveCustomerFullName } from '../utils/customer-name';
+
 /**
  * Sanitizes a raw document from Firestore based on its collection name
  */
@@ -75,6 +77,10 @@ export function sanitizeDocument(collectionName: string, data: any): any {
     }
     if (collectionName === 'packages') {
       return PackageSchema.parse({ id: data.id || '', ...data });
+    }
+    if (collectionName === 'customers' || collectionName === 'users') {
+      const fullName = resolveCustomerFullName(data.firstName, data.lastName, data.fullName || data.displayName);
+      return { ...data, fullName };
     }
   } catch (err) {
     console.error(`[Sanitization] Failed to parse document in ${collectionName}:`, err);

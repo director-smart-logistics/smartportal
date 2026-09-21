@@ -216,5 +216,6 @@ export function useCustomerSearch(nombre: string, currentSlCode?: string): UseCu
     loading,
     handleInput,
     clearQuery,
+    triggerSearchImmediate,
   };
 }

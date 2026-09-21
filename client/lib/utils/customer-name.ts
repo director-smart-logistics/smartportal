@@ -68,6 +68,10 @@ export function looksLikeHandle(name: string): boolean {
   return false;
 }
 
+function normalizeForNameComparison(str: string): string {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
 /**
  * Resolve the authoritative customer full name from structured SP1 fields
  * and free-form SP2 displayName. See file-level doc for the complete rule
@@ -85,12 +89,36 @@ export function resolveCustomerFullName(
   lastName: string | undefined | null,
   displayName: string | undefined | null,
 ): string {
-  const computed = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim();
+  const fName = (firstName || '').trim();
+  const lName = (lastName || '').trim();
+  const computed = `${fName} ${lName}`.trim();
   const display  = (displayName || '').trim();
   const computedTokens = computed ? computed.split(/\s+/).length : 0;
   const displayTokens  = display ? display.split(/\s+/).length : 0;
+
   if (display && !looksLikeHandle(display) && displayTokens > computedTokens) {
-    return display;
+    // If structured firstName is present, displayName must align with the structured name
+    // (i.e. start with firstName or its initial token, and align with lastName if present).
+    // This prevents a legacy/conflicting displayName (e.g. "AMANDA JOSE BERROCAL VEGA") from
+    // overriding a user-updated structured name (e.g. "Sylvana Berrocal Vega"), while allowing
+    // middle names (e.g. "Juan" + "Perez Mora" -> "Juan Alberto Perez Mora") or extra maternal surnames.
+    if (fName) {
+      const normDisplay = normalizeForNameComparison(display);
+      const normFirst = normalizeForNameComparison(fName);
+      const firstTokenOfFirst = normFirst.split(/\s+/)[0];
+      const normLast = lName ? normalizeForNameComparison(lName) : '';
+      const lastTokenOfLast = normLast ? normLast.split(/\s+/).slice(-1)[0] : '';
+
+      const startsWithFirst = normDisplay.startsWith(normFirst) || normDisplay.startsWith(firstTokenOfFirst);
+      const alignsWithLast = !normLast || normDisplay.endsWith(normLast) || (lastTokenOfLast ? normDisplay.endsWith(lastTokenOfLast) : false) || normDisplay.includes(normLast);
+
+      if (startsWithFirst && alignsWithLast) {
+        return display;
+      }
+    } else if (!computed) {
+      // Both firstName and lastName are empty -> display wins
+      return display;
+    }
   }
   return computed || display || 'Usuario';
 }

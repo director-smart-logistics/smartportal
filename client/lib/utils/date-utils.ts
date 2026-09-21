@@ -30,7 +30,7 @@ export interface CostaRicaDateParts {
 }
 
 /**
- * Safely parse any date value (Date, ISO string, epoch millis, Firestore Timestamp { seconds, nanoseconds } or { toDate() })
+ * Safely parse any date value (Date, ISO string, epoch seconds/millis, Firestore Timestamp { seconds, nanoseconds }, { _seconds }, or { toDate() })
  */
 export function parseDateSafe(dateVal: any): Date | null {
   if (dateVal == null || dateVal === '') return null;
@@ -42,13 +42,52 @@ export function parseDateSafe(dateVal: any): Date | null {
       const d = dateVal.toDate();
       return isNaN(d.getTime()) ? null : d;
     }
-    if (dateVal.seconds != null) {
+    if (dateVal._seconds != null && typeof dateVal._seconds === 'number') {
+      const d = new Date(dateVal._seconds * 1000 + (dateVal._nanoseconds ? Math.floor(dateVal._nanoseconds / 1e6) : 0));
+      return isNaN(d.getTime()) ? null : d;
+    }
+    if (dateVal.seconds != null && typeof dateVal.seconds === 'number') {
       const d = new Date(dateVal.seconds * 1000 + (dateVal.nanoseconds ? Math.floor(dateVal.nanoseconds / 1e6) : 0));
       return isNaN(d.getTime()) ? null : d;
     }
   }
-  const d = new Date(dateVal);
-  return isNaN(d.getTime()) ? null : d;
+  if (typeof dateVal === 'number') {
+    const d = new Date(dateVal < 10000000000 ? dateVal * 1000 : dateVal);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof dateVal === 'string') {
+    const trimmed = dateVal.trim();
+    if (!trimmed) return null;
+    if (/^\d{10,13}$/.test(trimmed)) {
+      const num = Number(trimmed);
+      const d = new Date(num < 10000000000 ? num * 1000 : num);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+/**
+ * Formats a customer detail timestamp (e.g. "11 sept 2026, 02:00 p. m.") in Costa Rica timezone.
+ */
+export function formatCustomerDetailDate(dateVal: unknown): string {
+  if (!dateVal) return '';
+  const d = parseDateSafe(dateVal);
+  if (!d) return '';
+  try {
+    return new Intl.DateTimeFormat('es-CR', {
+      timeZone: COSTA_RICA_TIMEZONE,
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(d);
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -165,10 +204,9 @@ export function formatCostaRicaDateTime(dateVal: any, options?: Intl.DateTimeFor
  */
 export function extractDateFromInvoiceNumber(num?: string, options?: Intl.DateTimeFormatOptions): string {
   if (!num) return "-";
-  const m = num.match(/(\d{4})(\d{2})(\d{2})\d{6}/);
-  if (!m) return "-";
-  // Parse with explicit -06:00 Costa Rica offset so no machine local midnight shift occurs
-  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00-06:00`);
+  const iso = extractDateIsoFromInvoiceNumber(num);
+  if (!iso) return "-";
+  const d = new Date(iso);
   return d.toLocaleDateString("es-CR", {
     year: "numeric",
     month: "short",
@@ -176,4 +214,84 @@ export function extractDateFromInvoiceNumber(num?: string, options?: Intl.DateTi
     timeZone: COSTA_RICA_TIMEZONE,
     ...options,
   });
+}
+
+/**
+ * Extracts embedded date from invoice numbers (e.g. SL4859-20260416154146-C, SL2565-20260821191605309, INV-20260918)
+ * and returns Costa Rica ISO string YYYY-MM-DDTHH:mm:ss-06:00.
+ */
+export function extractDateIsoFromInvoiceNumber(num?: string): string | null {
+  if (!num) return null;
+  const m = num.match(/(?:-|^|\b)(\d{4})(\d{2})(\d{2})/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mon = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  if (y < 2020 || y > 2050 || mon < 1 || mon > 12 || d < 1 || d > 31) return null;
+  return `${m[1]}-${m[2]}-${m[3]}T12:00:00-06:00`;
+}
+
+/**
+ * Extracts the authoritative invoice emission date from any invoice object or raw data.
+ * Checks in order: invoiceDate, createdAt, date, invoicedAt, or encoded date in invoiceNumber.
+ * Guaranteed to return an ISO string or null.
+ */
+export function extractInvoiceEmissionDate(inv: any): string | null {
+  if (!inv) return null;
+
+  // 1. Explicit invoiceDate field
+  if (inv.invoiceDate) {
+    if (typeof (inv.invoiceDate as any).toDate === 'function') {
+      return (inv.invoiceDate as any).toDate().toISOString();
+    }
+    if (typeof inv.invoiceDate === 'string' && inv.invoiceDate.trim()) {
+      const trimmed = inv.invoiceDate.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        return `${trimmed}T12:00:00-06:00`;
+      }
+      const parsed = parseDateSafe(trimmed);
+      if (parsed) return parsed.toISOString();
+    }
+  }
+
+  // 2. createdAt field (Timestamp or ISO string)
+  if (inv.createdAt) {
+    if (typeof (inv.createdAt as any).toDate === 'function') {
+      return (inv.createdAt as any).toDate().toISOString();
+    }
+    if (typeof inv.createdAt === 'string' && inv.createdAt.trim()) {
+      const parsed = parseDateSafe(inv.createdAt);
+      if (parsed) return parsed.toISOString();
+    }
+  }
+
+  // 3. date field
+  if (inv.date) {
+    if (typeof (inv.date as any).toDate === 'function') {
+      return (inv.date as any).toDate().toISOString();
+    }
+    if (typeof inv.date === 'string' && inv.date.trim()) {
+      const trimmed = inv.date.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        return `${trimmed}T12:00:00-06:00`;
+      }
+      const parsed = parseDateSafe(trimmed);
+      if (parsed) return parsed.toISOString();
+    }
+  }
+
+  // 4. invoicedAt field
+  if (inv.invoicedAt) {
+    const parsed = parseDateSafe(inv.invoicedAt);
+    if (parsed) return parsed.toISOString();
+  }
+
+  // 5. Date encoded in invoiceNumber or annulledInvoiceNumber
+  const numToParse = inv.invoiceNumber || inv.annulledInvoiceNumber || (typeof inv === 'string' ? inv : null);
+  if (numToParse && typeof numToParse === 'string') {
+    const fromNum = extractDateIsoFromInvoiceNumber(numToParse);
+    if (fromNum) return fromNum;
+  }
+
+  return null;
 }

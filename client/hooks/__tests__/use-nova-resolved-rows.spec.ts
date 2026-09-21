@@ -228,6 +228,16 @@ describe('useNovaResolvedRows — name resolution', () => {
     expect(out[0].nombreCliente).toBe('DAYANA JIMENEZ ESQUIVEL');
     expect(out[0].nombreCliente).not.toContain('Cliente Pre-alertado');
   });
+
+  it('unlinked row (in unlinkedRows set) ignores stale nombreCliente and resolves to row.nombre', () => {
+    const out = buildResolved(
+      [makeRow({ tracking: 'TBA123', slCode: 'SL262179', nombreCliente: 'CARLOS LUIS UMAÑA RODRIGUEZ', nombre: 'LUIS RODRIGUEZ', ruta: 'GAM Alajuela' })],
+      { unlinkedRows: new Set([0]) }
+    );
+    expect(out[0].slCode).toBe('');
+    expect(out[0].ruta).toBe('GAM Alajuela');
+    expect(out[0].nombreCliente).toBe('LUIS RODRIGUEZ');
+  });
 });
 
 describe('useNovaResolvedRows — route resolution', () => {

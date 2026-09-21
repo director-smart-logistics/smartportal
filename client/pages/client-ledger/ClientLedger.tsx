@@ -39,6 +39,7 @@ import {
   pushStatusToSp2,
   syncInvoicePackagesToSp2,
 } from "@/lib/services/sync-invoices-service";
+import { resolveCustomerFullName } from "@/lib/utils/customer-name";
 import { cn, extractDateFromInvoiceNumber } from "@/lib/utils";
 import {
   Search,
@@ -268,6 +269,7 @@ const fmtDate = (value?: any): string => {
 const dateFromInvoiceNumber = (num?: string): string => extractDateFromInvoiceNumber(num);
 
 const getClientName = (c: CustomerProfile): string =>
+  resolveCustomerFullName(c.firstName, c.lastName, c.fullName) ||
   c.fullName ||
   [c.firstName, c.lastName].filter(Boolean).join(" ") ||
   c.slCode ||
@@ -305,7 +307,11 @@ async function searchCustomers(term: string): Promise<CustomerProfile[]> {
     const map = new Map<string, CustomerProfile>();
     snaps.forEach((snap) =>
       snap.docs.forEach((d) => {
-        if (!map.has(d.id)) map.set(d.id, { id: d.id, ...d.data() } as CustomerProfile);
+        if (!map.has(d.id)) {
+          const raw = d.data() as any;
+          const fullName = resolveCustomerFullName(raw.firstName, raw.lastName, raw.fullName || raw.displayName);
+          map.set(d.id, { id: d.id, ...raw, fullName } as CustomerProfile);
+        }
       })
     );
     return Array.from(map.values());

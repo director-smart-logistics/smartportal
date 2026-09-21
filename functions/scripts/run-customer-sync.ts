@@ -362,13 +362,35 @@ async function runSync() {
             tokens[0].toUpperCase() === tokens[1].toUpperCase()) return true;
         return false;
       };
-      const computedName = `${(user.firstName || '').trim()} ${(user.lastName || '').trim()}`.trim();
+      const normalizeForNameComparison = (str: string): string => {
+        return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      };
+      const fName = (user.firstName || '').trim();
+      const lName = (user.lastName || '').trim();
+      const computedName = `${fName} ${lName}`.trim();
       const display      = (user.displayName || '').trim();
       const computedTokens = computedName ? computedName.split(/\s+/).length : 0;
       const displayTokens  = display ? display.split(/\s+/).length : 0;
-      const fullName = (display && !looksLikeHandle(display) && displayTokens > computedTokens)
-        ? display
-        : (computedName || display || 'Usuario');
+
+      let fullName = computedName || display || 'Usuario';
+      if (display && !looksLikeHandle(display) && displayTokens > computedTokens) {
+        if (fName) {
+          const normDisplay = normalizeForNameComparison(display);
+          const normFirst = normalizeForNameComparison(fName);
+          const firstTokenOfFirst = normFirst.split(/\s+/)[0];
+          const normLast = lName ? normalizeForNameComparison(lName) : '';
+          const lastTokenOfLast = normLast ? normLast.split(/\s+/).slice(-1)[0] : '';
+
+          const startsWithFirst = normDisplay.startsWith(normFirst) || normDisplay.startsWith(firstTokenOfFirst);
+          const alignsWithLast = !normLast || normDisplay.endsWith(normLast) || (lastTokenOfLast ? normDisplay.endsWith(lastTokenOfLast) : false) || normDisplay.includes(normLast);
+
+          if (startsWithFirst && alignsWithLast) {
+            fullName = display;
+          }
+        } else if (!computedName) {
+          fullName = display;
+        }
+      }
       const now = new Date().toISOString();
 
         const customerRef = sp1Db.collection('customers').doc(slCode);

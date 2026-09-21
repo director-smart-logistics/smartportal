@@ -6,6 +6,9 @@ import {
   formatCostaRicaDate,
   formatCostaRicaDateTime,
   parseDateSafe,
+  formatCustomerDetailDate,
+  extractDateIsoFromInvoiceNumber,
+  extractInvoiceEmissionDate,
 } from '../date-utils';
 import {
   generateInvoiceNumber,
@@ -155,10 +158,75 @@ describe('Costa Rica Date Utilities (America/Costa_Rica, UTC-6)', () => {
     });
   });
 
+  describe('formatCustomerDetailDate', () => {
+    it('returns empty string for null, undefined, or empty values', () => {
+      expect(formatCustomerDetailDate(null)).toBe('');
+      expect(formatCustomerDetailDate(undefined)).toBe('');
+      expect(formatCustomerDetailDate('')).toBe('');
+      expect(formatCustomerDetailDate('invalid-date')).toBe('');
+    });
+
+    it('formats ISO string correctly in Costa Rica timezone', () => {
+      // 2026-09-11T20:56:00Z -> Costa Rica is UTC-6 -> 14:56 (02:56 p. m.)
+      const formatted = formatCustomerDetailDate('2026-09-11T20:56:00.000Z');
+      expect(formatted).toMatch(/11/);
+      expect(formatted).toMatch(/2026/);
+      expect(formatted).toMatch(/02:56/);
+    });
+
+    it('formats Firestore Web SDK Timestamp { seconds, nanoseconds }', () => {
+      const ts = { seconds: 1789159560, nanoseconds: 0 }; // 2026-09-11T20:46:00Z
+      const formatted = formatCustomerDetailDate(ts);
+      expect(formatted).toMatch(/11/);
+      expect(formatted).toMatch(/2026/);
+      expect(formatted).toMatch(/02:46/);
+    });
+
+    it('formats Firestore Admin SDK Timestamp { _seconds, _nanoseconds }', () => {
+      const ts = { _seconds: 1789159560, _nanoseconds: 0 };
+      const formatted = formatCustomerDetailDate(ts);
+      expect(formatted).toMatch(/11/);
+      expect(formatted).toMatch(/2026/);
+      expect(formatted).toMatch(/02:46/);
+    });
+
+    it('formats Timestamp with .toDate() method', () => {
+      const d = new Date('2026-08-20T13:59:00.000Z'); // 07:59 AM CR
+      const ts = { toDate: () => d };
+      const formatted = formatCustomerDetailDate(ts);
+      expect(formatted).toMatch(/20/);
+      expect(formatted).toMatch(/2026/);
+      expect(formatted).toMatch(/07:59/);
+    });
+  });
+
   describe('getCostaRicaTodayISO', () => {
     it('returns a valid YYYY-MM-DD string', () => {
       const todayISO = getCostaRicaTodayISO();
       expect(todayISO).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+  });
+
+  describe('extractDateIsoFromInvoiceNumber', () => {
+    it('extracts Costa Rica ISO date from various invoice number formats', () => {
+      expect(extractDateIsoFromInvoiceNumber('SL338-20260918143000-C')).toBe('2026-09-18T12:00:00-06:00');
+      expect(extractDateIsoFromInvoiceNumber('SL26649-20260803205954201-C')).toBe('2026-08-03T12:00:00-06:00');
+      expect(extractDateIsoFromInvoiceNumber('SL2565-20260821191605309')).toBe('2026-08-21T12:00:00-06:00');
+      expect(extractDateIsoFromInvoiceNumber('INV-20260918-001')).toBe('2026-09-18T12:00:00-06:00');
+      expect(extractDateIsoFromInvoiceNumber('')).toBeNull();
+      expect(extractDateIsoFromInvoiceNumber(undefined)).toBeNull();
+      expect(extractDateIsoFromInvoiceNumber('INVALID-NUM')).toBeNull();
+    });
+  });
+
+  describe('extractInvoiceEmissionDate', () => {
+    it('extracts emission date prioritizing explicit invoiceDate and createdAt', () => {
+      expect(extractInvoiceEmissionDate({ invoiceDate: '2026-09-18' })).toBe('2026-09-18T12:00:00-06:00');
+      expect(extractInvoiceEmissionDate({ createdAt: '2026-09-18T14:30:00.000Z' })).toBe('2026-09-18T14:30:00.000Z');
+      expect(extractInvoiceEmissionDate({ invoiceNumber: 'SL338-20260918120000000-C' })).toBe('2026-09-18T12:00:00-06:00');
+      expect(extractInvoiceEmissionDate({ annulledInvoiceNumber: 'SL338-20260918120000000-C' })).toBe('2026-09-18T12:00:00-06:00');
+      expect(extractInvoiceEmissionDate(null)).toBeNull();
+      expect(extractInvoiceEmissionDate({})).toBeNull();
     });
   });
 });

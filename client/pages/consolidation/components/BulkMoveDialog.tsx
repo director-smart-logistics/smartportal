@@ -13,6 +13,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   query,
   where,
@@ -106,7 +107,7 @@ export function BulkMoveDialog({
         }
       });
       const isPermisoBatch = packages.some(
-        p => p.requiresPermit || p.permisos || (p as any).isPermiso || currentManifest.toUpperCase().endsWith('DANP') || currentManifest.toUpperCase().includes('PERMISO')
+        p => p.requiresPermit || (p as any).permisos || (p as any).isPermiso || currentManifest.toUpperCase().endsWith('DANP') || currentManifest.toUpperCase().includes('PERMISO')
       );
 
       const today = new Date();

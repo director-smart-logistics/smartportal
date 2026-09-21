@@ -365,16 +365,17 @@ export async function loadMegaManFromFirestore(megaManId: string): Promise<Proce
         }
         const collectionPkgsSnaps = await Promise.all(
           trackingChunks.map(chunk =>
-            getDocs(query(collection(db, 'packages'), where('trackingNumber', 'in', chunk)))
+            Promise.all(chunk.map(trk => getDoc(doc(db, 'packages', trk)).catch(() => null)))
           )
         );
         const foundTrackings = new Set<string>();
-        collectionPkgsSnaps.flatMap(snap => snap.docs).forEach(d => {
-          const data = d.data();
-          const currentMn = String(data.manifestNumber || '').trim();
-          const tracking = String(data.trackingNumber || d.id).toUpperCase().trim();
+        collectionPkgsSnaps.flat().forEach(snap => {
+          if (!snap || !snap.exists()) return;
+          const data = snap.data();
+          const currentMn = String(data.manifestNumber || data.manifestId || data.updatedManifest || '').trim();
+          const tracking = String(data.trackingNumber || data.tracking || snap.id).toUpperCase().trim();
           foundTrackings.add(tracking);
-          if (currentMn && currentMn !== megaManId) {
+          if (currentMn && currentMn !== megaManId && !searchTerms.includes(currentMn)) {
             ghostTrackings.push(tracking);
           }
         });
@@ -434,18 +435,19 @@ export async function loadMegaManFromFirestore(megaManId: string): Promise<Proce
       
       const collectionPkgsSnaps = await Promise.all(
         trackingChunks.map(chunk =>
-          getDocs(query(collection(db, 'packages'), where('trackingNumber', 'in', chunk)))
+          Promise.all(chunk.map(trk => getDoc(doc(db, 'packages', trk)).catch(() => null)))
         )
       );
 
       const trackingToManifestMap = new Map<string, string>();
-      collectionPkgsSnaps.flatMap(snap => snap.docs).forEach(d => {
-        const data = d.data();
-        const trk = String(data.trackingNumber || d.id).toUpperCase().trim();
-        const mn = String(data.manifestNumber || '').trim().toUpperCase();
+      collectionPkgsSnaps.flat().forEach(snap => {
+        if (!snap || !snap.exists()) return;
+        const data = snap.data();
+        const trk = String(data.trackingNumber || data.tracking || snap.id).toUpperCase().trim();
+        const mn = String(data.manifestNumber || data.manifestId || data.updatedManifest || '').trim().toUpperCase();
         const encMn = String(data.encomiendaManifestNumber || '').trim().toUpperCase();
         trackingToManifestMap.set(trk, mn);
-        trackingToManifestMap.set(trk + '_ENC', encMn);
+        if (encMn) trackingToManifestMap.set(trk + '_ENC', encMn);
       });
 
       const targetMnSet = new Set([

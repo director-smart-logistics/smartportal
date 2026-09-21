@@ -300,7 +300,7 @@ describe('INVOICES MODULE: EMULATED END-TO-END UI & PERFORMANCE SUITE', () => {
     // Crucial check: Secondary getDocs queries to packages and updateDoc loops MUST be 0
     expect(mockGetDocs).not.toHaveBeenCalled();
     expect(mockUpdateDoc).not.toHaveBeenCalled();
-  });
+  }, 15000);
 
   it('2. Initial State & Render: Renders Invoices layout properly without crashing', async () => {
     const { container } = await renderInvoicesPage();

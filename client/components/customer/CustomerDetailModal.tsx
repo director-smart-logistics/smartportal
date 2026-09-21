@@ -31,6 +31,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useState } from "react";
+import { resolveCustomerFullName } from "@/lib/utils/customer-name";
 
 interface CustomerDetailModalProps {
   isOpen: boolean;
@@ -240,6 +241,11 @@ export function CustomerDetailModal({
 
   const isConsolidationActive = customer.consolidationEnabled === true;
   const hasValue = (v: unknown) => v !== null && v !== undefined && v !== "";
+  const displayFullName = (
+    resolveCustomerFullName(customer?.firstName, customer?.lastName, customer?.fullName) ||
+    customer?.fullName ||
+    ""
+  ).trim();
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -266,12 +272,12 @@ export function CustomerDetailModal({
                   : "bg-gray-100 text-gray-500 border-gray-300 dark:bg-gray-800 dark:text-gray-400",
               )}
             >
-              {(customer.fullName?.[0] ?? "?").toUpperCase()}
+              {(displayFullName?.[0] ?? "?").toUpperCase()}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h2 className="text-lg font-bold tracking-tight leading-tight">
-                  {customer.fullName?.toUpperCase()}
+                  {displayFullName.toUpperCase()}
                 </h2>
                 {customer.slCode && (
                   <Badge variant="outline" className="font-mono text-xs font-bold px-2 py-0.5 bg-primary/10 text-primary border-primary/20">

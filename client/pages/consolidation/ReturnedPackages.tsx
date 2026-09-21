@@ -50,6 +50,7 @@ interface ReturnedPackage {
   invoiceStatus?: string;
   weight?: number;
   description?: string;
+  firstConsolidatedAt?: any;
 }
 
 interface CustomerGroup {

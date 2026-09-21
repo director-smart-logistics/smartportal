@@ -20,6 +20,9 @@ import {
   Eye,
   Send,
   Undo2,
+  Calendar,
+  KeyRound,
+  AlertCircle,
 } from "lucide-react";
 import { cn, isCustomerConsolidating } from "@/lib/utils";
 import { useFeatureFlag } from "@/lib/context/FeatureFlagsContext";
@@ -93,6 +96,58 @@ const STATUS_STYLES: Record<string, string> = {
   annulled:  "bg-slate-100 text-slate-500 border-slate-300 dark:bg-slate-800/60 dark:text-slate-500 dark:border-slate-700 line-through",
   deleted:   "bg-red-100 text-red-800 border-red-400 dark:bg-red-950/60 dark:text-red-300 dark:border-red-800",
 };
+
+export function getInvoiceEmailInfo(invoice: any) {
+  const lastResendId =
+    invoice?.lastResendMessageId ||
+    (invoice?.emailSendLogs && invoice?.emailSendLogs.length > 0
+      ? invoice.emailSendLogs[invoice.emailSendLogs.length - 1]?.resendMessageId
+      : null);
+
+  const lastLog =
+    invoice?.emailSendLogs && invoice?.emailSendLogs.length > 0
+      ? invoice.emailSendLogs[invoice.emailSendLogs.length - 1]
+      : null;
+
+  const emailDate = invoice?.emailSentAt || lastLog?.sentAt;
+  const emailRecipient =
+    lastLog?.sentTo ||
+    invoice?.clientEmail ||
+    invoice?.customer?.email ||
+    "";
+
+  const emailStatus = (invoice?.emailStatus || "").toLowerCase();
+  const isFailedOrBounced =
+    emailStatus === "bounced" ||
+    emailStatus === "failed" ||
+    emailStatus === "complained";
+
+  const isFalsePositive =
+    invoice?.emailSent === true && !lastResendId;
+
+  // Status state: 'success' | 'error' | 'none'
+  let state: "success" | "error" | "none" = "none";
+
+  if (isFailedOrBounced || isFalsePositive) {
+    state = "error";
+  } else if (
+    Boolean(lastResendId) &&
+    (invoice?.emailSent || emailStatus === "delivered" || emailStatus === "sent" || Boolean(lastLog))
+  ) {
+    state = "success";
+  }
+
+  return {
+    state,
+    lastResendId,
+    emailDate,
+    emailRecipient,
+    emailStatus,
+    isFailedOrBounced,
+    isFalsePositive,
+    sendCount: invoice?.emailSendLogs?.length || (invoice?.emailSent ? 1 : 0),
+  };
+}
 
 export interface InvoicesSpreadsheetRowProps {
   invoice: any;
@@ -507,45 +562,142 @@ export const InvoicesSpreadsheetRow = React.memo(function InvoicesSpreadsheetRow
             </TooltipContent>
           </Tooltip>
 
-          {onSendEmail && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!isAnnulled) {
-                      onSendEmail(invoice.id);
-                    }
-                  }}
-                  disabled={sendingEmailId === invoice.id || isAnnulled}
-                  className={cn(
-                    "flex items-center justify-center h-8 w-8 rounded-lg border transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500",
-                    invoice.emailSent
-                      ? "border-sky-200 bg-sky-50/50 text-sky-600 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-400 hover:bg-sky-100/50"
-                      : "border-gray-200 bg-background text-muted-foreground hover:text-sky-600 hover:border-sky-200 hover:bg-sky-50/20 dark:border-gray-700 dark:hover:bg-gray-800 cursor-pointer",
-                    isAnnulled && "opacity-40 cursor-not-allowed"
-                  )}
-                  aria-label="Enviar correo"
-                >
-                  {sendingEmailId === invoice.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          {onSendEmail && (() => {
+            const emailInfo = getInvoiceEmailInfo(invoice);
+
+            const buttonStyle =
+              emailInfo.state === "success"
+                ? "border-emerald-300 bg-emerald-50/80 text-emerald-600 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400 dark:hover:bg-emerald-900/40 cursor-pointer focus:ring-emerald-500"
+                : emailInfo.state === "error"
+                ? "border-rose-300 bg-rose-50/80 text-rose-600 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400 dark:hover:bg-rose-900/40 cursor-pointer focus:ring-rose-500"
+                : "border-gray-200 bg-background text-muted-foreground hover:text-foreground hover:border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800 cursor-pointer focus:ring-gray-400";
+
+            const tooltipContainerStyle =
+              emailInfo.state === "success"
+                ? "!bg-white dark:!bg-zinc-900 border-2 border-emerald-500 text-gray-900 dark:text-gray-100 shadow-xl p-3 max-w-sm rounded-lg"
+                : emailInfo.state === "error"
+                ? "!bg-white dark:!bg-zinc-900 border-2 border-rose-500 text-gray-900 dark:text-gray-100 shadow-xl p-3 max-w-sm rounded-lg"
+                : "!bg-white dark:!bg-zinc-900 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100 shadow-xl p-3 max-w-xs rounded-lg";
+
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!isAnnulled) {
+                        onSendEmail(invoice.id);
+                      }
+                    }}
+                    disabled={sendingEmailId === invoice.id || isAnnulled}
+                    className={cn(
+                      "flex items-center justify-center h-8 w-8 rounded-lg border transition-colors shadow-sm focus:outline-none focus:ring-2",
+                      buttonStyle,
+                      isAnnulled && "opacity-40 cursor-not-allowed"
+                    )}
+                    aria-label="Estado de correo de factura"
+                  >
+                    {sendingEmailId === invoice.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    ) : (
+                      <Mail className="h-4 w-4" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side={tooltipSide} align={tooltipAlign} className={cn("text-xs", tooltipContainerStyle)}>
+                  {emailInfo.state === "success" ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 font-bold text-emerald-700 dark:text-emerald-400 text-xs">
+                        <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" />
+                        <span>
+                          {emailInfo.emailStatus === "delivered"
+                            ? "Correo entregado y verificado"
+                            : "Correo enviado y confirmado"}
+                        </span>
+                      </div>
+                      {emailInfo.emailDate && (
+                        <p className="text-[11px] text-gray-700 dark:text-gray-200 flex items-center gap-1.5">
+                          <Calendar className="h-3.5 w-3.5 text-gray-500 shrink-0" />
+                          <span><strong>Fecha:</strong> {formatRowDate(emailInfo.emailDate, true)}</span>
+                        </p>
+                      )}
+                      {emailInfo.lastResendId && (
+                        <div className="bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/60 rounded px-2 py-1 text-[10px] text-emerald-950 dark:text-emerald-200 font-mono break-all flex items-start gap-1.5">
+                          <KeyRound className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                          <span><strong>ID Resend:</strong> {emailInfo.lastResendId}</span>
+                        </div>
+                      )}
+                      {emailInfo.emailRecipient && (
+                        <p className="text-[11px] text-gray-600 dark:text-gray-300 truncate flex items-center gap-1.5">
+                          <Mail className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                          <span className="truncate"><strong>Para:</strong> {emailInfo.emailRecipient}</span>
+                        </p>
+                      )}
+                      <p className="text-gray-400 text-[10px] pt-1 border-t border-gray-100 dark:border-gray-800">
+                        Haz clic para reenviar
+                      </p>
+                    </div>
+                  ) : emailInfo.state === "error" ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 font-bold text-rose-700 dark:text-rose-400 text-xs">
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
+                        <span>
+                          {emailInfo.emailStatus === "bounced"
+                            ? "Correo rebotado (Bounced)"
+                            : emailInfo.emailStatus === "complained"
+                            ? "Reportado como Spam"
+                            : emailInfo.isFalsePositive
+                            ? "Sin confirmación de Resend (Fallo)"
+                            : "Error en envío de correo"}
+                        </span>
+                      </div>
+                      <div className="bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800/60 rounded p-1.5 text-[11px] text-rose-800 dark:text-rose-200">
+                        {emailInfo.emailStatus === "bounced"
+                          ? "El servidor del destinatario rechazó la entrega."
+                          : emailInfo.isFalsePositive
+                          ? "No se registró ID de transacción en Resend (falso positivo)."
+                          : "Ocurrió un error en la entrega del correo."}
+                      </div>
+                      {emailInfo.emailDate && (
+                        <p className="text-[11px] text-gray-700 dark:text-gray-200 flex items-center gap-1.5">
+                          <Calendar className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                          <span><strong>Intento:</strong> {formatRowDate(emailInfo.emailDate, true)}</span>
+                        </p>
+                      )}
+                      {emailInfo.emailRecipient && (
+                        <p className="text-[11px] text-gray-600 dark:text-gray-300 truncate flex items-center gap-1.5">
+                          <Mail className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                          <span className="truncate"><strong>Para:</strong> {emailInfo.emailRecipient}</span>
+                        </p>
+                      )}
+                      <p className="text-rose-600 dark:text-rose-400 font-semibold text-[10px] pt-1 border-t border-rose-100 dark:border-rose-900/30">
+                        Haz clic para reintentar envío
+                      </p>
+                    </div>
                   ) : (
-                    <Mail className="h-4 w-4" />
+                    <div className="space-y-1">
+                      <p className="font-bold text-gray-800 dark:text-gray-100 text-xs flex items-center gap-1.5">
+                        <Mail className="h-3.5 w-3.5 text-gray-500 shrink-0" />
+                        <span>Enviar correo</span>
+                      </p>
+                      <p className="text-gray-500 dark:text-gray-400 text-[11px]">La factura no ha sido enviada</p>
+                      {emailInfo.emailRecipient ? (
+                        <p className="text-gray-600 dark:text-gray-300 text-[11px] truncate flex items-center gap-1.5">
+                          <Mail className="h-3 w-3 text-gray-400 shrink-0" />
+                          <span className="truncate">Destino: {emailInfo.emailRecipient}</span>
+                        </p>
+                      ) : (
+                        <p className="text-amber-700 dark:text-amber-400 text-[11px] font-medium flex items-center gap-1.5">
+                          <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                          <span>Cliente sin correo registrado</span>
+                        </p>
+                      )}
+                    </div>
                   )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side={tooltipSide} align={tooltipAlign} className="text-xs">
-                {invoice.emailSent ? (
-                  <>
-                    <p className="font-semibold text-sky-600 dark:text-sky-450">Correo enviado ✓</p>
-                    <p className="text-gray-500 text-[9px] mt-0.5">Haz clic para reenviar</p>
-                  </>
-                ) : (
-                  "Enviar correo"
-                )}
-              </TooltipContent>
-            </Tooltip>
-          )}
+                </TooltipContent>
+              </Tooltip>
+            );
+          })()}
 
           {/* Actions dropdown */}
           <DropdownMenu>

@@ -127,10 +127,11 @@ export async function loadCustomers(): Promise<CustomerData[]> {
     if (res.success && res.data) {
       const docs = (res.data as any).data ?? res.data ?? [];
       cachedCustomers = (Array.isArray(docs) ? docs : []).map((data: any) => {
-        const fullName = (data.fullName || data.name || '').toUpperCase().trim();
+        const rawResolved = resolveCustomerFullName(data.firstName, data.lastName, data.fullName || data.name);
+        const fullName = (rawResolved || data.fullName || data.name || '').toUpperCase().trim();
         const firstName = (data.firstName || '').toUpperCase().trim();
         const lastName = (data.lastName || '').toUpperCase().trim();
-        const name = (data.name || fullName).toUpperCase().trim();
+        const name = (fullName || data.name || '').toUpperCase().trim();
         return {
           id: data.id,
           name,

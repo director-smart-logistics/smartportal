@@ -29,6 +29,10 @@ dist-ssr
 **/.env
 **/.env.*
 
+# Agents and MCP config (contains local keys)
+.agents/
+**/.agents/
+
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
 

@@ -116,7 +116,7 @@ import {
   Globe2,
   ShieldAlert,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, extractInvoiceEmissionDate } from "@/lib/utils";
 import {
   Tooltip,
   TooltipContent,
@@ -1146,12 +1146,24 @@ export function PackagesDataTable({
         
         const validDocs = pkgDocs.filter((d): d is NonNullable<typeof d> => d !== null);
         
+        const now = new Date().toISOString();
+        const invoiceEmissionDate = extractInvoiceEmissionDate(targetInvoice) || now;
+
         if (validDocs.length > 0) {
           const pkgBatch = writeBatch(db);
           validDocs.forEach((pkgDoc) => {
+            const pData = pkgDoc.data() as any;
             pkgBatch.update(doc(db, "packages", pkgDoc.id), {
               invoiceId: deleteField(),
               invoiceNumber: deleteField(),
+              annulledInvoiceId: invoiceId,
+              annulledInvoiceNumber: invoiceNumber,
+              annulledInvoiceDate: invoiceEmissionDate,
+              annulledAt: now,
+              invoicedAt: invoiceEmissionDate,
+              firstConsolidatedAt: pData.firstConsolidatedAt
+                ? (new Date(pData.firstConsolidatedAt).getTime() < new Date(invoiceEmissionDate).getTime() ? pData.firstConsolidatedAt : invoiceEmissionDate)
+                : invoiceEmissionDate,
               smartwebSynced: false,
               consolidacion: true,
               status: "consolidated",

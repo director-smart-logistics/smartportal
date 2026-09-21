@@ -26,6 +26,90 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1606',
+    date: '2026-09-21',
+    layer: 'both',
+    type: 'fix',
+    title: 'Cálculo Canónico del Período de Gracia (14 Días) en Consolidación a Partir de la Fecha de Emisión de Facturas Anuladas',
+    description:
+      '1. **Fecha de Emisión como Origen de Consolidación (`date-utils.ts`, `ConsolidationCustomerCard.tsx`)**: Al anular una factura (ej. SL338 facturada el viernes y anulada el lunes), el contador de 14 días de gracia arranca estrictamente desde la fecha original de emisión de la factura (`invoiceDate`, `createdAt`, o fecha `YYYYMMDD` incrustada en `invoiceNumber`) y NO desde la fecha/hora de anulación (`now`), calculando los días transcurridos y restantes exactos (ej. 3 días transcurridos, 11 días restantes).\\n' +
+      '2. **Inviolabilidad de `firstConsolidatedAt` en Handlers de Anulación (`Invoices.tsx`, `invoice-service.ts`, `ConsolidationInvoiceRow.tsx`, `PackagesDataTable.tsx`)**: Se blindaron los flujos de anulación para estampar `firstConsolidatedAt`, `invoicedAt` y `annulledInvoiceDate` con la fecha de emisión de la factura, preservando fechas anteriores legítimas si el paquete ya venía consolidando antes de la factura.\\n' +
+      '3. **Sincronización Total Header y Filas de Paquetes (`consolidation-carry-on-service.ts`, `oldestPackageDate`)**: `oldestPackageDate` evalúa las fechas de emisión de facturas anuladas y `firstConsolidatedAt` de cada paquete para que el resumen del card del cliente y cada fila individual coincidan con precisión matemática.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(consolidation): compute 14-day grace period from invoice emission date upon annulment (v0.0.1606)',
+  },
+  {
+    version: '0.0.1605',
+    date: '2026-09-21',
+    layer: 'both',
+    type: 'fix',
+    title: 'Sanitización Universal de Clientes, Búsqueda Reactiva y Blindaje de Nombres en Vista de Clientes (/customers)',
+    description:
+      '1. **Sanitización Universal de Documentos de Clientes (`sanitizeDocument`, `converters.ts`, `firestore-client.ts`)**: Se integró `resolveCustomerFullName` en `sanitizeDocument` para la colección `customers` y `users`. Cualquier consulta a Firestore (incluyendo `searchCustomers`, `getDocument`, `listDocuments`) resuelve y sanitiza automáticamente el nombre legítimo (`firstName` + `lastName` estructurado) descartando de inmediato `displayName` discordantes o heredados (ej. caso SL2623 "Sylvana Berrocal Vega").\\n' +
+      '2. **Blindaje de Renderizado en Fila de Cliente (`CustomerRow`, `CustomerDetailModal`, `ClientLedger`)**: Los componentes de listado, modales de detalle y libros de cliente resuelven el nombre completo estructurado en tiempo de render, garantizando visualización inmediata de `SYLVANA BERROCAL VEGA` incluso con datos en caché o pendientes de propagación en la nube.\\n' +
+      '3. **Sincronización y Retorno en `slForceSyncCustomerFromSP2` y `customer-loader`**: Al forzar sincronización desde SP2 o cargar la base en Nova Matcher, el nombre se normaliza y valida contra los componentes de nombre estructurados.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(customers): universal customer sanitization and reactive name resolution in search & modals (v0.0.1605)',
+  },
+  {
+    version: '0.0.1603',
+    date: '2026-09-17',
+    layer: 'both',
+    type: 'refactor',
+    title: 'Ocultamiento de Parámetros de Ubicación en SmartCard, Modal de Edición Personal y Alertas por Correo',
+    description:
+      '1. **SmartCard (`SmartMemberCard.tsx`)**: Se removió el parámetro de ubicación del SmartCard, reestructurando la cuadrícula en dos columnas limpias centradas en identidad: Identificación (Cédula/DNI) y Teléfono.\\n' +
+      '2. **Modal de Edición de Datos Personales (`VerificationModal.tsx`)**: Se removió el selector de ubicación (`LocationSelector`) y advertencias de discrepancia. La edición de datos personales se enfoca 100% en identidad personal (Nombre, Apellidos, Cédula, Teléfono, Correo), dejando las direcciones físicas exclusivamente en el gestor de direcciones.\\n' +
+      '3. **Alertas de Correo Administrativas (`user-triggers.ts`)**: Se eliminó la comparación de campos de ubicación en `onUserProfileWritten`. Los correos de notificación por cambios en SmartCard solo reportan campos de identidad personal y no contienen referencias a ubicación de tarjeta.\\n' +
+      '4. **Preservación y Paridad Total**: Se mantiene la sincronización en tiempo real con SP1 `customers` intacta. Paridad 100% entre `smart-portal-2` y `smartweb`.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'refactor(smartcard): hide location from SmartCard, personal edit modal and email alerts (v0.0.1603)',
+  },
+  {
+    version: '0.0.1602',
+    date: '2026-09-17',
+    layer: 'both',
+    type: 'fix',
+    title: 'Garantía y Blindaje de Sincronización Inmediata en Tiempo Real de Datos Personales y Direcciones SP2/SmartWeb ➔ SP1 Customers',
+    description:
+      '1. **Disparo Inmediato ante Modificaciones de Dirección de Entrega (`user-triggers.ts`, `onUserProfileWritten`)**: Extensión de la condición `shouldPush` para incluir detección exhaustiva de cambios en el arreglo de direcciones (`addressChanges`), dirección predeterminada (`defaultAddress`) o creación inicial de perfil. Cualquier adición, edición de señas o cambio de dirección de despacho en SmartWeb dispara el webhook a SP1 en menos de 500 ms.\\n' +
+      '2. **Fusión Íntegra de Direcciones Embebidas y de Colección Aislada (`user-triggers.ts`, `onAddressWrittenAlert`)**: Resolución inteligente de direcciones que unifica los documentos de `addresses` con el arreglo embebido en `users/{userId}.addresses`, evitando la pérdida de direcciones o sobrescrituras accidentales con arreglos vacíos.\\n' +
+      '3. **Serialización Segura de Timestamps y Transporte HTTP (`sp1-customer-push.ts`)**: Conversión recursiva de `FieldValue.serverTimestamp()` y objetos `Date` a formato ISO string antes del envío HTTP a `slSyncCustomerFromSp2`, asegurando compatibilidad total con la resolución de versiones en SP1.\\n' +
+      '4. **Defensa y Protección de Módulos SP1 (Nova, Scanner, ShippingLabels, Encomiendas)**: Se mantiene 100% inalterada la estructura canónica de `customers/{slCode}` en la base de datos `portal`. La función `preserveSp1AddressFields` resguarda encomiendas y rutas asignadas por operadores en SP1.\\n' +
+      '5. **Suite de Pruebas Unitarias de Garantía (`sp2-to-sp1-sync-guarantee.test.ts`)**: 6 pruebas unitarias certificando cambios en SmartCard (nombre, DNI, teléfono, email, ubicación), cambios en AddressModal (direcciones físicas, predeterminadas), fusión sin duplicados y prevención de loops infinitos.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(sync): guarantee real-time SP2 to SP1 customer sync on SmartCard and AddressModal changes (v0.0.1602)',
+  },
+  {
+    version: '0.0.1601',
+    date: '2026-09-16',
+    layer: 'both',
+    type: 'fix',
+    title: 'Precisión y Reactividad en Tiempo Real de Datos de Clientes en Nova y Endurecimiento de Sincronización SP2→SP1',
+    description:
+      '1. **Parser Universal de Fechas y Zona Horaria Costa Rica (`date-utils.ts`, `NovaTableModal.tsx`)**: Soporte robusto de Timestamps de Firestore Web SDK (`{ seconds, nanoseconds }`), Admin SDK (`{ _seconds, _nanoseconds }`), instancias de `Date`, números epoch y cadenas ISO mediante `parseDateSafe` y `formatCustomerDetailDate`, garantizando que campos como `Perfil actualizado` nunca se queden en blanco y muestren la hora exacta de Costa Rica.\\n' +
+      '2. **Eliminación de Fechas Falsas de Consolidación (`NovaTableModal.tsx`)**: Se removió el fallback engañoso hacia timestamps de sincronización periódica (`updatedAt`/`lastSyncAt`). Ahora el estado `Consolidación: Activa` muestra la fecha de activación real solo si existe un registro legítimo (`consolidationEnabledAt`, `consolidationActivatedAt`, `consolidationStartedAt`), evitando confusiones a los operadores.\\n' +
+      '3. **Optimización de Costos y Suscripción Reactiva en Tiempo Real (`invoice-service.ts`)**: Mapeo completo e indexación dual (código raw, mayúsculas normalizadas y docSnap.id) en `subscribeCustomersBySlCodes` y `getCustomersBySlCodes` para la base de datos `portal`, con particionamiento eficiente de 30 elementos por consulta, Map en memoria y cero lecturas redundantes.\\n' +
+      '4. **Registro Inmediato de Cambios de Ruta y Sincronización SP2 (`customer-sync.ts`, `functions/src/customers/sync.ts`)**: Inclusión de `rutaSetByAdminAt`, persistencia de `profileLastUpdatedAt` y preservación estricta de asignaciones de encomienda en direcciones (`preserveSp1AddressFields`) para evitar pérdidas ante sincronizaciones push desde SP2.\\n' +
+      '5. **Cobertura Completa de Pruebas Unitarias (`date-utils.spec.ts`)**: 22 pruebas unitarias certificando todas las variantes de Timestamps de Firestore, conversiones de zona horaria y valores nulos.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(customers): real-time accuracy in Nova customer tooltip and hardened SP2 sync (v0.0.1601)',
+  },
+  {
+    version: '0.0.1600',
+    date: '2026-09-16',
+    layer: 'both',
+    type: 'fix',
+    title: 'Trazabilidad y Verificación 1-a-1 de Envíos Resend, UI de Estados de Correo y Conexión Webhook Portal DB',
+    description:
+      '1. **Trazabilidad 1-a-1 y Eliminación de Falsos Positivos (`InvoicesSpreadsheetRow.tsx`, `Invoices.tsx`, `invoice-service.ts`)**: Validación estricta donde una factura solo se marca como enviada con éxito si cuenta con un ID de mensaje de Resend (`lastResendMessageId`) confirmado. Los envíos fallidos o sin ID se marcan en rojo (`failed`) para reintento inmediato.\\n' +
+      '2. **Modales/Tooltips con Fondo Blanco, Contorno Dinámico e Iconos Lucide (`InvoicesSpreadsheetRow.tsx`)**: Modales flotantes con fondo blanco pulcro (`!bg-white dark:!bg-zinc-900 shadow-xl`), borde perimetral acorde al estado (verde esmeralda para entregado, rojo rosa para fallo, gris para borrador) e iconografía 100% vectorial con Lucide React (`Calendar`, `KeyRound`, `Mail`, `CheckCircle`, `AlertTriangle`, `AlertCircle`) sin emojis.\\n' +
+      '3. **Conexión Multi-DB del Webhook de Resend (`resend-webhook.ts`)**: Enlace de las Cloud Functions a la base de datos `portal` (`getFirestore(getApp(), "portal")`) y protección de jerarquía de estados para preservar eventos definitivos (`delivered`, `bounced`).\\n' +
+      '4. **Certificación y Pruebas Unitarias (`InvoicesSpreadsheetRow.email.spec.ts`)**: Suite de pruebas para todos los estados visuales y lógicos de entrega.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'feat(invoices): add verified email status with Resend traceability and fix webhook portal db (v0.0.1600)',
+  },
+  {
     version: '0.0.1595',
     date: '2026-08-26',
     layer: 'fe',

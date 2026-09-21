@@ -269,7 +269,8 @@ export async function searchCustomers(
     for (const d of snap.docs) {
       if (seen.has(d.id)) continue;
       seen.add(d.id);
-      results.push({ id: d.id, ...convertTimestamps(d.data()) } as CustomerSearchResult);
+      const rawData = { id: d.id, ...convertTimestamps(d.data()) };
+      results.push(sanitizeDocument(COLLECTIONS.CUSTOMERS, rawData) as CustomerSearchResult);
     }
   };
 
@@ -312,17 +313,60 @@ export async function searchCustomers(
 
   await Promise.allSettled(promises); // allSettled: one index missing won't break others
 
-  // Client-side relevance sort: exact-word match > prefix match > rest, then by fullName alpha
+  // Client-side relevance sort: exact SL Code match > exact email > exact DNI > exact fullName > prefix SL Code > word match > prefix name > alpha
+  const qUpper = rawQuery.toUpperCase().trim();
   const qLower = q.toLowerCase();
+  const isSlPattern = /^SL\d+/i.test(qUpper) || /^\d{2,}/.test(qUpper);
+
   results.sort((a, b) => {
-    const aName = (a.fullName ?? "").toLowerCase();
-    const bName = (b.fullName ?? "").toLowerCase();
-    const aExact = aName.split(/\s+/).some(w => w === qLower) ? 0 : 1;
-    const bExact = bName.split(/\s+/).some(w => w === qLower) ? 0 : 1;
-    if (aExact !== bExact) return aExact - bExact;
-    const aStarts = aName.startsWith(qLower) ? 0 : 1;
-    const bStarts = bName.startsWith(qLower) ? 0 : 1;
-    if (aStarts !== bStarts) return aStarts - bStarts;
+    const aSl = (a.slCode || "").toUpperCase().trim();
+    const bSl = (b.slCode || "").toUpperCase().trim();
+
+    // 1. Exact SL Code match (e.g. SL2623 === SL2623)
+    const aExactSl = aSl === qUpper || aSl === `SL${qUpper}` ? 0 : 1;
+    const bExactSl = bSl === qUpper || bSl === `SL${qUpper}` ? 0 : 1;
+    if (aExactSl !== bExactSl) return aExactSl - bExactSl;
+
+    // 2. Exact email match
+    const aEmail = (a.email || "").toLowerCase().trim();
+    const bEmail = (b.email || "").toLowerCase().trim();
+    const aExactEmail = aEmail === qLower ? 0 : 1;
+    const bExactEmail = bEmail === qLower ? 0 : 1;
+    if (aExactEmail !== bExactEmail) return aExactEmail - bExactEmail;
+
+    // 3. Exact DNI match
+    const aDni = (a.dni || "").toString().trim();
+    const bDni = (b.dni || "").toString().trim();
+    const aExactDni = aDni === q ? 0 : 1;
+    const bExactDni = bDni === q ? 0 : 1;
+    if (aExactDni !== bExactDni) return aExactDni - bExactDni;
+
+    // 4. Exact full name match
+    const aName = (a.fullName ?? "").toLowerCase().trim();
+    const bName = (b.fullName ?? "").toLowerCase().trim();
+    const aExactName = aName === qLower ? 0 : 1;
+    const bExactName = bName === qLower ? 0 : 1;
+    if (aExactName !== bExactName) return aExactName - bExactName;
+
+    // 5. If query looks like an SL Code pattern, prioritize shorter/prefix SL Codes
+    if (isSlPattern) {
+      const aStartsSl = aSl.startsWith(qUpper) || aSl.startsWith(`SL${qUpper}`) ? 0 : 1;
+      const bStartsSl = bSl.startsWith(qUpper) || bSl.startsWith(`SL${qUpper}`) ? 0 : 1;
+      if (aStartsSl !== bStartsSl) return aStartsSl - bStartsSl;
+      if (aSl.length !== bSl.length) return aSl.length - bSl.length;
+    }
+
+    // 6. Exact word match in fullName
+    const aExactWord = aName.split(/\s+/).some(w => w === qLower) ? 0 : 1;
+    const bExactWord = bName.split(/\s+/).some(w => w === qLower) ? 0 : 1;
+    if (aExactWord !== bExactWord) return aExactWord - bExactWord;
+
+    // 7. Prefix match in fullName
+    const aStartsName = aName.startsWith(qLower) ? 0 : 1;
+    const bStartsName = bName.startsWith(qLower) ? 0 : 1;
+    if (aStartsName !== bStartsName) return aStartsName - bStartsName;
+
+    // 8. Alphabetical fallback by fullName
     return aName.localeCompare(bName);
   });
 

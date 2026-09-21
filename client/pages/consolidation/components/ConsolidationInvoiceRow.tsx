@@ -41,7 +41,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn, extractInvoiceEmissionDate } from '@/lib/utils';
 import { useFeatureFlag } from '@/lib/context/FeatureFlagsContext';
 import { CopyButton } from '@/components/ui/copy-button';
 import { PackageStatusBadge } from './PackageStatusBadge';
@@ -339,6 +339,8 @@ export function ConsolidationInvoiceRow({
 
       const TRANSITORIA = 'consolidacion_transitoria';
 
+      const invoiceEmissionDate = extractInvoiceEmissionDate(invoice) || now;
+
       for (const pkg of pkgsToReset) {
         const currentManifest = (pkg as any).manifestNumber || (pkg as any).manifiesto || '';
         batch.update(fsDoc(fsDb, 'packages', pkg.id), {
@@ -362,8 +364,12 @@ export function ConsolidationInvoiceRow({
           // Flag: this package came from an annulled invoice
           annulledInvoiceId: invoice.id,
           annulledInvoiceNumber: invoice.invoiceNumber,
+          annulledInvoiceDate: invoiceEmissionDate,
           annulledAt: now,
-          ...(!pkg.firstConsolidatedAt ? { firstConsolidatedAt: now } : {}),
+          invoicedAt: invoiceEmissionDate,
+          firstConsolidatedAt: pkg.firstConsolidatedAt
+            ? (new Date(pkg.firstConsolidatedAt).getTime() < new Date(invoiceEmissionDate).getTime() ? pkg.firstConsolidatedAt : invoiceEmissionDate)
+            : invoiceEmissionDate,
           smartwebSynced: false,
           statusHistory: arrayUnion({
             status: 'consolidated',

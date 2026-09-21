@@ -385,7 +385,7 @@ export function diagnoseUninvoiced(
   }
 
   // 3. Check if it's within grace period
-  const created = pkg.savedAt || pkg.createdAt;
+  const created = pkg.firstConsolidatedAt || pkg.invoicedAt || pkg.savedAt || pkg.createdAt;
   if (created) {
     const ageMs = Date.now() - new Date(created).getTime();
     const ageDays = Math.floor(ageMs / 86_400_000);

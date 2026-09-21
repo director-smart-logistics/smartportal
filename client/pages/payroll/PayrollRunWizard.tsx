@@ -465,7 +465,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
       const dailyRate = empFrequency === "weekly"
         ? baseSalaryCycle / 6
         : empFrequency === "hourly"
-        ? (emp.hourlyRate ? emp.hourlyRate * 8 : (baseSalaryMonthly / 240) * 8)
+        ? ((emp as any).hourlyRate ? (emp as any).hourlyRate * 8 : (baseSalaryMonthly / 240) * 8)
         : baseSalaryMonthly / 30;
 
       // Unpaid leave discount for the missed days in this cycle (full daily rate per missed day)

@@ -1482,7 +1482,7 @@ export function EditInvoiceModal({
                                                   </span>
                                                 </div>
                                                 <p className="text-[9px] text-muted-foreground mt-0.5">
-                                                  {(inv.invoiceItems?.length ?? 0)} items · ${(inv.totalAmount ?? 0).toFixed(2)} {inv.currency}
+                                                  {(inv.invoiceItems?.length ?? 0)} items · ${(Number(inv.totalAmount ?? 0)).toFixed(2)} {inv.currency}
                                                 </p>
                                               </button>
                                             ))}

@@ -54,6 +54,7 @@ const firestoreState = {
    *  inspect the per-tracking documents written to the packages collection. */
   batchSetCalls: [] as Array<{ ref: unknown; data: any; merge?: boolean }>,
   packageDocExists: false,
+  packagesDocsMap: new Map<string, any>(),
 };
 
 vi.mock('@/lib/firebase/config', () => ({ db: {}, app: {}, storage: {}, auth: {}, sp2App: {} }));
@@ -71,8 +72,13 @@ vi.mock('firebase/storage', () => ({
 }));
 
 vi.mock('firebase/firestore', () => ({
-  collection:      vi.fn((_db: unknown, name: string) => ({ __col: name })),
-  doc:             vi.fn((ref: any, id?: string) => ({ __doc: id ?? 'auto', col: ref?.__col })),
+  collection:      vi.fn((_db: unknown, name: string) => ({ __col: name, col: name })),
+  doc:             vi.fn((refOrDb: any, colOrId?: string, maybeId?: string) => {
+    if (maybeId !== undefined) {
+      return { __doc: maybeId, col: colOrId };
+    }
+    return { __doc: colOrId ?? 'auto', col: refOrDb?.__col || refOrDb?.col };
+  }),
   query:           vi.fn((ref: any, ..._args: unknown[]) => ({ __query: true, col: ref?.col || ref?.__col })),
   where:           vi.fn((field: string, op: string, value: unknown) => ({ field, op, value })),
   orderBy:         vi.fn(),
@@ -82,9 +88,13 @@ vi.mock('firebase/firestore', () => ({
       return firestoreState.manifestDoc ?? { exists: () => false, data: () => null };
     }
     if (ref.col === 'packages') {
+      if (firestoreState.packagesDocsMap.has(ref.__doc)) {
+        const d = firestoreState.packagesDocsMap.get(ref.__doc);
+        return { exists: () => true, data: () => d, id: ref.__doc };
+      }
       return firestoreState.packageDocExists
-        ? { exists: () => true, data: () => ({ manifestNumber: 'MEGA-MAN-TEST' }) }
-        : { exists: () => false, data: () => null };
+        ? { exists: () => true, data: () => ({ manifestNumber: 'MEGA-MAN-TEST' }), id: ref.__doc }
+        : { exists: () => false, data: () => null, id: ref.__doc };
     }
     return { exists: () => false, data: () => null };
   }),
@@ -626,5 +636,104 @@ describe('saveManifestRecord & loadMegaManFromFirestore — preAlert round-trip 
     expect(hydratedRow.hasPreAlert).toBe(true);
     expect(hydratedRow.preAlertSlCode).toBe('SL261320');
     expect(hydratedRow.preAlertKey).toBe('1Z1R054E0343790488_SL261320');
+  });
+});
+
+describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection', () => {
+  beforeEach(() => {
+    firestoreState.setDocCalls = [];
+    firestoreState.batchSetCalls = [];
+    firestoreState.packagesDocsMap.clear();
+    firestoreState.packageDocExists = false;
+  });
+
+  it('upsertManifestPackageOverrides SKIPS packages whose Firestore document belongs to a different active manifest', async () => {
+    // Package TRK-FOREIGN in Firestore belongs to 18-09-2026DAN
+    firestoreState.packagesDocsMap.set('TRK-FOREIGN', {
+      manifestNumber: '18-09-2026DAN',
+      slCode: 'SL7189',
+      customerName: 'ALBERTO FLORES',
+      price: 62.00,
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-FOREIGN',
+      manifiesto: 'SL-MEGA-MAN-17-09-2026',
+      slCode: 'SL9999',
+      nombreCliente: 'WRONG CUSTOMER',
+      precio: 10.00,
+    });
+
+    // Saving SL-MEGA-MAN-17-09-2026 should NOT overwrite TRK-FOREIGN in Firestore
+    const result = await upsertManifestPackageOverrides([row], 'SL-MEGA-MAN-17-09-2026');
+    expect(result.updated).toBe(0);
+    expect(result.skippedNew).toBe(1);
+    expect(firestoreState.batchSetCalls.length).toBe(0);
+  });
+
+  it('upsertManifestPackageOverrides ALLOWS write when rowManifestOverrides is explicitly provided by operator', async () => {
+    firestoreState.packagesDocsMap.set('TRK-FOREIGN', {
+      manifestNumber: '18-09-2026DAN',
+      slCode: 'SL7189',
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-FOREIGN',
+      slCode: 'SL7189',
+    });
+
+    const result = await upsertManifestPackageOverrides([row], 'SL-MEGA-MAN-17-09-2026', {
+      rowManifestOverrides: { 'TRK-FOREIGN': '18-09-2026DAN' },
+    });
+    expect(result.updated).toBe(1);
+    expect(firestoreState.batchSetCalls.length).toBe(1);
+  });
+
+  it('ingestManifestToPackages SKIPS packages whose Firestore document belongs to a different active manifest', async () => {
+    firestoreState.packagesDocsMap.set('TRK-FOREIGN', {
+      manifestNumber: '18-09-2026DAN',
+      slCode: 'SL7189',
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-FOREIGN',
+      manifiesto: 'SL-MEGA-MAN-17-09-2026',
+    });
+
+    const result = await ingestManifestToPackages([row], 'SL-MEGA-MAN-17-09-2026');
+    expect(result.skipped).toBe(1);
+    expect(result.inserted).toBe(0);
+    expect(result.updated).toBe(0);
+    expect(firestoreState.batchSetCalls.length).toBe(0);
+  });
+
+  it('loadMegaManFromFirestore excludes candidate packages from embeddedSupplement when packages doc is in a foreign manifest', async () => {
+    // Embedded array inside SL-MEGA-MAN-17-09-2026 has TRK-MOVED
+    const savedDoc = {
+      manifestNumber: 'SL-MEGA-MAN-17-09-2026',
+      isMegaMan: true,
+      fusedFrom: ['17-09-2026DAN'],
+      packages: [
+        { tracking: 'TRK-MOVED', slCode: 'SL7189', customerName: 'ALBERTO FLORES', weight: 5, price: 62 },
+        { tracking: 'TRK-STAYS', slCode: 'SL100', customerName: 'JOHN DOE', weight: 2, price: 15 },
+      ],
+    };
+
+    firestoreState.manifestDoc = {
+      exists: () => true,
+      data: () => savedDoc,
+    };
+    firestoreState.packagesQuerySnap = { docs: [] };
+    firestoreState.consolidationSnap = { docs: [] };
+
+    // In packages collection: TRK-MOVED belongs to 18-09-2026DAN (moved), TRK-STAYS belongs to 17-09-2026DAN (source)
+    firestoreState.packagesDocsMap.set('TRK-MOVED', { manifestNumber: '18-09-2026DAN' });
+    firestoreState.packagesDocsMap.set('TRK-STAYS', { manifestNumber: '17-09-2026DAN' });
+
+    const loaded = await loadMegaManFromFirestore('SL-MEGA-MAN-17-09-2026');
+    expect(loaded).not.toBeNull();
+    const trackings = loaded!.rows.map(r => r.tracking);
+    expect(trackings).toContain('TRK-STAYS');
+    expect(trackings).not.toContain('TRK-MOVED');
   });
 });

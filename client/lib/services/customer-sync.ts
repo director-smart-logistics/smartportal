@@ -18,6 +18,7 @@ import { searchCustomersLocal, patchCustomerRutaInCache, patchCustomerConsolidat
 import { updateTempCustomer } from './temp-customers-service';
 import { logAction } from './audit-service';
 import { getAuth } from 'firebase/auth';
+import { resolveCustomerFullName } from '../utils/customer-name';
 
 /** Where the route change originated — recorded in audit_logs.metadata.source */
 export type RouteChangeSource =
@@ -384,7 +385,7 @@ function buildSP1Customer(
   existingSyncVersion = 0
 ): SP1Customer {
   const now = new Date().toISOString();
-  const fullName = sp2User.displayName || `${sp2User.firstName || ''} ${sp2User.lastName || ''}`.trim() || 'Usuario';
+  const fullName = resolveCustomerFullName(sp2User.firstName, sp2User.lastName, sp2User.displayName) || `${sp2User.firstName || ''} ${sp2User.lastName || ''}`.trim() || 'Usuario';
   const defaultAddress = addresses.find(a => a.isDefault) || addresses[0] || null;
   const defaultPaymentMethod = paymentMethods.find(p => p.isDefault) || paymentMethods[0] || null;
 
@@ -442,6 +443,7 @@ function buildSP1Customer(
     createdAt: now,
     updatedAt: now,
     lastLoginAt: toISOString(sp2User.lastLoginAt),
+    profileLastUpdatedAt: toISOString(sp2User.updatedAt) || toISOString(sp2User.createdAt) || now,
     sp2CreatedAt: toISOString(sp2User.createdAt),
     sp2UpdatedAt: toISOString(sp2User.updatedAt),
   } as any;
@@ -550,6 +552,21 @@ async function syncCustomerToSP1(
     if (existingData?.isRutaAdminLocked || existingData?.ruta) {
       customer.ruta = existingData.ruta;
       (customer as any).isRutaAdminLocked = true;
+    }
+    if (existingData?.encomiendaServiceName) {
+      (customer as any).encomiendaServiceName = existingData.encomiendaServiceName;
+      (customer as any).encomiendaProvider = existingData.encomiendaProvider;
+      (customer as any).encomiendaUpdatedAt = existingData.encomiendaUpdatedAt;
+      (customer as any).encomienda = existingData.encomienda;
+    }
+    if (existingData?.routeHistory) {
+      (customer as any).routeHistory = existingData.routeHistory;
+    }
+    if (existingData?.rutaSetByAdminAt) {
+      (customer as any).rutaSetByAdminAt = existingData.rutaSetByAdminAt;
+    }
+    if (existingData?.rutaLastUpdatedBy) {
+      (customer as any).rutaLastUpdatedBy = existingData.rutaLastUpdatedBy;
     }
 
     const clean = JSON.parse(JSON.stringify(customer, (_key, val) => val === undefined ? null : val));
@@ -714,6 +731,7 @@ export async function updateCustomerRuta(
 
     await setDoc(sp1Ref, { 
       ruta, 
+      rutaSetByAdminAt: now,
       updatedAt: serverTimestamp(), 
       sp1AdminUpdatedAt: serverTimestamp(),
       rutaLastUpdatedBy: changedBy
@@ -1178,7 +1196,7 @@ export async function searchAndSyncFromSP2(manifestName: string): Promise<SP2Syn
 
   return {
     slCode: sp2User.slCode || '',
-    fullName: sp2User.displayName || `${sp2User.firstName} ${sp2User.lastName}`.trim(),
+    fullName: resolveCustomerFullName(sp2User.firstName, sp2User.lastName, sp2User.displayName),
     ruta: sp2User.ruta || undefined,
     consolidationEnabled: sp2User.consolidationEnabled || false,
     electronicInvoiceRequired: sp2User.electronicInvoiceRequired || false,
@@ -1203,7 +1221,7 @@ export async function findAndSyncCustomerFromSP2(manifestName: string): Promise<
 
   return {
     slCode: sp2User.slCode || '',
-    fullName: sp2User.displayName || `${sp2User.firstName} ${sp2User.lastName}`.trim(),
+    fullName: resolveCustomerFullName(sp2User.firstName, sp2User.lastName, sp2User.displayName),
     ruta: sp2User.ruta || undefined,
     consolidationEnabled: sp2User.consolidationEnabled || false,
     electronicInvoiceRequired: sp2User.electronicInvoiceRequired || false,

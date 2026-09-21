@@ -271,7 +271,7 @@ Cualquier modelo o agente de IA que opere en este repositorio **DEBE CUMPLIR EST
 Antes de dar por concluida cualquier sesión o proponer cambios:
 
 ```bash
-# 1. Suite completa de pruebas (168 archivos, 2,308 tests)
+# 1. Suite completa de pruebas (180 archivos, 2,415 tests)
 pnpm test
 
 # 2. Análisis estático de tipos
@@ -280,5 +280,40 @@ pnpm typecheck
 # 3. Compilación de producción
 pnpm build
 ```
+
+---
+
+## 9. Plan de Rollback Inmediato y Reversión Específica (v0.0.1607)
+
+En caso de requerir la reversión total o parcial de los cambios de la versión `0.0.1607` (Desvinculación Quirúrgica en Nova Table y Purga de Aprendizaje), siga estrictamente este procedimiento de 3 pasos:
+
+### Paso 1: Reversión a Nivel de Git (Local y Remoto)
+```bash
+# A. Identificar el commit base anterior a la versión 0.0.1607 (commit: 9c0b2892)
+git log -n 5 --oneline
+
+# B. Opción 1: Revert seguro mediante commit de compensación (Recomendado para mantener historial)
+git revert HEAD -m 1 --no-edit
+git push origin release_19082026DAN
+
+# B. Opción 2: Reset forzado al commit anterior (Solo en caso de emergencia de staging)
+# git reset --hard 9c0b2892
+# git push origin release_19082026DAN --force
+```
+
+### Paso 2: Reversión de Despliegue en Firebase Hosting (Rollback en 10 Segundos)
+Si la versión ya fue desplegada a Firebase Hosting y se detecta una anomalía en vivo:
+1. Ingrese a la consola de Firebase: `https://console.firebase.google.com/project/smart-portal-admin/hosting/sites/portal`
+2. En la sección **Historial de versiones de Hosting (Release History)**, ubique la versión previa (`v0.0.1606` o anterior).
+3. Haga clic en el menú contextual de 3 puntos `⋮` y seleccione **Revertir (Rollback)**.
+4. El CDN global de Cloudflare/Firebase Hosting conmutará el tráfico a la versión anterior de forma instantánea sin requerir nuevo build ni redeploy.
+
+### Paso 3: Mitigación de Reglas de Aprendizaje en Firestore (Si aplica)
+Si un operador requiere restaurar una regla manual de aprendizaje para un cliente particular:
+1. Abra la tabla de **Nova**.
+2. Busque el cliente deseado en el buscador rápido (Modal de asignación de cliente).
+3. Asigne el cliente y haga clic en el icono de pulgar arriba 👍 para persistir la regla con máxima prioridad (`admin_pick`).
+
+---
 
 El cumplimiento estricto de este runbook garantiza **cero regresiones, trazabilidad total y reversibilidad inmediata ante cualquier contingencia**.

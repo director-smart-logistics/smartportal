@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Loader2, CloudDownload } from 'lucide-react';
 import { firebaseApi } from '@/lib/firebase/callable';
 import { useToast } from '@/hooks/use-toast';
+import { resolveCustomerFullName } from '@/lib/utils/customer-name';
 
 interface ForceSyncCustomerModalProps {
   open: boolean;
@@ -52,9 +53,14 @@ export function ForceSyncCustomerModal({
         });
         return;
       }
+      const resolvedName = resolveCustomerFullName(
+        (res.data.customer as any).firstName,
+        (res.data.customer as any).lastName,
+        res.data.customer.fullName
+      ) || res.data.customer.fullName;
       toast({
         title: 'Cliente recuperado desde SP2',
-        description: `${res.data.customer.fullName} (${res.data.customer.slCode}) sincronizado correctamente en SP1.`,
+        description: `${resolvedName} (${res.data.customer.slCode}) sincronizado correctamente en SP1.`,
       });
       onSuccess?.(res.data.customer.slCode);
       onOpenChange(false);

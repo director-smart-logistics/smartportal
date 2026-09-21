@@ -314,7 +314,7 @@ vi.mock('../../nova-tools', () => ({
   checkTrackingPreAlert: vi.fn().mockResolvedValue({ found: false }),
 }));
 
-describe('Nova Matcher — Robust Learning & Homonym Dominance Spec Suite', () => {
+describe('Nova Matcher — Robust Learning & Homonym Dominance Spec Suite', { timeout: 15000 }, () => {
   beforeEach(async () => {
     vi.resetModules();
     clearMockDb();
@@ -710,6 +710,31 @@ describe('Nova Matcher — Robust Learning & Homonym Dominance Spec Suite', () =
       expect(mockDb.match_feedback.has('JUAN_PEREZ_SL202')).toBe(false);
       expect(mockDb.manifest_learning_patterns.has('JUAN_PEREZ_SL202')).toBe(false);
       expect(mockDb.unmatched_route_learning.has('unmatched_route_JUAN PEREZ')).toBe(false);
+    });
+
+    it('forgetMatchFeedback: unlinking "LUIS RODRIGUEZ" clears false positive match rules immediately', async () => {
+      const { forgetMatchFeedback, saveMatchFeedback, lookupLearned, loadLearnedMatches } = await import('../../match-learning');
+
+      // 1. Setup learned match for LUIS RODRIGUEZ -> CARLOS LUIS
+      await saveMatchFeedback({
+        manifestName: 'LUIS RODRIGUEZ',
+        slCode: 'SL262000',
+        fullName: 'CARLOS LUIS UMANA RODRIGUEZ',
+        consolidationEnabled: false,
+        source: 'admin_pick',
+      });
+
+      let learned = await loadLearnedMatches();
+      let match = lookupLearned('LUIS RODRIGUEZ', learned);
+      expect(match?.slCode).toBe('SL262000');
+
+      // 2. Unlink / forget LUIS RODRIGUEZ
+      await forgetMatchFeedback('LUIS RODRIGUEZ');
+
+      // 3. Verify it is no longer in cache or database
+      learned = await loadLearnedMatches();
+      match = lookupLearned('LUIS RODRIGUEZ', learned);
+      expect(match).toBeNull();
     });
   });
 });

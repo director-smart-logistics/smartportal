@@ -148,6 +148,31 @@ describe('resolveCustomerFullName', () => {
     expect(resolveCustomerFullName('María', '', 'María'))
       .toBe('María');
   });
+
+  it('RCN-15: structured name wins when user updates name in SP2 and legacy displayName is a completely different name (SL2623 case)', () => {
+    // Customer SL2623 updated firstName to "Sylvana" and lastName to "Berrocal Vega".
+    // Legacy displayName was "AMANDA JOSE BERROCAL VEGA" (4 tokens vs 3).
+    // Because displayName does not start with "Sylvana Berrocal Vega", structured name MUST win.
+    expect(resolveCustomerFullName('Sylvana', 'Berrocal Vega', 'AMANDA JOSE BERROCAL VEGA'))
+      .toBe('Sylvana Berrocal Vega');
+  });
+
+  it('RCN-16: structured firstName wins when legacy displayName does not start with firstName', () => {
+    expect(resolveCustomerFullName('Sylvana', '', 'AMANDA JOSE BERROCAL VEGA'))
+      .toBe('Sylvana');
+  });
+
+  it('RCN-17: allows middle name expansion when firstName and lastName align with displayName', () => {
+    // "Juan" + "Perez Mora" -> displayName "JUAN ALBERTO PEREZ MORA" (4 tokens > 3)
+    expect(resolveCustomerFullName('Juan', 'Perez Mora', 'JUAN ALBERTO PEREZ MORA'))
+      .toBe('JUAN ALBERTO PEREZ MORA');
+  });
+
+  it('RCN-18: allows maternal surname expansion when firstName aligns with displayName', () => {
+    // "Ana" + "Gonzalez" -> displayName "ANA GONZALEZ LOPEZ" (3 tokens > 2)
+    expect(resolveCustomerFullName('Ana', 'Gonzalez', 'ANA GONZALEZ LOPEZ'))
+      .toBe('ANA GONZALEZ LOPEZ');
+  });
 });
 
 describe('isSyntheticPlaceholderName', () => {
@@ -207,6 +232,32 @@ describe('resolveEffectiveCustomerName', () => {
       slCode: 'SL262179',
     });
     expect(res).toBe('SL262179');
+  });
+
+  it('unlinked row (savedCustomerName undefined) returns manifestConsigneeName', () => {
+    const res = resolveEffectiveCustomerName({
+      manifestConsigneeName: 'LUIS RODRIGUEZ',
+      slCode: '',
+    });
+    expect(res).toBe('LUIS RODRIGUEZ');
+  });
+
+  it('unlinked row with operator overrideName returns overrideName', () => {
+    const res = resolveEffectiveCustomerName({
+      overrideName: 'LUIS RODRIGUEZ EDITADO',
+      manifestConsigneeName: 'LUIS RODRIGUEZ',
+      slCode: '',
+    });
+    expect(res).toBe('LUIS RODRIGUEZ EDITADO');
+  });
+
+  it('linked row (with slCode) uses savedCustomerName when no override or live profile is present', () => {
+    const res = resolveEffectiveCustomerName({
+      savedCustomerName: 'CARLOS LUIS UMAÑA RODRIGUEZ',
+      manifestConsigneeName: 'LUIS RODRIGUEZ',
+      slCode: 'SL262000',
+    });
+    expect(res).toBe('CARLOS LUIS UMAÑA RODRIGUEZ');
   });
 });
 

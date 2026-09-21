@@ -79,13 +79,14 @@ import { deleteInvoiceFromSp2, syncInvoicesToSp2 } from './sync-invoices-service
 import { syncPackagesToSmartWeb } from './sync-smartweb-service';
 import { generateInvoiceSearchTokens } from '@/lib/firebase/firestore-client';
 import { calculatePrice } from '@/lib/utils/pricing';
-import { resolveEffectiveCustomerName } from '@/lib/utils/customer-name';
+import { resolveEffectiveCustomerName, resolveCustomerFullName } from '@/lib/utils/customer-name';
 import {
   getCostaRicaDateParts,
   formatCostaRicaDate,
   formatCostaRicaDateTime,
   COSTA_RICA_TIMEZONE,
   parseDateSafe,
+  extractInvoiceEmissionDate,
 } from '@/lib/utils/date-utils';
 export {
   getCostaRicaDateParts,
@@ -93,6 +94,7 @@ export {
   formatCostaRicaDateTime,
   COSTA_RICA_TIMEZONE,
   parseDateSafe,
+  extractInvoiceEmissionDate,
 };
 export type { ProcessedRow };
 
@@ -178,8 +180,23 @@ export async function getCustomersBySlCodes(
         courierService?: string;
         encomiendaServiceName?: string;
         encomiendaProvider?: string;
-        defaultAddress?: { encomienda?: { name?: string } | null } | null;
-        addresses?: Array<{ encomienda?: { name?: string } | null }> | null;
+        defaultAddress?: any;
+        addresses?: any[] | null;
+        consolidationEnabledAt?: string | null;
+        consolidationActivatedAt?: string | null;
+        consolidationStartedAt?: string | null;
+        updatedAt?: string | null;
+        createdAt?: string | null;
+        lastSyncAt?: string | null;
+        modifiedAt?: string | null;
+        profileLastUpdatedAt?: string | null;
+        rutaSetByAdminAt?: string | null;
+        routeHistory?: Array<{
+          previousRuta: string | null;
+          newRuta: string;
+          changedAt: string;
+          changedBy?: string;
+        }> | null;
       };
       const code = d.slCode || '';
       if (code) {
@@ -196,16 +213,32 @@ export async function getCustomersBySlCodes(
           phone: d.phone || d.phoneNumber || '',
           dni: d.verifiedDni || d.dni || '',
           fullName: resolveEffectiveCustomerName({
-            contactName: d.fullName || `${d.firstName || ''} ${d.lastName || ''}`.trim(),
+            contactName: resolveCustomerFullName(d.firstName, d.lastName, d.fullName),
             slCode: code,
           }),
           ruta: d.ruta || '',
           consolidationEnabled: d.consolidationEnabled === true,
           electronicInvoiceRequired: d.electronicInvoiceRequired === true,
           encomiendaServiceName,
+          consolidationEnabledAt: d.consolidationEnabledAt || null,
+          consolidationActivatedAt: d.consolidationActivatedAt || null,
+          consolidationStartedAt: d.consolidationStartedAt || null,
+          updatedAt: d.updatedAt || null,
+          createdAt: d.createdAt || null,
+          lastSyncAt: d.lastSyncAt || null,
+          modifiedAt: d.modifiedAt || null,
+          profileLastUpdatedAt: d.profileLastUpdatedAt || null,
+          rutaSetByAdminAt: d.rutaSetByAdminAt || null,
+          routeHistory: d.routeHistory || null,
+          defaultAddress: d.defaultAddress || null,
+          addresses: d.addresses || null,
         };
-        result.set(code.toUpperCase(), info);
+        result.set(code.toUpperCase().trim(), info);
         result.set(code, info);
+        if (docSnap.id && docSnap.id !== code) {
+          result.set(docSnap.id.toUpperCase().trim(), info);
+          result.set(docSnap.id, info);
+        }
       }
     });
   }
@@ -265,13 +298,14 @@ export function subscribeCustomersBySlCodes(
     return () => {};
   }
 
-  if (!slCodes.length) {
+  const cleanCodes = [...new Set(slCodes.filter(Boolean).map(c => String(c).trim()))];
+  if (!cleanCodes.length) {
     callback(new Map());
     return () => {};
   }
 
   const chunks: string[][] = [];
-  for (let i = 0; i < slCodes.length; i += 30) chunks.push(slCodes.slice(i, i + 30));
+  for (let i = 0; i < cleanCodes.length; i += 30) chunks.push(cleanCodes.slice(i, i + 30));
 
   const partialMaps: Array<Map<string, CustomerContactInfo>> = chunks.map(() => new Map());
 
@@ -322,7 +356,7 @@ export function subscribeCustomersBySlCodes(
             changedBy?: string;
           }> | null;
         };
-        const code = d.slCode || '';
+        const code = d.slCode || docSnap.id || '';
         if (code) {
           const addresses = d.addresses || [];
           const encAddr = addresses.find((a: any) => a.encomienda?.name) || addresses[0] || {};
@@ -330,12 +364,15 @@ export function subscribeCustomersBySlCodes(
           // Prefer the top-level mirror written atomically by the
           // EncomiendaManifests assignment flow (survives sync reshuffles).
           const encomiendaServiceName = d.encomiendaServiceName || enc?.name || d.courierService || '';
-          partial.set(code, {
+          const info: CustomerContactInfo = {
             slCode: code,
             email: d.email || '',
             phone: d.phone || d.phoneNumber || '',
             dni: d.verifiedDni || d.dni || '',
-            fullName: d.fullName || `${d.firstName || ''} ${d.lastName || ''}`.trim(),
+            fullName: resolveEffectiveCustomerName({
+              contactName: resolveCustomerFullName(d.firstName, d.lastName, d.fullName),
+              slCode: code,
+            }),
             ruta: d.ruta || '',
             consolidationEnabled: d.consolidationEnabled === true,
             electronicInvoiceRequired: d.electronicInvoiceRequired === true,
@@ -352,7 +389,13 @@ export function subscribeCustomersBySlCodes(
             routeHistory: d.routeHistory || null,
             defaultAddress: d.defaultAddress || null,
             addresses: d.addresses || null,
-          });
+          };
+          partial.set(code, info);
+          partial.set(code.toUpperCase().trim(), info);
+          if (docSnap.id && docSnap.id !== code) {
+            partial.set(docSnap.id, info);
+            partial.set(docSnap.id.toUpperCase().trim(), info);
+          }
         }
       });
       partialMaps[chunkIdx] = partial;
@@ -1243,6 +1286,12 @@ export async function annulInvoicesByTrackingsAndManifest(
         });
 
         if (validPkgDocs.length > 0) {
+          const invoiceEmissionDate = extractInvoiceEmissionDate({
+            ...data,
+            id: d.id,
+            invoiceNumber: data.invoiceNumber || d.id,
+          }) || now;
+
           const pkgBatch = writeBatch(db);
           const pkgsToSync: any[] = [];
           const consolidationItems: any[] = [];
@@ -1256,8 +1305,12 @@ export async function annulInvoicesByTrackingsAndManifest(
               invoiceStatus: deleteField(),
               annulledInvoiceId: d.id,
               annulledInvoiceNumber: data.invoiceNumber || d.id,
+              annulledInvoiceDate: invoiceEmissionDate,
               annulledAt: now,
-              ...(!pData.firstConsolidatedAt ? { firstConsolidatedAt: now } : {}),
+              invoicedAt: invoiceEmissionDate,
+              firstConsolidatedAt: pData.firstConsolidatedAt
+                ? (new Date(pData.firstConsolidatedAt).getTime() < new Date(invoiceEmissionDate).getTime() ? pData.firstConsolidatedAt : invoiceEmissionDate)
+                : invoiceEmissionDate,
               status: 'consolidated',
               consolidacion: true,
               manifestId: 'consolidacion_transitoria',
@@ -1298,9 +1351,10 @@ export async function annulInvoicesByTrackingsAndManifest(
                 manifestNumber: manifestNumber || pData.manifestNumber || '',
                 invoiceId: d.id,
                 invoiceNumber: data.invoiceNumber,
+                invoiceDate: invoiceEmissionDate,
                 invoiceStatus: 'annulled',
                 status: 'consolidated',
-                movedAt: now,
+                movedAt: invoiceEmissionDate,
               });
             }
           });
@@ -2709,14 +2763,15 @@ export async function recordInvoiceEmailSent(
     // all other non-draft statuses (sent, pending, pending_payment) are preserved.
     const willPromoteStatus =
       !entry.currentStatus || entry.currentStatus === 'draft';
+    const isSuccessSend = Boolean(resendMessageId);
     const data: Record<string, any> = {
-      emailSent: true,
+      emailSent: isSuccessSend,
       emailSentAt: nowIso,
-      emailStatus: 'sent',
+      emailStatus: isSuccessSend ? 'sent' : 'failed',
       emailSendLogs: arrayUnion(log),
       updatedAt: nowIso,
       ...(resendMessageId ? { lastResendMessageId: resendMessageId, emailResendIds: arrayUnion(resendMessageId) } : {}),
-      ...(willPromoteStatus ? { status: 'sent' } : {}),
+      ...(isSuccessSend && willPromoteStatus ? { status: 'sent' } : {}),
     };
     await updateDoc(doc(db, 'invoices', invoiceId), data);
   } catch (err) {

@@ -497,26 +497,33 @@ export async function upsertManifestPackageOverrides(
     // Read existence — only pre-existing docs receive the merge. New docs
     // must go through ingestManifestToPackages (which stamps initial
     // status + statusHistory).
-    const existenceMap = new Map<string, { exists: boolean; isTransitoria: boolean }>();
+    const existenceMap = new Map<string, { exists: boolean; isTransitoria: boolean; currentManifest: string }>();
     await Promise.all(
       chunk.map(({ row }) => {
         const id = row.tracking.toUpperCase();
         return getDoc(doc(packagesRef, id))
           .then(s => {
             const data = s.data();
-            const manifest = data?.manifestNumber || data?.manifestId || '';
-            const updated = data?.updatedManifest || '';
+            const manifest = data?.manifestNumber || data?.manifestId || data?.updatedManifest || '';
             const isTrans = s.exists() && (
-              manifest.toLowerCase() === 'consolidacion_transitoria' ||
-              updated.toLowerCase() === 'consolidacion_transitoria'
+              manifest.toLowerCase() === 'consolidacion_transitoria'
             );
-            existenceMap.set(id, { exists: s.exists(), isTransitoria: isTrans });
+            existenceMap.set(id, { exists: s.exists(), isTransitoria: isTrans, currentManifest: manifest });
           })
           .catch(() => {
-            existenceMap.set(id, { exists: false, isTransitoria: false });
+            existenceMap.set(id, { exists: false, isTransitoria: false, currentManifest: '' });
           });
       }),
     );
+
+    const allowedSourceSet = new Set<string>([
+      manifestNumber.toUpperCase().trim(),
+      ...(Array.isArray((options as any)?.allowedSourceManifests)
+        ? (options as any).allowedSourceManifests
+        : (options as any)?.allowedSourceManifests ? Array.from((options as any).allowedSourceManifests) : []
+      ).map((s: any) => String(s || '').toUpperCase().trim()),
+      ...rows.map(r => String(r.manifiesto || '').toUpperCase().trim()).filter(Boolean),
+    ]);
 
     const batch = writeBatch(db);
     let batchUpdated = 0;
@@ -526,6 +533,21 @@ export async function upsertManifestPackageOverrides(
       const trackingId = row.tracking.toUpperCase();
       const pkgInfo = existenceMap.get(trackingId);
       if (!pkgInfo || !pkgInfo.exists) {
+        batchSkipped += 1;
+        continue;
+      }
+
+      // 🚨 INVARIANT SAFETY GUARD (Rule 17 in .agents/AGENTS.md): If the package in Firestore belongs to another active manifest
+      // (not this manifest, not in allowedSourceManifests, and not in row.manifiesto), DO NOT overwrite its manifestNumber or data!
+      // This prevents stale embedded snapshots in Mega-Mans from "stealing" packages that were moved to other manifests.
+      const hasExplicitOverride = Boolean(options?.rowManifestOverrides?.[trackingId]);
+      const pkgCurrentMf = (pkgInfo.currentManifest || '').toUpperCase().trim();
+      const isForeignManifest = !hasExplicitOverride &&
+        !pkgInfo.isTransitoria &&
+        pkgCurrentMf &&
+        !allowedSourceSet.has(pkgCurrentMf);
+
+      if (isForeignManifest) {
         batchSkipped += 1;
         continue;
       }
@@ -683,6 +705,19 @@ export async function ingestManifestToPackages(
     chunks.push(indexed.slice(i, i + BATCH_SIZE));
   }
 
+  // 🚨 INVARIANT SAFETY GUARD (Rule 16 in .agents/AGENTS.md):
+  // Set of authorized manifest identifiers. A package existing in Firestore with a manifestNumber
+  // NOT in this set is a "foreign" package (it was moved to another manifest). Saving/ingesting
+  // this manifest MUST NEVER overwrite foreign packages unless rowManifestOverrides explicitly specifies it.
+  const allowedSourceSet = new Set<string>([
+    manifestNumber.toUpperCase().trim(),
+    ...(Array.isArray((options as any)?.allowedSourceManifests)
+      ? (options as any).allowedSourceManifests
+      : (options as any)?.allowedSourceManifests ? Array.from((options as any).allowedSourceManifests) : []
+    ).map((s: any) => String(s || '').toUpperCase().trim()),
+    ...rows.map(r => String(r.manifiesto || '').toUpperCase().trim()).filter(Boolean),
+  ]);
+
   for (const chunk of chunks) {
     // Pre-check which trackingIds already exist so we can preserve their
     // status/statusHistory and protect manifestNumber updates (e.g. transitory consolidation).
@@ -697,7 +732,7 @@ export async function ingestManifestToPackages(
               if (s.exists()) {
                 const data = s.data();
                 existingPackagesMap.set(id, {
-                  manifestNumber: data?.manifestNumber || data?.manifestId || '',
+                  manifestNumber: data?.manifestNumber || data?.manifestId || data?.updatedManifest || '',
                   status: data?.status || '',
                 });
               }
@@ -716,6 +751,21 @@ export async function ingestManifestToPackages(
       const docRef      = doc(packagesRef, trackingId);
       const existingPkg = existingPackagesMap.get(trackingId);
       const isExisting  = !!existingPkg;
+
+      const currentManifest = existingPkg?.manifestNumber || '';
+      const isTransitoria = currentManifest.toLowerCase() === 'consolidacion_transitoria';
+      const hasExplicitOverride = Boolean(options?.rowManifestOverrides?.[trackingId]);
+      const currentMfUpper = (currentManifest || '').toUpperCase().trim();
+      const isForeignManifest = isExisting &&
+        !hasExplicitOverride &&
+        !isTransitoria &&
+        currentMfUpper &&
+        !allowedSourceSet.has(currentMfUpper);
+
+      if (isForeignManifest) {
+        result.skipped++;
+        continue;
+      }
 
       const adjustment = options?.priceAdjustments?.[trackingId]
         ?? options?.priceAdjustments?.[idx]
@@ -769,9 +819,6 @@ export async function ingestManifestToPackages(
       const ripMatchScore        = Number.isFinite(row.matchScore) ? row.matchScore : (effectiveSlCode ? 1 : 0);
       const ripPrecioSinPermiso  = Number.isFinite(row.precioSinPermiso) ? row.precioSinPermiso : effectivePrice;
       const ripPrecioConPermiso  = Number.isFinite(row.precioConPermiso) ? row.precioConPermiso : effectivePrice;
-
-      const currentManifest = existingPkg?.manifestNumber || '';
-      const isTransitoria = currentManifest.toLowerCase() === 'consolidacion_transitoria';
       const targetManifestNumberRaw = isTransitoria
         ? 'consolidacion_transitoria'
         : (options?.rowManifestOverrides?.[trackingId] ?? manifestNumber) || row.manifiesto;

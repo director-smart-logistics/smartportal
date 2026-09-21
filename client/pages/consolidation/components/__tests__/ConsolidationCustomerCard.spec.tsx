@@ -492,12 +492,10 @@ describe('ConsolidationCustomerCard — Timing and Storage Charges', () => {
     const sectionWithAnnulled: CustomerSection = {
       customer: {
         id: 'cust-sl2565',
-        name: 'WILSON JOSUE GONZALEZ AGUIRRE',
+        fullName: 'WILSON JOSUE GONZALEZ AGUIRRE',
         slCode: 'SL2565',
         email: 'wilson@example.com',
         phone: '12345678',
-        destination: 'San Jose Centro',
-        consolidationEnabled: true,
       },
       lookupPackages: [],
       manifestGroups: [
@@ -536,6 +534,66 @@ describe('ConsolidationCustomerCard — Timing and Storage Charges', () => {
     expect(screen.queryByText(/Desbloquear/i)).toBeNull();
     // Should show "Mover manifiesto" button
     expect(screen.getByText(/Mover manifiesto/i)).toBeTruthy();
+  });
+
+  it('calculates 14-day consolidation grace countdown from invoice emission date, not annulment date', () => {
+    // Invoice issued 3 days ago (e.g. Friday), annulled today (Monday)
+    const threeDaysAgoMs = Date.now() - 3 * 86_400_000;
+    const threeDaysAgoIso = new Date(threeDaysAgoMs).toISOString();
+    const todayIso = new Date().toISOString();
+
+    const sectionAnnulledFriday: CustomerSection = {
+      customer: {
+        id: 'cust-sl338',
+        slCode: 'SL338',
+        fullName: 'CLIENTE SL338',
+        ruta: 'San Jose',
+      },
+      lookupPackages: [],
+      manifestGroups: [
+        {
+          manifestNumber: 'consolidacion_transitoria',
+          packages: [
+            {
+              id: 'pkg-sl338-item',
+              trackingNumber: 'GFUS01068888888888',
+              status: 'consolidated',
+              weight: 1.0,
+              price: 15.00,
+              // Annulled invoice number with Friday date
+              annulledInvoiceNumber: 'SL338-20260918120000000-C',
+              // invoicedAt set to Friday
+              invoicedAt: threeDaysAgoIso,
+              // annulledAt is today
+              annulledAt: todayIso,
+              // even if firstConsolidatedAt was stamped today upon annulment
+              firstConsolidatedAt: todayIso,
+            } as any,
+          ],
+          invoices: [],
+        },
+      ],
+      totalPackages: 1,
+      totalWeight: 1.0,
+      totalAmount: 15.00,
+      manifestCount: 1,
+    };
+
+    render(
+      <ConsolidationCustomerCard
+        section={sectionAnnulledFriday}
+        gracePeriodDays={14}
+        dailyStorageCharge={1.50}
+        defaultOpen={true}
+      />
+    );
+
+    // Verify package is rendered
+    expect(screen.getByText(/GFUS01068888888888/i)).toBeTruthy();
+    // Verify it calculates 3 days elapsed from Friday invoice date (NOT 0 days from today's annulment)
+    expect(screen.getByText('Días: 3')).toBeTruthy();
+    // Card header should show 11d remaining
+    expect(screen.getByText(/11d/i)).toBeTruthy();
   });
 });
 

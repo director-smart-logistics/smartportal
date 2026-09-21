@@ -49,7 +49,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn, extractInvoiceEmissionDate, extractDateIsoFromInvoiceNumber } from '@/lib/utils';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -132,34 +132,41 @@ const LOCK_REASONS: Record<string, string> = {
 /**
  * Calculates the exact, isolated consolidation start date ("Día 0 / Día 1") for an individual package.
  *
- * Priority Rules:
- *   1. Immutable `firstConsolidatedAt` timestamp (prevents any subsequent delivery
- *      attempts, invoice cancellations, or batch movements from resetting the package clock).
- *   2. Chronological scan of `statusHistory` to find the EARLIEST consolidation or invoice-annulment event
- *      specific to this package (extracts date from the earliest annulled invoice or the changedAt timestamp).
- *   3. Package-level `annulledAt` timestamp.
- *   4. Date encoded in `pkg.annulledInvoiceNumber`.
- *   5. Active invoice date (only when package is in an active non-transitoria invoice).
- *   6. Fallbacks: `invoicedAt`, `manifestUpdatedAt`, `createdAt`, `savedAt`.
+ * Rules:
+ *   - When a package originates from or was associated with an invoice (active or annulled),
+ *     the consolidation countdown starts from the ORIGINAL INVOICE EMISSION DATE, NOT from
+ *     the moment the invoice was cancelled/annulled.
+ *   - If the package had a pre-existing `firstConsolidatedAt` date that is EARLIER than the invoice
+ *     emission date (e.g. package was already consolidating before the invoice was created),
+ *     that earliest date is strictly preserved (inviolability of original Day 0).
+ *   - In any statusHistory audit trail, the earliest invoice date or consolidation date is used.
  */
 export function getConsolidationStartDate(pkg: any): string | null {
   if (!pkg) return null;
 
-  // 1. Immutable first consolidation timestamp if present
-  if (pkg.firstConsolidatedAt) {
-    return pkg.firstConsolidatedAt;
-  }
+  // 1. Candidate invoice emission date directly associated with this package
+  const invoiceDate =
+    extractInvoiceEmissionDate({
+      invoiceDate: pkg.invoiceDate || pkg.annulledInvoiceDate,
+      invoicedAt: pkg.invoicedAt,
+      annulledInvoiceNumber: pkg.annulledInvoiceNumber,
+      invoiceNumber: !pkg.isTransitoria ? pkg.invoiceNumber : undefined,
+    }) ||
+    (pkg.annulledInvoiceNumber ? extractDateIsoFromInvoiceNumber(pkg.annulledInvoiceNumber) : null) ||
+    (pkg.invoiceNumber && !pkg.isTransitoria ? extractDateIsoFromInvoiceNumber(pkg.invoiceNumber) : null) ||
+    pkg.invoicedAt ||
+    null;
 
-  // 2. Earliest consolidation / annulment event from statusHistory
+  // 2. Scan statusHistory to find earliest consolidation or annulled invoice event
+  let earliestHistoryDate: string | null = null;
   if (pkg.statusHistory && Array.isArray(pkg.statusHistory) && pkg.statusHistory.length > 0) {
-    // Sort chronological ascending (oldest first)
     const sortedHistory = [...pkg.statusHistory].sort((a, b) => {
       const timeA = new Date(a.changedAt || a.timestamp || 0).getTime() || 0;
       const timeB = new Date(b.changedAt || b.timestamp || 0).getTime() || 0;
       return timeA - timeB;
     });
 
-    const invRegex = /Factura\s+([A-Z0-9-]{6,}\d{14,}(?:-C)?)/i;
+    const invRegex = /(?:Factura|invoice)\s+([A-Z0-9-]{6,}\d{6,}(?:-C)?)/i;
 
     for (const h of sortedHistory) {
       const status = (h.status || '').toLowerCase();
@@ -170,55 +177,53 @@ export function getConsolidationStartDate(pkg: any): string | null {
         status === 'consolidated' ||
         changedBy.includes('annulled') ||
         changedBy.includes('unlocked') ||
-        note.toLowerCase().includes('anulada') ||
+        note.toLowerCase().includes('anulad') ||
         note.toLowerCase().includes('consolidac');
 
       if (isConsolidationEvent) {
-        // If note includes an invoice number with date, parse the date from that invoice
         const match = note.match(invRegex);
         if (match) {
-          const invMatch = match[1].match(/-(\d{4})(\d{2})(\d{2})/);
-          if (invMatch) {
-            const [, yyyy, mm, dd] = invMatch;
-            return `${yyyy}-${mm}-${dd}T12:00:00-06:00`;
+          const fromNote = extractDateIsoFromInvoiceNumber(match[1]);
+          if (fromNote) {
+            if (!earliestHistoryDate || new Date(fromNote).getTime() < new Date(earliestHistoryDate).getTime()) {
+              earliestHistoryDate = fromNote;
+            }
           }
         }
-        if (h.changedAt || h.timestamp) {
-          return h.changedAt || h.timestamp;
+        const hTime = h.changedAt || h.timestamp;
+        if (hTime && !earliestHistoryDate) {
+          earliestHistoryDate = hTime;
         }
       }
     }
   }
 
-  // 3. Package-level annulledAt timestamp
-  if (pkg.annulledAt) {
-    return pkg.annulledAt;
-  }
+  // 3. Resolve the authoritative earliest date among:
+  //    - firstConsolidatedAt (if present)
+  //    - invoiceDate (emission date of the invoice)
+  //    - earliestHistoryDate (from audit trail)
+  const candidateDates: string[] = [];
+  if (pkg.firstConsolidatedAt) candidateDates.push(pkg.firstConsolidatedAt);
+  if (invoiceDate) candidateDates.push(invoiceDate);
+  if (earliestHistoryDate) candidateDates.push(earliestHistoryDate);
 
-  // 4. Date encoded in pkg.annulledInvoiceNumber
-  if (pkg.annulledInvoiceNumber) {
-    const match = pkg.annulledInvoiceNumber.match(/-(\d{4})(\d{2})(\d{2})/);
-    if (match) {
-      const [, yyyy, mm, dd] = match;
-      return `${yyyy}-${mm}-${dd}T12:00:00-06:00`;
+  if (candidateDates.length > 0) {
+    let earliest = candidateDates[0];
+    let earliestMs = new Date(earliest).getTime();
+
+    for (let i = 1; i < candidateDates.length; i++) {
+      const candMs = new Date(candidateDates[i]).getTime();
+      if (!isNaN(candMs) && (isNaN(earliestMs) || candMs < earliestMs)) {
+        earliest = candidateDates[i];
+        earliestMs = candMs;
+      }
+    }
+    if (!isNaN(earliestMs)) {
+      return earliest;
     }
   }
 
-  // 5. Active invoice date (only when package is in an active non-transitoria invoice)
-  if (pkg.invoiceNumber && !pkg.isTransitoria) {
-    const match = pkg.invoiceNumber.match(/-(\d{4})(\d{2})(\d{2})/);
-    if (match) {
-      const [, yyyy, mm, dd] = match;
-      return `${yyyy}-${mm}-${dd}T12:00:00-06:00`;
-    }
-  }
-
-  // 6. InvoicedAt field
-  if (pkg.invoicedAt) {
-    return pkg.invoicedAt;
-  }
-
-  // 7. Fallbacks: manifestUpdatedAt / createdAt / savedAt
+  // 4. Fallbacks: manifestUpdatedAt / createdAt / savedAt
   return pkg.manifestUpdatedAt || pkg.createdAt || pkg.savedAt || null;
 }
 
@@ -468,6 +473,13 @@ export function ConsolidationCustomerCard({
         const data = pkgDoc.data();
         const currentManifest = data.manifestNumber || data.manifiesto || '';
         
+        const invoiceEmissionDate = extractInvoiceEmissionDate({
+          invoiceNumber: pkg.invoiceNumber || '',
+          invoiceId: pkg.invoiceId,
+          invoicedAt: pkg.invoicedAt,
+          createdAt: pkg.createdAt,
+        }) || now;
+
         batch.update(doc(db, 'packages', pkgDoc.id), {
           invoiceId: deleteField(),
           invoiceNumber: deleteField(),
@@ -483,8 +495,12 @@ export function ConsolidationCustomerCard({
           consolidacion:     true,
           annulledInvoiceId: pkg.invoiceId,
           annulledInvoiceNumber: pkg.invoiceNumber || '',
+          annulledInvoiceDate: invoiceEmissionDate,
           annulledAt: now,
-          ...(!data.firstConsolidatedAt ? { firstConsolidatedAt: now } : {}),
+          invoicedAt: invoiceEmissionDate,
+          firstConsolidatedAt: data.firstConsolidatedAt
+            ? (new Date(data.firstConsolidatedAt).getTime() < new Date(invoiceEmissionDate).getTime() ? data.firstConsolidatedAt : invoiceEmissionDate)
+            : invoiceEmissionDate,
           smartwebSynced: false,
           statusHistory: arrayUnion({
             status: 'consolidated',
@@ -610,6 +626,11 @@ export function ConsolidationCustomerCard({
           const data = pkgDoc.data();
           const currentManifest = data.manifestNumber || data.manifiesto || '';
 
+          const invoiceEmissionDate = extractInvoiceEmissionDate({
+            invoiceNumber,
+            invoiceId,
+          }) || now;
+
           batch.update(doc(db, 'packages', pkgDoc.id), {
             invoiceId: deleteField(),
             invoiceNumber: deleteField(),
@@ -625,8 +646,12 @@ export function ConsolidationCustomerCard({
             consolidacion:     true,
             annulledInvoiceId: invoiceId,
             annulledInvoiceNumber: invoiceNumber,
+            annulledInvoiceDate: invoiceEmissionDate,
             annulledAt: now,
-            ...(!data.firstConsolidatedAt ? { firstConsolidatedAt: now } : {}),
+            invoicedAt: invoiceEmissionDate,
+            firstConsolidatedAt: data.firstConsolidatedAt
+              ? (new Date(data.firstConsolidatedAt).getTime() < new Date(invoiceEmissionDate).getTime() ? data.firstConsolidatedAt : invoiceEmissionDate)
+              : invoiceEmissionDate,
             smartwebSynced: false,
             statusHistory: arrayUnion({
               status: 'consolidated',

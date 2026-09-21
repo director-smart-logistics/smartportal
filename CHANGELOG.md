@@ -2,6 +2,83 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1610] - 2026-09-21
+
+### Fixed & Hardened (Blindaje Invariante contra Desplazamiento y Sobre-escritura Cruzada de Paquetes en Nova & Fusiones)
+- **Detección Determinista y Filtro Estricto en Carga (`fusion.ts` - `loadMegaManFromFirestore`):**
+  - Sustituida la consulta por campo `where('trackingNumber', 'in', chunk)` por consulta directa y determinista por ID de documento `getDoc(doc(db, 'packages', id))` en lotes paralelos de 30.
+  - Los candidatos de `embeddedSupplement` ahora verifican estrictamente si el paquete en `packages` pertenece a un manifiesto activo diferente al conjunto autorizado (`targetMnSet = Set([megaManId, ...fusedFrom])`). Si el paquete fue trasladado a otro manifiesto, es **excluido de forma estricta e inmediata** de la memoria de Nova Table.
+- **Guard Invariante en Tiempo de Escritura (`ingestion.ts` - `upsertManifestPackageOverrides` & `ingestManifestToPackages`):**
+  - Implementado guard de seguridad defensivo en autosave (`useNovaAutoSave`) y guardado manual: si un paquete en la colección `packages` pertenece a un manifiesto activo distinto y no cuenta con reasignación explícita (`rowManifestOverrides[trackingId]`), **se omite estrictamente la escritura**, impidiendo que ningún guardado de un contenedor previo sobreescriba o desplace paquetes ajenos.
+- **Saneamiento Bidireccional de Contenedores (`manifest-consolidation-service.ts` - `movePackagesBetweenManifestDocs`):**
+  - Al trasladar paquetes entre manifiestos, se buscan automáticamente los documentos contenedores `MEGA-MAN` o `ENC-MEGA-MAN` padre para purgar los trackings de sus respectivos arreglos embebidos `packages[]`, sincronizando totales y pesos.
+- **Certificación de Cero Regresiones y Cobertura de Pruebas (`manifest-processor.round-trip.spec.ts`):**
+  - Agregada suite de pruebas `Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection` certificando los 4 casos de colisión cruzada. 180 archivos de prueba (2,419 pruebas) pasando al 100% y `pnpm typecheck` con 0 errores.
+
+
+### Fixed & Reconciled (Corrección de Filtro en Facturas, Restitución de Paquetes y Sincronización de Montos)
+- **Corrección de Error en Filtro de Búsqueda de Facturas (`Invoices.tsx`, `EditInvoiceModal.tsx`):**
+  - Subsanado error en tiempo de ejecución `TypeError: (l.totalAmount ?? 0).toFixed is not a function` al castear de forma segura `Number(inv.totalAmount ?? 0).toFixed(2)` en los filtros de búsqueda y modales de edición. Esto previene fallos cuando el campo `totalAmount` se lee como cadena de texto o valor no numérico.
+- **Restitución e Integridad de Paquetes en Manifiesto `18-09-2026DAN`:**
+  - Recuperados e integrados los 15 paquetes desplazados en `18-09-2026DAN` (`SL7189`, `SL1720`, `SL245`, `SL4302`, `SL261412`, `SL586`, `SL90`, `SL26559`, `SL3108`), restaurando sus clientes autoritativos, rutas de entrega y estado de consolidación.
+  - Saneado el array de paquetes en `SL-MEGA-MAN-17-09-2026` eliminando las referencias duplicadas para prevenir sobreescrituras accidentales al guardar dicho manifiesto.
+- **Conciliación y Sincronización de Facturas Consolidadas (`invoices`, `packages`):**
+  - Reconciliadas y recalculadas las 115 facturas del manifiesto `18-09-2026DAN` según las fórmulas de consolidación y prorrateo de Nova, actualizando cantidades de paquetes, pesos reales, pesos redondeados y montos en USD y CRC (incluyendo `SL7189` con 6 paquetes, 30.42 lbs / 31.00 lbs redondeo, $372.00 / ₡171 120).
+
+
+### Fixed & Hardened (Desvinculación Quirúrgica en Nova Table & Purga Activa de Aprendizaje en Firestore)
+- **Aislamiento y Resolución Canónica de Nombre en Desvinculación (`NovaTableModal.tsx`, `use-nova-resolved-rows.ts`):**
+  - Al ejecutar *"Crear grupo separado"* / desvincular tracking, los selectores de nombre de grupo (`groupDisplayName`), nombre de fila (`displayName`) y la lista de grupos (`availableGroups`) conmutan limpiamente hacia `row.nombre` (el consignatario original del manifiesto), suprimiendo cualquier residuo de clientes previamente asociados y eliminando la etiqueta errónea `[• sin registro]`.
+  - En `useNovaResolvedRows`, las filas contenidas en `unlinkedRows` envían `savedCustomerName: undefined`, forzando a `resolveEffectiveCustomerName` a resolver de manera pura a `manifestConsigneeName` con `slCode: ''`.
+- **Eliminación de Fuga de Rutas en Identificadores de Cliente (`use-nova-resolved-rows.ts`):**
+  - Refactorizada la función auxiliar `getEffSlCode` para retornar estrictamente un código SL válido (`SL...`) o string vacío (`''`), eliminando la fuga histórica que devolvía nombres de ruta de entrega en lugar de SL code cuando la fila no tenía cliente asignado.
+- **Purga Activa de Aprendizaje Erróneo en Firestore (`use-nova-customer-assignment.ts`, `match-learning.ts`):**
+  - En `handleUnlinkOnly`, se invoca de manera deduplicada y no bloqueante `forgetMatchFeedback(row.nombre)`, eliminando cualquier regla aprendida errónea en las colecciones `match_feedback`, `manifest_learning_patterns` y `unmatched_route_learning` en Firestore para que el sistema no vuelva a asociar clientes homónimos en futuras validaciones.
+- **Cero Sobrecostos y Cero Bucles en Firebase (`InvoicesEmulatedE2E.spec.tsx`):**
+  - Toda la resolución visual se ejecuta en la RAM del navegador (0 lecturas/0 escrituras). La purga a Firestore está deduplicada con `Set<string>` para enviar exactamente 1 consulta por nombre único, sin bucles ni lecturas secundarias.
+- **Cobertura de Pruebas y Certificación de Cero Regresiones (`customer-name.spec.ts`, `use-nova-resolved-rows.spec.ts`, `match-learning-robust.spec.ts`):**
+  - Añadidas pruebas unitarias y de integración para todos los casos borde de desvinculación y aprendizaje. Suite completa de 180 archivos de prueba (2,415 pruebas) y verificación de TypeScript (`pnpm typecheck`) pasando al 100%.
+
+## [0.0.1606] - 2026-09-21
+
+### Fixed (Cálculo Canónico de Período de Gracia en Consolidación al Anular Facturas)
+- **Fecha de Emisión de Factura como Origen de Consolidación (`date-utils.ts`, `ConsolidationCustomerCard.tsx`):**
+  - Al anular una factura (ej. SL338 emitida un viernes y anulada el lunes siguiente), el período de gracia de 14 días y el cómputo de días transcurridos arrancan estrictamente a partir de la fecha de emisión original de la factura (`invoiceDate`, `createdAt` o fecha incrustada `YYYYMMDD` en `invoiceNumber`), en lugar de otorgar 14 días nuevos desde la fecha de anulación.
+- **Inviolabilidad de `firstConsolidatedAt` y Estampado en Handlers de Anulación (`Invoices.tsx`, `invoice-service.ts`, `ConsolidationInvoiceRow.tsx`, `PackagesDataTable.tsx`):**
+  - Blindados los flujos de anulación para estampar `firstConsolidatedAt`, `invoicedAt` y `annulledInvoiceDate` con la fecha de emisión de la factura anulada, preservando cualquier fecha previa más antigua si el paquete ya consolidaba antes.
+- **Sincronización de Contadores Header y Fila de Paquetes (`consolidation-carry-on-service.ts`):**
+  - `oldestPackageDate` computa la fecha inicial de consolidación evaluando fechas de emisión de facturas y `firstConsolidatedAt`, sincronizando el badge del card de cliente con el detalle de cada paquete.
+
+## [0.0.1601] - 2026-09-16
+
+### Fixed & Optimized (Nova Customer Real-Time Data Accuracy & Hardened SP2 Sync)
+- **Parser Universal de Fechas y Zona Horaria Costa Rica (`date-utils.ts`, `NovaTableModal.tsx`):**
+  - Soporte robusto de Timestamps de Firestore Web SDK (`{ seconds, nanoseconds }`), Admin SDK (`{ _seconds, _nanoseconds }`), instancias de `Date`, números epoch y cadenas ISO mediante `parseDateSafe` y `formatCustomerDetailDate`, garantizando que campos como `Perfil actualizado` nunca se queden en blanco y muestren la hora exacta de Costa Rica.
+- **Eliminación de Fechas Falsas de Consolidación (`NovaTableModal.tsx`):**
+  - Se removió el fallback engañoso hacia timestamps de sincronización periódica (`updatedAt`/`lastSyncAt`). Ahora el estado `Consolidación: Activa` muestra la fecha de activación real solo si existe un registro legítimo (`consolidationEnabledAt`, `consolidationActivatedAt`, `consolidationStartedAt`), evitando confusiones a los operadores.
+- **Optimización de Costos y Suscripción Reactiva en Tiempo Real (`invoice-service.ts`):**
+  - Mapeo completo e indexación dual (código raw, mayúsculas normalizadas y docSnap.id) en `subscribeCustomersBySlCodes` y `getCustomersBySlCodes` para la base de datos `portal`, con particionamiento eficiente de 30 elementos por consulta, Map en memoria y cero lecturas redundantes.
+- **Registro Inmediato de Cambios de Ruta y Sincronización SP2 (`customer-sync.ts`, `functions/src/customers/sync.ts`):**
+  - Inclusión de `rutaSetByAdminAt`, persistencia de `profileLastUpdatedAt` y preservación estricta de asignaciones de encomienda en direcciones (`preserveSp1AddressFields`) para evitar pérdidas ante sincronizaciones push desde SP2.
+- **Cobertura Completa de Pruebas Unitarias (`date-utils.spec.ts`):**
+  - 22 pruebas unitarias certificando todas las variantes de Timestamps de Firestore, conversiones de zona horaria y valores nulos.
+
+## [0.0.1600] - 2026-09-16
+
+### Added, Fixed & Hardened (Resend Email Traceability, Zero-False-Positive UI & Portal DB Webhook Sync)
+- **Trazabilidad 1-a-1 y Detección de Falsos Positivos (`InvoicesSpreadsheetRow.tsx`, `Invoices.tsx`, `invoice-service.ts`):**
+  - Implementada regla de oro: una factura solo se marca como enviada con éxito (verde) si posee un ID de transacción de Resend (`lastResendMessageId`) confirmado.
+  - Corrección de la reactividad optimista del frontend y backend que previamente marcaba `emailSent: true` ante respuestas fallidas o con ID nulo.
+  - Envíos sin ID o con error se visualizan en rojo (`border-rose-500 bg-rose-50 text-rose-700`) permitiendo reintento con un solo clic.
+- **Diseño de Modales/Tooltips con Contorno de Estado e Iconografía Lucide (`InvoicesSpreadsheetRow.tsx`):**
+  - Tooltips flotantes con fondo blanco pulcro (`!bg-white dark:!bg-zinc-900 shadow-xl`) y borde perimetral acorde al estado (verde esmeralda para entregado, rojo rosa para fallo/falso positivo, gris para no enviado).
+  - Reemplazo total de emojis por componentes vectoriales de Lucide React (`Calendar`, `KeyRound`, `Mail`, `CheckCircle`, `AlertTriangle`, `AlertCircle`).
+- **Conexión Multi-DB y Jerarquía en Webhook de Resend (`resend-webhook.ts`):**
+  - Conexión explícita a la base de datos `portal` (`getFirestore(getApp(), "portal")`) en Cloud Functions (`findInvoiceByMessageId`, `updateInvoiceEmailStatus`, `checkEmailStatus`, `slRefreshEmailStatus`, `syncEmailStatuses`).
+  - Protección de jerarquía de eventos para evitar que eventos diferidos o fuera de orden (`email.sent`) degraden estados definitivos (`delivered`, `bounced`, `complained`).
+- **Suite de Pruebas Unitarias Automatizadas (`InvoicesSpreadsheetRow.email.spec.ts`):**
+  - Pruebas unitarias certificando los estados de entrega, visualización y protección contra falsos positivos.
+
 ## [0.0.1599] - 2026-09-04
 
 ### Fixed (Payroll Frequency-Aware Unpaid Leave Daily Rate Divisor)

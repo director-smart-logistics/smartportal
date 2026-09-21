@@ -2879,6 +2879,8 @@ export default function EncomiendaManifests() {
 
   const executeMoveToTransitoria = useCallback(async () => {
     if (!transitoriaTarget || movingToTransitoria) return;
+    const pkgs = transitoriaTarget.packages;
+    const syncedAt = new Date().toISOString();
     setMovingToTransitoria(true);
     try {
       // Step 1: Query linked invoices to annul them and keep financial state clean

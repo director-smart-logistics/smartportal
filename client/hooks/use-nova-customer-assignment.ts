@@ -31,7 +31,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { searchCustomersLocal, getCustomerBySlCode, findCustomerMatch } from '@/lib/services/customer-matcher';
 import { MATCH_THRESHOLDS } from '@/lib/services/matching/thresholds';
 import { isDivergentMatch, createOrGetTempCustomer } from '@/lib/services/manifest-processor';
-import { lookupLearnedRoute, saveMatchFeedback, loadLearnedMatches, reloadLearnedMatches, lookupLearned, hasLearnedCollision, isDominantCollisionWinner } from '@/lib/services/match-learning';
+import { lookupLearnedRoute, saveMatchFeedback, loadLearnedMatches, reloadLearnedMatches, lookupLearned, hasLearnedCollision, isDominantCollisionWinner, forgetMatchFeedback } from '@/lib/services/match-learning';
 import { deleteTempCustomer } from '@/lib/services/temp-customers-service';
 import { updateCustomerRuta } from '@/lib/services/customer-sync';
 import type { ManifestRow } from '@/lib/services/manifest-processor';
@@ -158,8 +158,22 @@ export function useNovaCustomerAssignment({
       indices.forEach(i => delete next[i]);
       return next;
     });
+    // Active unlink learning purge: forget previous match rules for unlinked row names (deduplicated)
+    const uniqueNames = new Set<string>();
+    indices.forEach(idx => {
+      const row = resultDataRows[idx];
+      if (row?.nombre) {
+        const clean = row.nombre.trim();
+        if (clean) uniqueNames.add(clean);
+      }
+    });
+    uniqueNames.forEach(name => {
+      forgetMatchFeedback(name).catch(err =>
+        console.warn('[useNovaCustomerAssignment] Non-blocking forgetMatchFeedback on unlink:', err)
+      );
+    });
     flashUnlinked(indices);
-  }, [flashUnlinked]);
+  }, [flashUnlinked, resultDataRows]);
 
   const handleUnlinkRow = useCallback((rowIndex: number) => {
     handleUnlinkOnly([rowIndex]);

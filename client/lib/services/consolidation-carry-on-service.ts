@@ -48,6 +48,7 @@ import {
 } from './invoice-service';
 import { getManifestType, areManifestsCompatible } from '@/pages/consolidation/components/manifest-utils';
 import { normalizeOriginCountry as normalizeOriginToCountry } from '@/pages/consolidation/components/normalize-origin';
+import { extractInvoiceEmissionDate, extractDateIsoFromInvoiceNumber } from '@/lib/utils/date-utils';
 
 import type {
   ConsolidationPackage,
@@ -693,15 +694,41 @@ export function daysSince(dateStr?: string | null): number {
 }
 
 /**
- * Returns the oldest savedAt/createdAt among a set of packages.
- * Used to compute grace period countdowns.
+ * Returns the oldest consolidation start date among a set of packages.
+ * Evaluates candidate invoice emission dates, firstConsolidatedAt, and savedAt/createdAt.
+ * Used to compute customer card grace period countdowns.
  */
 export function oldestPackageDate(packages: ConsolidationPackage[]): string | null {
   let oldest: string | null = null;
+  let oldestMs: number | null = null;
+
   for (const pkg of packages) {
-    const d = pkg.savedAt || pkg.createdAt;
-    if (!d) continue;
-    if (!oldest || d < oldest) oldest = d;
+    const invDate =
+      extractInvoiceEmissionDate({
+        invoiceDate: (pkg as any).invoiceDate || (pkg as any).annulledInvoiceDate,
+        invoicedAt: pkg.invoicedAt,
+        annulledInvoiceNumber: pkg.annulledInvoiceNumber,
+        invoiceNumber: !(pkg as any).isTransitoria ? (pkg as any).invoiceNumber : undefined,
+      }) ||
+      (pkg.annulledInvoiceNumber ? extractDateIsoFromInvoiceNumber(pkg.annulledInvoiceNumber) : null) ||
+      (pkg.invoicedAt || null);
+
+    const candidates: string[] = [];
+    if (pkg.firstConsolidatedAt) candidates.push(pkg.firstConsolidatedAt);
+    if (invDate) candidates.push(invDate);
+    if (pkg.savedAt) candidates.push(pkg.savedAt);
+    if (pkg.createdAt) candidates.push(pkg.createdAt);
+
+    for (const d of candidates) {
+      if (!d) continue;
+      const ms = new Date(d).getTime();
+      if (!isNaN(ms)) {
+        if (oldestMs === null || ms < oldestMs) {
+          oldest = d;
+          oldestMs = ms;
+        }
+      }
+    }
   }
   return oldest;
 }

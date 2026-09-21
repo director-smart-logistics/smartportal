@@ -86,28 +86,12 @@ export function useNovaResolvedRows({
 
     // ── Helper: resolve effective slCode for any row index ────────────────────
     const getEffSlCode = (row: ManifestRow, idx: number): string => {
-      // BUG-RESOLVED-ROWS-SLCODE-FILTER 2026-08-07: Only accept valid slCodes starting with 'SL'
-      // for base calculation to prevent route fallbacks from leaking into client identifier slots.
+      // BUG-RESOLVED-ROWS-SLCODE-FILTER: Only accept valid slCodes starting with 'SL'
+      // to prevent route fallbacks from leaking into client identifier slots.
       const baseRaw = unlinkedRows.has(idx) ? '' : (slCodeOverrides[idx]?.slCode
         ?? matchOverrides[idx]?.slCode
         ?? (row.slCode || ''));
-      const base = (baseRaw && baseRaw.toUpperCase().startsWith('SL')) ? baseRaw : '';
-
-      const isSlCodeOverridden = slCodeOverrides[idx] !== undefined 
-        || matchOverrides[idx] !== undefined 
-        || unlinkedRows.has(idx);
-      const dbDefaultRoute = (loadedFromFirestore && !isSlCodeOverridden)
-        ? undefined
-        : (base ? customerContactMap?.get(base.toUpperCase())?.ruta : undefined);
-
-      const ruta = rutaOverrides[base]
-        ?? rutaOverrides[`__unmatched__${row.nombre}`]
-        ?? rutaOverrides[row.slCode ?? '']
-        ?? dbDefaultRoute
-        ?? slCodeOverrides[idx]?.ruta
-        ?? matchOverrides[idx]?.ruta
-        ?? (row.ruta || '');
-      return base || ruta || '';
+      return (baseRaw && baseRaw.toUpperCase().startsWith('SL')) ? baseRaw : '';
     };
 
     // ── Pass 1: pre-compute consolidated group totals ─────────────────────────
@@ -187,12 +171,13 @@ export function useNovaResolvedRows({
         : (row.preAlert && (row.preAlert.found || row.preAlert.slCode) ? row.preAlert : undefined);
       const preAlertName = effPreAlert?.displayName || effPreAlert?.fullName || effPreAlert?.name || effPreAlert?.clientName;
 
+      const isUnlinkedRow = unlinkedRows.has(idx);
       const effName = resolveEffectiveCustomerName({
         overrideName: matchOverrides[idx]?.fullName || nameOverrides[idx],
         contactName: (contact as any)?.fullName,
         preAlertName,
         manifestConsigneeName: row.nombre,
-        savedCustomerName: row.nombreCliente,
+        savedCustomerName: isUnlinkedRow ? undefined : row.nombreCliente,
         slCode: effSlCode,
       });
       // Billing peso:

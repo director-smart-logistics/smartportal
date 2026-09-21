@@ -10,6 +10,7 @@ import React, { useState, useMemo } from 'react';
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   query,
   where,
@@ -55,7 +56,7 @@ export function MoveManifestDialog({
   const isValid = !!target && target !== currentManifest;
 
   const isPkgPermiso = Boolean(
-    pkg.permisos ||
+    (pkg as any).permisos ||
     (pkg as any).isPermiso ||
     (pkg as any).requiresPermit ||
     currentManifest.toUpperCase().endsWith('DANP') ||

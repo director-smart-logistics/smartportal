@@ -106,5 +106,7 @@ export {
   getCostaRicaTodayISO,
   parseDateSafe,
   extractDateFromInvoiceNumber,
+  extractDateIsoFromInvoiceNumber,
+  extractInvoiceEmissionDate,
 } from "./utils/date-utils";
 

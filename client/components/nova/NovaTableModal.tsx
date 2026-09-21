@@ -234,6 +234,7 @@ import {
 import { useNovaResolvedRows } from "@/hooks/use-nova-resolved-rows";
 import { useNovaPriceCalcs } from "@/hooks/use-nova-price-calcs";
 import { useNovaDownloads } from "@/hooks/use-nova-downloads";
+import { formatCustomerDetailDate, parseDateSafe } from "@/lib/utils/date-utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -330,29 +331,7 @@ const NovaCopyButton = memo(function NovaCopyButton({
   );
 });
 
-function fmtHoverDate(raw: unknown): string {
-  if (!raw) return "";
-  try {
-    let d: Date;
-    if (typeof raw === "object" && raw !== null && "_seconds" in (raw as any)) {
-      d = new Date((raw as any)._seconds * 1000);
-    } else if (typeof raw === "number") {
-      d = new Date(raw);
-    } else {
-      d = new Date(String(raw));
-    }
-    if (isNaN(d.getTime())) return "";
-    return new Intl.DateTimeFormat("es-CR", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(d);
-  } catch {
-    return "";
-  }
-}
+const fmtHoverDate = formatCustomerDetailDate;
 
 export const ResultSummary = memo(function ResultSummary({
   resultData: propResultData,
@@ -5775,15 +5754,18 @@ export const ResultSummary = memo(function ResultSummary({
     return sortedGroups.map(([groupKey, entries]) => {
       const firstEntry = entries[0];
       const { row, originalIdx } = firstEntry;
-      const effSlCode =
-        slCodeOverrides[originalIdx]?.slCode ||
-        matchOverrides[originalIdx]?.slCode ||
-        row.slCode;
-      const name =
-        matchOverrides[originalIdx]?.fullName ||
-        nameOverrides[originalIdx] ||
-        row.nombreCliente ||
-        row.nombre;
+      const effSlCode = unlinkedRows.has(originalIdx)
+        ? ""
+        : (slCodeOverrides[originalIdx]?.slCode ||
+           matchOverrides[originalIdx]?.slCode ||
+           row.slCode);
+      const isUnlinkedGroup = !effSlCode || groupKey.startsWith("__unmatched__");
+      const name = isUnlinkedGroup
+        ? (nameOverrides[originalIdx] || row.nombre)
+        : (matchOverrides[originalIdx]?.fullName ||
+           nameOverrides[originalIdx] ||
+           row.nombreCliente ||
+           row.nombre);
       // Effective ruta — used by `onMoveToGroup` so a row reassigned to
       // this group inherits the right delivery route. Honours the
       // override stack: rutaOverrides[slCode] > slCodeOverrides[idx].ruta
@@ -5809,6 +5791,7 @@ export const ResultSummary = memo(function ResultSummary({
     matchOverrides,
     nameOverrides,
     rutaOverrides,
+    unlinkedRows,
   ]);
 
   // ── Merge-target detection (groupKey → MergeTarget) ──────────────────────────
@@ -7040,12 +7023,15 @@ export const ResultSummary = memo(function ResultSummary({
                           // back to the live `cc?.fullName` from customerContactMap before
                           // the manifest-snapshot `firstRow.nombreCliente` so divergent-
                           // match detection sees the up-to-date customer name.
-                          const groupDisplayName =
-                            matchOverrides[firstIdx]?.fullName ||
-                            nameOverrides[firstIdx] ||
-                            cc?.fullName ||
-                            firstRow.nombreCliente ||
-                            "";
+                          const isGroupUnlinked = !effectiveSlCode || groupKey.startsWith("__unmatched__") || unlinkedRows.has(firstIdx);
+                          const groupDisplayName = isGroupUnlinked
+                            ? (nameOverrides[firstIdx] || firstRow.nombre || "")
+                            : (matchOverrides[firstIdx]?.fullName ||
+                               nameOverrides[firstIdx] ||
+                               cc?.fullName ||
+                               firstRow.nombreCliente ||
+                               firstRow.nombre ||
+                               "");
                           const divergentEntries =
                             effectiveSlCode &&
                               dataOriginPolicy.showDivergentBadges
@@ -7200,11 +7186,14 @@ export const ResultSummary = memo(function ResultSummary({
                                       // Step 3 is what makes the "Editar cliente" → save flow reactive:
                                       // updates to `customers/{slCode}` propagate via
                                       // subscribeCustomersBySlCodes without requiring a manifest reload.
-                                      const displayName =
-                                        mo?.fullName ||
-                                        nameOverrides[firstIdx] ||
-                                        cc?.fullName ||
-                                        firstRow.nombreCliente;
+                                      const isRowUnlinked = !effectiveSlCode || unlinkedRows.has(firstIdx) || groupKey.startsWith("__unmatched__");
+                                      const displayName = isRowUnlinked
+                                        ? (nameOverrides[firstIdx] || firstRow.nombre)
+                                        : (mo?.fullName ||
+                                           nameOverrides[firstIdx] ||
+                                           cc?.fullName ||
+                                           firstRow.nombreCliente ||
+                                           firstRow.nombre);
                                       // `uppercase` Tailwind utility forces capitalization at
                                       // the CSS layer (text-transform: uppercase) so the operator
                                       // sees a consistent caps presentation across the whole
@@ -7261,11 +7250,10 @@ export const ResultSummary = memo(function ResultSummary({
                                                        Activa
                                                        {(() => {
                                                          const enabledAtRaw = cc.consolidationEnabledAt || cc.consolidationActivatedAt || cc.consolidationStartedAt || null;
-                                                         const fallbackRaw = !enabledAtRaw ? (cc.updatedAt || cc.lastSyncAt || cc.modifiedAt || null) : null;
-                                                         const dateToShow = enabledAtRaw || fallbackRaw;
-                                                         return dateToShow ? (
+                                                         const formatted = enabledAtRaw ? fmtHoverDate(enabledAtRaw) : "";
+                                                         return formatted ? (
                                                            <span className="text-[10px] text-slate-500 dark:text-slate-300 font-medium font-mono ml-1 font-sans">
-                                                             (desde {fmtHoverDate(dateToShow)})
+                                                             (desde {formatted})
                                                            </span>
                                                          ) : null;
                                                        })()}

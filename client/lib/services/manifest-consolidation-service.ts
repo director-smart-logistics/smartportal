@@ -177,6 +177,35 @@ export async function movePackagesBetweenManifestDocs(
   }
 
   await batch.commit();
+
+  // Also clean up any parent MEGA-MAN container that fused sourceManifest
+  try {
+    const [megaSnap1, megaSnap2] = await Promise.all([
+      getDocs(query(collection(db, 'manifests'), where('fusedFrom', 'array-contains', sourceManifest))),
+      getDocs(query(collection(db, 'manifests'), where('fusedManifests', 'array-contains', sourceManifest))),
+    ]);
+    const parentMegaDocs = [...megaSnap1.docs, ...megaSnap2.docs];
+    const seenMega = new Set<string>();
+    for (const megaDoc of parentMegaDocs) {
+      if (seenMega.has(megaDoc.id) || megaDoc.id === newManifest || megaDoc.id === sourceManifest) continue;
+      seenMega.add(megaDoc.id);
+      const mPkgs: any[] = megaDoc.data().packages ?? [];
+      const filtered = mPkgs.filter(p => !trackingSet.has((p.tracking || '').toUpperCase()));
+      if (filtered.length !== mPkgs.length) {
+        const mw = Math.round(filtered.reduce((sum, p) => sum + (p.weight || 0), 0) * 100) / 100;
+        const mp = Math.round(filtered.reduce((sum, p) => sum + (p.price || 0), 0) * 100) / 100;
+        await setDoc(doc(db, 'manifests', megaDoc.id), {
+          packages:      filtered,
+          totalPackages: filtered.length,
+          totalWeight:   mw,
+          totalPrice:    mp,
+          updatedAt:     now,
+        }, { merge: true }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('[movePackagesBetweenManifestDocs] Failed to clean parent mega-man docs:', err);
+  }
 }
 
 /**

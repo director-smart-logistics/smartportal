@@ -327,6 +327,8 @@ interface CustomerRowProps {
  * Mutations (edit, status toggle, delete) update or invalidate the query cache, ensuring
  * atomic list refreshes across all tabs without socket overhead.
  */
+import { resolveCustomerFullName } from "@/lib/utils/customer-name";
+
 const CustomerRow = memo(function CustomerRow({
   customer,
   idx,
@@ -342,6 +344,11 @@ const CustomerRow = memo(function CustomerRow({
   handleEditFromResult,
   setCustomerToDelete,
 }: CustomerRowProps) {
+  const displayFullName = (
+    resolveCustomerFullName(customer.firstName, customer.lastName, customer.fullName) ||
+    customer.fullName ||
+    ""
+  ).trim();
 
   return (
     <motion.div
@@ -363,12 +370,12 @@ const CustomerRow = memo(function CustomerRow({
             ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
             : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
         )}>
-          {(customer.fullName?.[0] ?? "?").toUpperCase()}
+          {(displayFullName?.[0] ?? "?").toUpperCase()}
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className={cn("text-sm font-semibold truncate", isDark ? "text-white" : "text-gray-900")}>
-              {customer.fullName?.toUpperCase()}
+              {displayFullName.toUpperCase()}
             </span>
             {customer.slCode && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
