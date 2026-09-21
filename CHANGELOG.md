@@ -2,6 +2,17 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1616] - 2026-09-21
+
+### Added & Improved (Auto-Promoción Atómica de Encomiendas a "En Ruta" por Pago de Factura & Refactor de Modales)
+- **Auto-Promoción Atómica y Pual (`autoPromoteEncomiendaPackagesToRouteOnPaid`):**
+  - Al marcar una factura como `paid` (Pagada / Cancelada 1 a 1 o masivamente desde Facturación, Encomiendas, Rutas o Asistente), los paquetes vinculados pertenecientes a la ruta `Encomiendas` que se encuentren en estado previo (`customs`, `received`, `pre-alerted`, `pending`) se mueven atómica y puntualmente a `status: 'route'` (`statusLabel: 'En Ruta'`), sincronizándose con SP2 y SmartWeb.
+  - **Invariante Estricto de Cero Reversión Descontrolada:** No altera paquetes ya entregados (`delivered`), devueltos (`returned`), retirados (`pickup`) o que pertenezcan a otras rutas regulares.
+- **Refactorización Visual de Modales (`AlertDialog` Centrado y Ampliado):**
+  - Migrado `EncomiendaStatusConfirmDialog` a `AlertDialog` nativo (`sm:max-w-2xl`), resolviendo problemas de maquetación lateral o recorte.
+  - Layout espacioso para visualización clara de trackings largos, clientes, pesos y badges de estado `[En Aduanas] ➜ [En Ruta]` / `[Entregado]`.
+  - Corregida la sincronización de eventos entre Popover y Modal de confirmación en el panel de manifiestos.
+
 ## [0.0.1615] - 2026-09-21
 
 ### Added & Improved (Modal de Confirmación Visual Guiada para Encomiendas)

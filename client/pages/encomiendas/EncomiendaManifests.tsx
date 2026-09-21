@@ -82,6 +82,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -488,7 +498,7 @@ function EncomiendaInvoiceEditorModal({
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="fixed left-[50%] top-[50%] -translate-x-1/2 -translate-y-1/2 w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto p-6 rounded-2xl bg-background border border-border shadow-2xl z-[80]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <ReceiptText className="h-4 w-4 text-emerald-600" />
@@ -839,7 +849,7 @@ function PackageRow({
 interface StatusConfirmModalProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: () => Promise<void>;
+  onConfirm: () => void;
   targetStatus: 'route' | 'delivered';
   scopeLabel: string;
   packages: EncomiendaManifestRow[];
@@ -859,10 +869,10 @@ function EncomiendaStatusConfirmDialog({
   const targetLabel = isDelivered ? 'Entregado' : 'En Ruta';
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v && !loading) onClose(); }}>
-      <DialogContent className="max-w-lg p-6 rounded-xl bg-background border border-border shadow-xl">
-        <DialogHeader className="space-y-1.5 pb-3 border-b border-border">
-          <DialogTitle className="flex items-center gap-2 text-base font-bold">
+    <AlertDialog open={open} onOpenChange={(v) => { if (!v && !loading) onClose(); }}>
+      <AlertDialogContent className="sm:max-w-2xl p-6 bg-background rounded-2xl border border-border shadow-2xl">
+        <AlertDialogHeader className="space-y-1.5 pb-3 border-b border-border text-left">
+          <AlertDialogTitle className="flex items-center gap-2 text-base font-bold text-foreground">
             {isDelivered ? (
               <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400">
                 <CheckCircle className="h-5 w-5" />
@@ -875,8 +885,11 @@ function EncomiendaStatusConfirmDialog({
             <span>
               {isDelivered ? "Confirmar Entrega de Paquetes" : "Confirmar Puesta en Ruta"}
             </span>
-          </DialogTitle>
-        </DialogHeader>
+          </AlertDialogTitle>
+          <AlertDialogDescription className="sr-only">
+            Confirmación de cambio de estado para paquetes de encomienda
+          </AlertDialogDescription>
+        </AlertDialogHeader>
 
         <div className="space-y-4 pt-2">
           {/* Scope and count summary */}
@@ -957,22 +970,22 @@ function EncomiendaStatusConfirmDialog({
         </div>
 
         {/* Dialog footer buttons */}
-        <div className="flex items-center justify-end gap-2 pt-4 border-t border-border mt-4">
-          <Button
-            size="sm"
-            variant="outline"
+        <AlertDialogFooter className="flex items-center justify-end gap-2 pt-4 border-t border-border mt-4">
+          <AlertDialogCancel
             onClick={onClose}
             disabled={loading}
-            className="h-8 px-3 text-xs"
+            className="h-8 px-3 text-xs m-0"
           >
             Cancelar
-          </Button>
-          <Button
-            size="sm"
-            onClick={onConfirm}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm();
+            }}
             disabled={loading}
             className={cn(
-              "h-8 px-4 text-xs font-semibold gap-1.5 text-white",
+              "h-8 px-4 text-xs font-semibold gap-1.5 text-white m-0",
               isDelivered
                 ? "bg-emerald-600 hover:bg-emerald-700"
                 : "bg-orange-600 hover:bg-orange-700"
@@ -989,10 +1002,10 @@ function EncomiendaStatusConfirmDialog({
                 Confirmar {isDelivered ? "Entrega" : "Puesta en Ruta"} ({packages.length})
               </>
             )}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -2154,7 +2167,7 @@ function CustomerGroup({
           }
         }}
       >
-        <DialogContent className="max-w-sm">
+        <DialogContent className="fixed left-[50%] top-[50%] -translate-x-1/2 -translate-y-1/2 w-[95vw] sm:max-w-sm max-h-[90vh] overflow-y-auto p-6 rounded-2xl bg-background border border-border shadow-2xl z-[80]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm">
               <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" aria-hidden />
@@ -2790,13 +2803,18 @@ function ManifestCard({
                         variant="outline"
                         className="w-full justify-start text-xs h-8 gap-2 border-orange-300 text-orange-800 hover:bg-orange-50 dark:border-orange-700 dark:text-orange-300 dark:hover:bg-orange-950/40"
                         onClick={(e) => {
+                          e.preventDefault();
                           e.stopPropagation();
+                          const pkgs = paidRowsInCustoms;
+                          const scope = `Manifiesto ${manifestNumber} (Pagados en Aduana)`;
                           setCleanPopoverOpen(false);
-                          setStatusConfirm({
-                            targetStatus: 'route',
-                            packages: paidRowsInCustoms,
-                            scopeLabel: `Manifiesto ${manifestNumber} (Pagados en Aduana)`,
-                          });
+                          setTimeout(() => {
+                            setStatusConfirm({
+                              targetStatus: 'route',
+                              packages: pkgs,
+                              scopeLabel: scope,
+                            });
+                          }, 50);
                         }}
                       >
                         <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
@@ -2809,13 +2827,18 @@ function ManifestCard({
                       variant="outline"
                       className="w-full justify-start text-xs h-8 gap-2 border-emerald-300 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
                       onClick={(e) => {
+                        e.preventDefault();
                         e.stopPropagation();
+                        const pkgs = paidRowsNotDelivered;
+                        const scope = `Manifiesto ${manifestNumber} (Todos los Pagados)`;
                         setCleanPopoverOpen(false);
-                        setStatusConfirm({
-                          targetStatus: 'delivered',
-                          packages: paidRowsNotDelivered,
-                          scopeLabel: `Manifiesto ${manifestNumber} (Todos los Pagados)`,
-                        });
+                        setTimeout(() => {
+                          setStatusConfirm({
+                            targetStatus: 'delivered',
+                            packages: pkgs,
+                            scopeLabel: scope,
+                          });
+                        }, 50);
                       }}
                     >
                       <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -3019,6 +3042,19 @@ function ManifestCard({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Manifest Status Confirmation Dialog ── */}
+      {statusConfirm && (
+        <EncomiendaStatusConfirmDialog
+          open={!!statusConfirm}
+          onClose={() => { if (!cleaningAction) setStatusConfirm(null); }}
+          onConfirm={handleConfirmManifestStatus}
+          targetStatus={statusConfirm.targetStatus}
+          scopeLabel={statusConfirm.scopeLabel}
+          packages={statusConfirm.packages}
+          loading={!!cleaningAction}
+        />
+      )}
     </div>
   );
 }
@@ -3796,7 +3832,7 @@ export default function EncomiendaManifests() {
         }}
       >
         {transitoriaTarget && (
-          <DialogContent className="max-w-md p-6 rounded-xl bg-background border border-border shadow-lg">
+          <DialogContent className="fixed left-[50%] top-[50%] -translate-x-1/2 -translate-y-1/2 w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto p-6 rounded-2xl bg-background border border-border shadow-2xl z-[80]">
             <DialogHeader className="space-y-1.5 pb-4 border-b border-border">
               <DialogTitle className="flex items-center gap-2 text-base font-bold text-emerald-700 dark:text-emerald-400">
                 <PackagePlus className="h-5 w-5" />
@@ -3933,7 +3969,7 @@ export default function EncomiendaManifests() {
           }
         }}
       >
-        <DialogContent className="max-w-md p-6 rounded-xl bg-background border border-border shadow-lg">
+        <DialogContent className="fixed left-[50%] top-[50%] -translate-x-1/2 -translate-y-1/2 w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto p-6 rounded-2xl bg-background border border-border shadow-2xl z-[80]">
           <DialogHeader className="space-y-1.5 pb-4 border-b border-border">
             <DialogTitle className="flex items-center gap-2 text-base font-bold">
               <Sparkles className="h-5 w-5 text-blue-600 dark:text-blue-400" />

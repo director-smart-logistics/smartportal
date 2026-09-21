@@ -96,7 +96,7 @@ import type { InvoiceRecord } from "@/lib/services/invoice-service";
 import { pushStatusToSp2, syncInvoicePackagesToSp2, syncInvoicesToSp2, previewSyncInvoices, deleteInvoiceFromSp2 } from "@/lib/services/sync-invoices-service";
 import { syncPackagesToSmartWeb } from "@/lib/services/sync-smartweb-service";
 import { firestoreApi, getInvoiceByTracking } from "@/lib/firebase/firestore-client";
-import { buildInvoiceEmailPayload, sendTestInvoiceEmail, subscribeCustomersBySlCodes, getCustomersBySlCodes, safeFormatDate, type CustomerContactInfo } from "@/lib/services/invoice-service";
+import { buildInvoiceEmailPayload, sendTestInvoiceEmail, subscribeCustomersBySlCodes, getCustomersBySlCodes, safeFormatDate, autoPromoteEncomiendaPackagesToRouteOnPaid, type CustomerContactInfo } from "@/lib/services/invoice-service";
 import { subscribeEncomiendas, type Encomienda } from "@/lib/services/encomienda-service";
 import { addItemsToConsolidation, movePackagesBetweenManifestDocs, removeManyFromConsolidation, type ManifestConsolidationItem } from "@/lib/services/manifest-consolidation-service";
 import { doc, getDoc, onSnapshot, collection, query, where, orderBy as fsOrderBy, getDocs, updateDoc, addDoc, deleteDoc, writeBatch, limit as fsLimit, arrayUnion, serverTimestamp, deleteField } from "firebase/firestore";
@@ -2089,13 +2089,24 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
             );
           }).catch(() => { });
         }
-        // When bulk-marked paid: update linked packages to 'on_route' in SP1 + sync SP2
-        if (newStatus === 'paid' && opts.updatePackages !== false) {
+        // When bulk-marked paid: auto promote encomienda packages to route + update linked packages in SP1 / SP2
+        if (newStatus === 'paid') {
           firebaseApi.invoices.getById(id).then((resp: any) => {
             const fullInv = resp.success ? resp.data : null;
-            if (fullInv) syncInvoicePackagesToSp2(fullInv, 'on_route').catch(err =>
-              console.warn('[invoice-pkg-sync][bulk-paid]', err),
-            );
+            if (fullInv) {
+              const items: any[] = fullInv.invoiceItems ?? fullInv.items ?? [];
+              const trackings = items.map((i: any) => i.trackingNumber || i.tracking).filter(Boolean);
+              if (trackings.length > 0) {
+                autoPromoteEncomiendaPackagesToRouteOnPaid(trackings).catch(err =>
+                  console.warn('[handleBulkStatusUpdate] autoPromoteEncomiendaPackagesToRouteOnPaid failed:', err)
+                );
+              }
+              if (opts.updatePackages !== false) {
+                syncInvoicePackagesToSp2(fullInv, 'on_route').catch(err =>
+                  console.warn('[invoice-pkg-sync][bulk-paid]', err)
+                );
+              }
+            }
           }).catch(() => { });
         }
       } catch {
@@ -3580,16 +3591,27 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
           );
         }).catch(() => { });
       }
-      // When marked paid: update linked packages to 'on_route' in SP1 + sync SP2
-      if (newStatus === 'paid' && (opts.updatePackages || opts.syncSp2)) {
+      // When marked paid: auto promote any linked encomienda packages to route + update linked packages to 'on_route' in SP1 + sync SP2
+      if (newStatus === 'paid') {
         firebaseApi.invoices.getById(invoiceId).then((resp: any) => {
           const fullInv = resp.success ? resp.data : null;
-          if (fullInv) syncInvoicePackagesToSp2(fullInv, 'on_route', {
-            updateSp1: opts.updatePackages,
-            syncSp2: opts.syncSp2,
-          }).catch(err =>
-            console.warn('[invoice-pkg-sync][paid]', err),
-          );
+          if (fullInv) {
+            const items: any[] = fullInv.invoiceItems ?? fullInv.items ?? [];
+            const trackings = items.map((i: any) => i.trackingNumber || i.tracking).filter(Boolean);
+            if (trackings.length > 0) {
+              autoPromoteEncomiendaPackagesToRouteOnPaid(trackings).catch(err =>
+                console.warn('[handleStatusChange] autoPromoteEncomiendaPackagesToRouteOnPaid failed:', err)
+              );
+            }
+            if (opts.updatePackages || opts.syncSp2) {
+              syncInvoicePackagesToSp2(fullInv, 'on_route', {
+                updateSp1: opts.updatePackages,
+                syncSp2: opts.syncSp2,
+              }).catch(err =>
+                console.warn('[invoice-pkg-sync][paid]', err),
+              );
+            }
+          }
         }).catch(() => { });
       }
       // When marked annulled, cancelled, or draft: update linked packages to 'consolidated' in SP1 + sync SP2 with forceSync: true

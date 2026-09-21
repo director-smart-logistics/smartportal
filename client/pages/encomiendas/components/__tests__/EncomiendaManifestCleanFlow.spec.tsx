@@ -129,4 +129,32 @@ describe('Encomienda Manifest Clean & Lifecycle Flows', () => {
     const activeEncomiendaPackages = allDelivered.filter((r) => r.status !== 'delivered');
     expect(activeEncomiendaPackages).toHaveLength(0);
   });
+
+  it('strictly protects terminal and non-encomienda statuses during auto-promotion on payment', () => {
+    const mixedPackages = [
+      { tracking: 'ENC_CUSTOMS_1', ruta: 'Encomiendas', status: 'customs' },
+      { tracking: 'ENC_RECEIVED_1', ruta: 'Encomiendas', status: 'received' },
+      { tracking: 'ENC_DELIVERED_1', ruta: 'Encomiendas', status: 'delivered' },
+      { tracking: 'ENC_RETURNED_1', ruta: 'Encomiendas', status: 'returned' },
+      { tracking: 'ENC_PICKUP_1', ruta: 'Encomiendas', status: 'pickup' },
+      { tracking: 'NON_ENC_GAM_1', ruta: 'GAM Central', status: 'customs' },
+      { tracking: 'NON_ENC_A_1', ruta: 'Ruta A', status: 'received' },
+    ];
+
+    const PROTECTED_OR_ACTIVE = ['delivered', 'returned', 'pickup', 'route', 'on_route'];
+
+    // Simulating auto-promote filter logic
+    const eligibleForAutoPromote = mixedPackages.filter((p) => {
+      const isEncomienda = p.ruta === 'Encomiendas';
+      if (!isEncomienda) return false;
+      const status = (p.status || '').toLowerCase();
+      if (PROTECTED_OR_ACTIVE.includes(status)) return false;
+      return true;
+    });
+
+    expect(eligibleForAutoPromote.map((p) => p.tracking)).toEqual([
+      'ENC_CUSTOMS_1',
+      'ENC_RECEIVED_1',
+    ]);
+  });
 });

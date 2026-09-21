@@ -71,7 +71,7 @@
  * Regression tests: client/lib/services/invoice-service.spec.ts
  */
 
-import { collection, addDoc, deleteDoc, serverTimestamp, getDocs, getDoc, query, where, getCountFromServer, onSnapshot, doc, updateDoc, writeBatch, arrayUnion, deleteField } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, serverTimestamp, getDocs, getDoc, query, where, getCountFromServer, onSnapshot, doc, updateDoc, writeBatch, arrayUnion, deleteField, documentId } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db, app } from '../firebase';
 import type { ProcessedRow } from '@/hooks/use-nova-chat';
@@ -922,6 +922,13 @@ export async function updateInvoiceStatusForTrackings(
     await batch.commit();
   }
 
+  // When marking as paid, auto-promote pending encomienda packages to route
+  if (newStatus === 'paid') {
+    autoPromoteEncomiendaPackagesToRouteOnPaid(upper).catch(err =>
+      console.warn('[updateInvoiceStatusForTrackings] encomienda auto-promote failed:', err)
+    );
+  }
+
   return {
     count: toUpdate.length,
     updatedInvoices: toUpdate.map(([id, data]) => ({
@@ -929,6 +936,142 @@ export async function updateInvoiceStatusForTrackings(
       invoiceNumber: data['invoiceNumber'] as string | undefined,
     })),
   };
+}
+
+/**
+ * Auto-promotes pending Encomienda packages to `route` ("En Ruta") when an invoice is marked as PAID.
+ *
+ * Strict business invariants:
+ * 1. ATOMIC & STRICTLY ONE-WAY: Never reverses or alters packages already in 'delivered', 'returned', 'pickup', or already in 'route'.
+ * 2. PUNCTUAL SCOPE: Only applies to packages whose route is 'Encomiendas' or exist in 'manifest_encomiendas'.
+ * 3. TARGET STATE: Only moves packages currently in customs / received / pre-alerted / pending state to `status: 'route'`, `statusLabel: 'En Ruta'`.
+ * 4. COMPLETE SYNCHRONIZATION: Updates `manifest_encomiendas`, `packages`, `pre_alerts`, `transit_packages`, and syncs to SP2 / SmartWeb.
+ */
+export async function autoPromoteEncomiendaPackagesToRouteOnPaid(
+  trackings: string[],
+  userAuditLog?: (entry: any) => void
+): Promise<number> {
+  if (!trackings || !trackings.length) return 0;
+  const upper = [...new Set(trackings.map(t => String(t).trim().toUpperCase()).filter(Boolean))];
+  if (!upper.length) return 0;
+
+  const syncedAt = new Date().toISOString();
+  const promotedTrackings: string[] = [];
+  const pkgsToSync: any[] = [];
+
+  const CHUNK_SIZE = 30;
+  for (let i = 0; i < upper.length; i += CHUNK_SIZE) {
+    const chunk = upper.slice(i, i + CHUNK_SIZE);
+
+    // 1. Check manifest_encomiendas docs
+    const encDocsMap = new Map<string, any>();
+    try {
+      const encSnap = await getDocs(query(collection(db, 'manifest_encomiendas'), where(documentId(), 'in', chunk)));
+      encSnap.docs.forEach(d => encDocsMap.set(d.id.toUpperCase(), { id: d.id, ...d.data() }));
+    } catch { /* non-fatal */ }
+
+    // 2. Check packages docs
+    const pkgDocsMap = new Map<string, any>();
+    try {
+      const pkgSnap = await getDocs(query(collection(db, 'packages'), where('trackingNumber', 'in', chunk)));
+      pkgSnap.docs.forEach(d => {
+        const tr = (d.data().trackingNumber || d.id || '').toString().toUpperCase();
+        pkgDocsMap.set(tr, { id: d.id, ...d.data() });
+      });
+    } catch { /* non-fatal */ }
+
+    const batch = writeBatch(db);
+    let batchHasOperations = false;
+
+    for (const tr of chunk) {
+      const encData = encDocsMap.get(tr);
+      const pkgData = pkgDocsMap.get(tr);
+
+      // Must be an encomienda package
+      const isEncomienda = Boolean(
+        encData ||
+        pkgData?.ruta === 'Encomiendas' ||
+        (pkgData?.manifestNumber || '').toString().toUpperCase().startsWith('ENC-')
+      );
+      if (!isEncomienda) continue;
+
+      const currentStatus = (encData?.status || pkgData?.status || '').toString().toLowerCase();
+      // Guard: strictly one-way. Skip if already delivered, returned, pickup, or already in route.
+      const PROTECTED_OR_ACTIVE = ['delivered', 'returned', 'pickup', 'route', 'on_route'];
+      if (PROTECTED_OR_ACTIVE.includes(currentStatus)) {
+        continue;
+      }
+
+      // Promote to 'route'
+      if (encData) {
+        batch.update(doc(db, 'manifest_encomiendas', tr), {
+          status: 'route',
+          statusLabel: 'En Ruta',
+          updatedAt: syncedAt,
+        });
+        batchHasOperations = true;
+      }
+
+      if (pkgData) {
+        batch.update(doc(db, 'packages', pkgData.id || tr), {
+          status: 'route',
+          statusLabel: 'En Ruta',
+          location: 'En Ruta de Entrega',
+          updatedAt: syncedAt,
+          statusHistory: arrayUnion({
+            status: 'route',
+            changedAt: syncedAt,
+            changedBy: 'auto-paid-encomienda-dispatch',
+            note: 'Paquete de encomienda movido automáticamente a En Ruta tras pago de factura',
+          }),
+        });
+        batchHasOperations = true;
+      }
+
+      promotedTrackings.push(tr);
+      pkgsToSync.push({
+        id: tr,
+        trackingNumber: tr,
+        slCode: pkgData?.slCode || encData?.slCode || '',
+        customerName: pkgData?.customerName || encData?.customerName || '',
+        status: 'route',
+        weight: pkgData?.weight ?? encData?.weight ?? 0,
+        description: pkgData?.description ?? encData?.description ?? '',
+        ruta: 'Encomiendas',
+        manifestNumber: pkgData?.manifestNumber || encData?.manifestNumber || '',
+        forceSync: true,
+        allowCreate: true,
+      });
+    }
+
+    if (batchHasOperations) {
+      await batch.commit();
+    }
+  }
+
+  if (pkgsToSync.length > 0) {
+    try {
+      await syncPackagesToSmartWeb(pkgsToSync);
+    } catch (syncErr) {
+      console.warn('[autoPromoteEncomiendaPackagesToRouteOnPaid] sync to SmartWeb failed:', syncErr);
+    }
+  }
+
+  if (promotedTrackings.length > 0) {
+    userAuditLog?.({
+      action: 'encomienda_packages_auto_promoted_on_paid',
+      category: 'package',
+      result: 'success',
+      resource: 'encomiendas',
+      metadata: {
+        status: 'route',
+        count: promotedTrackings.length,
+        trackings: promotedTrackings,
+      },
+    });
+  }
+
+  return promotedTrackings.length;
 }
 
 export async function markInvoicesAsPaidForTrackings(
@@ -994,6 +1137,11 @@ export async function markInvoicesAsPaidForTrackings(
     });
     await batch.commit();
   }
+
+  // Auto-promote any linked encomienda packages to route
+  autoPromoteEncomiendaPackagesToRouteOnPaid(upper).catch(err =>
+    console.warn('[markInvoicesAsPaidForTrackings] encomienda auto-promote failed:', err)
+  );
 
   return {
     count: toUpdate.length,
