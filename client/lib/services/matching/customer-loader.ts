@@ -392,6 +392,46 @@ export function patchCustomerConsolidationInCache(slCode: string, consolidationE
 }
 
 /**
+ * ─── IN-MEMORY CUSTOMER NAME MUTATION & INDEX EVICTION ─────────────────────────
+ *
+ * INVARIANT: When a customer's name is updated in the directory, mutating only
+ * `entry.fullName` is insufficient: the old `normalizedName` MUST be explicitly deleted
+ * from `cachedIndexes.byName` before inserting the new `normalizedName`.
+ * If the old entry is not evicted, manifest rows containing the customer's obsolete name
+ * will continue matching, producing stale matches or index poisoning.
+ *
+ * @param slCode - The customer's unique SL code
+ * @param fullName - The new display full name
+ */
+export function patchCustomerFullNameInCache(slCode: string, fullName: string): void {
+  const upper = slCode.toUpperCase();
+  const trimmedName = fullName.trim();
+  const normalizedName = normalize(trimmedName);
+
+  const entry = cachedIndexes?.bySlCode.get(upper);
+  if (entry) {
+    if (entry.normalizedName && cachedIndexes?.byName.get(entry.normalizedName) === entry) {
+      cachedIndexes.byName.delete(entry.normalizedName);
+    }
+    entry.fullName = trimmedName;
+    entry.name = trimmedName;
+    entry.normalizedName = normalizedName;
+    if (cachedIndexes) {
+      cachedIndexes.byName.set(normalizedName, entry);
+    }
+  }
+  const idx = cachedCustomers.findIndex(c => c.slCode.toUpperCase() === upper);
+  if (idx !== -1) {
+    cachedCustomers[idx] = {
+      ...cachedCustomers[idx],
+      fullName: trimmedName,
+      name: trimmedName,
+      normalizedName,
+    };
+  }
+}
+
+/**
  * Inject a synthetic customer into the live cache + indexes.
  * Used when a customer is discovered via SP2 fallback and needs to be
  * available for subsequent matching within the same batch run.
@@ -399,8 +439,11 @@ export function patchCustomerConsolidationInCache(slCode: string, consolidationE
 export function injectCustomerIntoCache(customer: CustomerData): void {
   if (cachedCustomers.find(c => c.slCode === customer.slCode)) return;
   cachedCustomers.push(customer);
-  if (cachedIndexes) {
-    cachedIndexes.bySlCode.set(customer.slCode.toUpperCase(), customer);
+  if (!cachedIndexes) {
+    cachedIndexes = buildIndexes(cachedCustomers);
+    return;
+  }
+  cachedIndexes.bySlCode.set(customer.slCode.toUpperCase(), customer);
     cachedIndexes.byName.set(customer.normalizedName, customer);
     const synthParts = customer.normalizedName.split(' ');
     const synthMTokens = meaningfulTokens(synthParts);
@@ -425,5 +468,4 @@ export function injectCustomerIntoCache(customer: CustomerData): void {
       if (bucket) bucket.push(customer);
       else cachedIndexes.byLastToken.set(td.lastTokenKey, [customer]);
     }
-  }
 }

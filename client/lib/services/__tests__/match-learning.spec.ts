@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/firebase/config', () => ({ db: {}, sp2App: {} }));
+vi.mock('@/lib/firebase/config', () => ({ db: {}, app: { name: 'mockApp' }, sp2App: {} }));
 
 vi.mock('firebase/firestore', () => ({
   collection:      vi.fn(() => 'col-ref'),

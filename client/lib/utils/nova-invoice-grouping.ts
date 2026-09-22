@@ -230,6 +230,11 @@ export function computeAutoConsolidationKeys(input: AutoConsolidationInput): Set
   counts.forEach((count, slCode) => {
     if (operatorOverrideKeys.has(slCode)) return;
     if (count < 2) return;
+    if (customerConsolidationEnabled.has(slCode)) {
+      if (customerConsolidationEnabled.get(slCode) !== true) return;
+      out.add(slCode);
+      return;
+    }
     const customerConsol = customerConsolidationEnabled.get(slCode) ?? false;
     const rowConsol      = hasConsolidacion.get(slCode) ?? false;
     if (!customerConsol && !rowConsol) return;

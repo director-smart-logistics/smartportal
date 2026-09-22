@@ -125,6 +125,7 @@ vi.mock('firebase/firestore', () => ({
     commit: async () => {},
   })),
   runTransaction:  vi.fn(async (_db: unknown, _fn: any) => undefined),
+  arrayUnion:      vi.fn((...args: any[]) => args),
 }));
 
 // Import AFTER mocks so the SUT picks them up.
@@ -736,4 +737,109 @@ describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection
     expect(trackings).toContain('TRK-STAYS');
     expect(trackings).not.toContain('TRK-MOVED');
   });
+
+  it('ingestManifestToPackages RESTORES packages from consolidacion_transitoria back to active manifest', async () => {
+    firestoreState.packagesDocsMap.set('TRK-TRANSITORIA', {
+      manifestNumber: 'consolidacion_transitoria',
+      isConsolidated: true,
+      consolidacion: true,
+      slCode: 'SL338',
+      status: 'consolidated',
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-TRANSITORIA',
+      manifiesto: '18-09-2026DAN',
+      slCode: 'SL338',
+      consolidacion: false,
+    });
+
+    const result = await ingestManifestToPackages([row], '18-09-2026DAN');
+    expect(result.updated).toBe(1);
+    expect(firestoreState.batchSetCalls.length).toBe(1);
+    const savedData = firestoreState.batchSetCalls[0].data;
+    expect(savedData.manifestNumber).toBe('18-09-2026DAN');
+    expect(savedData.manifestId).toBe('18-09-2026DAN');
+    expect(savedData.isConsolidated).toBe(false);
+    expect(savedData.consolidacion).toBe(false);
+  });
+
+  it('upsertManifestPackageOverrides RESTORES packages from consolidacion_transitoria back to active manifest', async () => {
+    firestoreState.packagesDocsMap.set('TRK-TRANSITORIA-2', {
+      manifestNumber: 'consolidacion_transitoria',
+      isConsolidated: true,
+      consolidacion: true,
+      slCode: 'SL338',
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-TRANSITORIA-2',
+      manifiesto: '18-09-2026DAN',
+      slCode: 'SL338',
+      consolidacion: false,
+    });
+
+    const result = await upsertManifestPackageOverrides([row], '18-09-2026DAN');
+    expect(result.updated).toBe(1);
+    expect(firestoreState.batchSetCalls.length).toBe(1);
+    const savedData = firestoreState.batchSetCalls[0].data;
+    expect(savedData.manifestNumber).toBe('18-09-2026DAN');
+    expect(savedData.manifestId).toBe('18-09-2026DAN');
+    expect(savedData.isConsolidated).toBe(false);
+    expect(savedData.consolidacion).toBe(false);
+  });
+
+  it('ingestManifestToPackages PRESERVES consolidacion=true if explicitly marked consolidated when moving from consolidacion_transitoria', async () => {
+    firestoreState.packagesDocsMap.set('TRK-TRANSITORIA-CONS', {
+      manifestNumber: 'consolidacion_transitoria',
+      isConsolidated: true,
+      consolidacion: true,
+      slCode: 'SL338',
+      status: 'consolidated',
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-TRANSITORIA-CONS',
+      manifiesto: '18-09-2026DAN',
+      slCode: 'SL338',
+      consolidacion: true,
+    });
+
+    const result = await ingestManifestToPackages([row], '18-09-2026DAN');
+    expect(result.updated).toBe(1);
+    expect(firestoreState.batchSetCalls.length).toBe(1);
+    const savedData = firestoreState.batchSetCalls[0].data;
+    // Manifest is updated to the target manifest (no longer stuck in consolidacion_transitoria)
+    expect(savedData.manifestNumber).toBe('18-09-2026DAN');
+    expect(savedData.manifestId).toBe('18-09-2026DAN');
+    // But operator-chosen consolidation is faithfully respected!
+    expect(savedData.isConsolidated).toBe(true);
+    expect(savedData.consolidacion).toBe(true);
+  });
+
+  it('Foreign Manifest Collision Guard PREVENTS reclaiming packages from another active real manifest', async () => {
+    // Package TRK-FOREIGN already belongs to another real manifest (e.g. 15-09-2026DAN)
+    firestoreState.packagesDocsMap.set('TRK-FOREIGN', {
+      manifestNumber: '15-09-2026DAN',
+      isConsolidated: false,
+      consolidacion: false,
+      slCode: 'SL777',
+      status: 'pending',
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-FOREIGN',
+      manifiesto: '18-09-2026DAN',
+      slCode: 'SL777',
+      consolidacion: false,
+    });
+
+    firestoreState.batchSetCalls.length = 0;
+    const result = await ingestManifestToPackages([row], '18-09-2026DAN');
+    // Foreign manifest packages are skipped to protect cross-manifest integrity
+    expect(result.skipped).toBe(1);
+    expect(result.updated).toBe(0);
+    expect(firestoreState.batchSetCalls.length).toBe(0);
+  });
 });
+

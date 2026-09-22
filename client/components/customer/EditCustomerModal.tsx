@@ -29,6 +29,7 @@ import { resolveCustomerFullName } from "@/lib/utils/customer-name";
 import { cn } from "@/lib/utils";
 import { subscribeEncomiendas, type Encomienda } from "@/lib/services/encomienda-service";
 import { updateCustomerRuta } from "@/lib/services/customer-sync";
+import { cascadeCustomerNameUpdateToLearning } from "@/lib/services/match-learning";
 import { getRouteColor } from "@/lib/utils/route-colors";
 import { 
   Info, 
@@ -405,6 +406,13 @@ export function EditCustomerModal({
       // Automatically sync to SP2 if the route has changed
       if (autoSyncRutaToSp2 && formData.slCode && formData.ruta) {
         await updateCustomerRuta(formData.slCode, formData.ruta, true, 'edit_customer_modal');
+      }
+
+      // Cascade customer name updates to Nova learning collections (match_feedback / manifest_learning_patterns)
+      if (formData.slCode && fullName) {
+        cascadeCustomerNameUpdateToLearning(formData.slCode, fullName).catch((err) =>
+          console.error("Failed to cascade customer name update to learning:", err)
+        );
       }
 
       toast({

@@ -2,6 +2,25 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1618] - 2026-09-21
+
+### Fixed (Blindaje Numérico Defensivo en Previsualización de Facturas Nova)
+- **Corrección de TypeError en `NovaInvoicePreview.tsx` (`item.amount.toFixed`):**
+  - Corregido el fallo en tiempo de ejecución donde `item.amount.toFixed(2)` lanzaba `TypeError` cuando un registro de factura en Firestore contenía valores no numéricos (string, null o undefined) en el monto de items de factura.
+  - Se normalizaron y envolvieron de forma defensiva todos los montos de items (`amount`, `weight`, `realWeight`, `subtotal`, `iva`, `total`) mediante `Number(...) || 0` en el normalizador y en las plantillas de impresión/JSX.
+
+## [0.0.1617] - 2026-09-21
+
+### Fixed (Corrección Estricta de Consolidación por Perfil de Cliente en Nova)
+- **Autoridad Estricta del Perfil de Cliente (`consolidationEnabled`):**
+  - Corregido el bug donde clientes sin el flag de consolidación (`consolidationEnabled: false`, como Alberto Flores o Gabriela Maritza Navarro) eran consolidados automáticamente al tener 2 o más paquetes en un manifiesto.
+  - En `computeAutoConsolidationKeys` (`nova-invoice-grouping.ts`), si el cliente tiene `consolidationEnabled === false` en su perfil, **NUNCA** se auto-activa el modo consolidación (`separateInvoices`), independientemente de banderas residuales `row.consolidacion` provenientes de manifiestos previos.
+  - En `NovaTableModal.tsx`, las facturas existentes de clientes no consolidados se enrutan a **Factura Única** (`patchMerged[slCode] = true`) en lugar de consolidación con redondeo de techo (`ceil(sumPeso) × tarifa`).
+  - En `use-nova-resolved-rows.ts`, el Paso 1 de facturación consolidada ahora valida que el cliente no tenga la consolidación expresamente deshabilitada antes de redistribuir precios sumados.
+- **Suite de Pruebas y Tipado:**
+  - Agregado test de regresión unitario específico en `nova-invoice-grouping.spec.ts`.
+  - 181 suites de prueba pasando al 100% (2,425 tests pasados) y `tsc` typecheck limpio con 0 errores.
+
 ## [0.0.1616] - 2026-09-21
 
 ### Added & Improved (Auto-Promoción Atómica de Encomiendas a "En Ruta" por Pago de Factura & Refactor de Modales)

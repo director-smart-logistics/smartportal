@@ -47,7 +47,7 @@ interface UseNovaResolvedRowsParams {
   separateInvoices: Record<string, boolean>;
   manifestCountry:  string;
   manifestShipping: string;
-  customerContactMap?: Map<string, { ruta?: string }>;
+  customerContactMap?: Map<string, { ruta?: string; consolidationEnabled?: boolean }>;
   priceAdjustments?: Record<string, AjustePrecio>;
   loadedFromFirestore?: boolean;
   preAlertsMap?: Map<string, any>;
@@ -108,6 +108,13 @@ export function useNovaResolvedRows({
         if (priceOverrides[tracking]?.precio != null) return;
         const slc = getEffSlCode(row, idx);
         if (!slc || !separateInvoices[slc]) return;
+        if (
+          customerContactMap &&
+          customerContactMap.has(slc.toUpperCase()) &&
+          !customerContactMap.get(slc.toUpperCase())?.consolidationEnabled
+        ) {
+          return;
+        }
         groupPesos.set(slc, (groupPesos.get(slc) ?? 0) + (row.peso ?? 0));
         if (!groupIdxs.has(slc)) groupIdxs.set(slc, []);
         groupIdxs.get(slc)!.push(idx);

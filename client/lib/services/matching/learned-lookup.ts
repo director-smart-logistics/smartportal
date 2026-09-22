@@ -18,7 +18,7 @@ import type { LearnedMatch } from '../match-learning';
 import { tokensMatch } from './algorithms';
 import { areNicknameEquivalent } from './nickname-resolver';
 import { doubleMetaphoneMatch } from './double-metaphone';
-import { ROUTING_PREFIXES, hasRoutingPrefix } from '../match-learning';
+import { ROUTING_PREFIXES } from './thresholds';
 
 // ─── External index (set by match-learning.ts on cache refresh) ─────────────
 

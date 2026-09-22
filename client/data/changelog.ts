@@ -26,6 +26,36 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1621',
+    date: '2026-09-22',
+    layer: 'both',
+    type: 'fix',
+    title: 'Rescate de Consolidación Transitoria en Nova, Cascada de Aprendizaje de Clientes y Blindaje Anti-Regresión',
+    description:
+      '1. **Rescate de Paquetes en Consolidación Transitoria (`ingestion.ts`)**: Se eliminó la restricción que forzaba a los paquetes procedentes de anulación a permanecer en `consolidacion_transitoria`. Al ingresarlos y guardarlos en un manifiesto real en Nova, su `manifestNumber` y `manifestId` se actualizan al manifiesto activo, se respeta la casilla `consolidacion` que elija el operador y se purgan de la colección auxiliar `manifest_consolidation` vía `removeManyFromConsolidation`.\\n' +
+      '2. **Guardia Anti-Colisión de Manifiestos Ajenos (`Foreign Manifest Collision Guard`)**: Nova rechaza secuestrar o sobrescribir paquetes pertenecientes a otros manifiestos activos (omitiéndolos con `skipped: 1`) a menos que el operador configure un `rowManifestOverride` explícito, protegiendo la integridad cruzada entre manifiestos.\\n' +
+      '3. **Cascada Bidireccional de Actualización de Nombre de Clientes (`match-learning.ts`, `triggers.ts`)**: Al modificar el nombre de un cliente en el directorio o vía backend, la cascada actualiza el nombre legible (`fullName` / `matchedName`) en `match_feedback` y `manifest_learning_patterns`. No altera el `slCode` ni las asociaciones aprendidas. En memoria, desaloja del índice `byName` el nombre antiguo para evitar falsos positivos.\\n' +
+      '4. **Purga Automática de Aprendizaje para Clientes Inactivos/Borrados (`triggers.ts`, `useCustomers.ts`)**: Si un cliente se elimina o desactiva, se purgan sus patrones históricos de matching para evitar asignaciones fantasma en paquetes entrantes.\\n' +
+      '5. **Desacoplamiento Arquitectónico y Tipado (`thresholds.ts`)**: Se centralizó `ROUTING_PREFIXES` en `thresholds.ts`, resolviendo la dependencia circular entre `learned-lookup.ts` y `match-learning.ts`.\\n' +
+      '6. **Suites de Pruebas de Integridad**: Cobertura exhaustiva con 1,000 iteraciones de inferencia en `nova-massive-emulation.spec.ts`, pruebas de ciclo de vida en `manifest-processor.round-trip.spec.ts` y pruebas de cascada en `match-learning-cascade.spec.ts`.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(nova/learning): transitoria package reclamation, customer name cascade, and anti-regression guards (v0.0.1621)',
+  },
+  {
+    version: '0.0.1620',
+    date: '2026-09-21',
+    layer: 'fe',
+    type: 'fix',
+    title: 'Alineación Quirúrgica de Facturación y Consolidación en Nova (Factura Única con Pesos y Precios Reales)',
+    description:
+      '1. **Blindaje de Detección de Consolidación en Generación de Facturas (`NovaTableModal.tsx:buildOne`)**: Se corrigió la condición que forzaba consolidación en clientes con 2+ paquetes a ciegas. Ahora `buildOne` valida estrictamente que `customerContactMap.get(effectiveSlCode)?.consolidationEnabled !== false` y `separateInvoices[effectiveSlCode] === true`. Para clientes en Factura Única (como Alberto Flores `SL7189` o Gabriela Navarro `SL261072`), la factura se genera con `isConsolidation: false`, `isMergedSingle: true` y notas de "Factura única — N paquetes".\\n' +
+      '2. **Preservación de Pesos y Tarifas Individuales en Ítems de Factura (`getItemBilling`)**: Para clientes en Factura Única, los ítems en la factura reportan fielmente su peso real individual (`resolvedRow.peso`, ej. 0.36kg, 0.84kg) y su precio individual ($8.00 / $12.00) en lugar de forzar pesos redondeados hacia arriba (`pesoRedondeo`), eliminando por completo la discrepancia entre el peso y el cálculo de la factura.\\n' +
+      '3. **Protección en `billedPrices` y Ciclos de Revalidación**: `billedPrices` valida la autoridad del perfil del cliente antes de calcular tarifas de techo. Los flujos de revalidación por grupo y revalidación de tabla completa recalculan con precisión matemática sin alterar clientes de tarifa regular.\\n' +
+      '4. **Suite de Pruebas de Regresión (`NovaInvoiceAndRevalidationFlows.spec.tsx`)**: Se incorporó una suite exhaustiva que certifica la generación de Factura Única, consolidación legítima y revalidación sin fugas de estado.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(nova): align invoice generation with customer consolidationEnabled authority preserving real weights and individual pricing (v0.0.1620)',
+  },
+  {
     version: '0.0.1606',
     date: '2026-09-21',
     layer: 'both',

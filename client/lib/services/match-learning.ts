@@ -51,7 +51,9 @@ import {
 } from 'firebase/firestore';
 import { setLearnedIndex, lookupLearnedEnhanced, getLearnedCandidatesForAIEnhanced } from './matching/learned-lookup';
 import { sanitizeName } from './matching/normalize';
-import { MATCH_THRESHOLDS } from './matching/thresholds';
+import { MATCH_THRESHOLDS, ROUTING_PREFIXES } from './matching/thresholds';
+
+export { ROUTING_PREFIXES };
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -170,22 +172,7 @@ export function isDominantCollisionWinner(normalizedName: string, winnerSlCode: 
 }
 
 const PATTERNS_COL = 'manifest_learning_patterns';
-
-// ─── Routing / city prefix set ─────────────────────────────────────────────────
-// In Costa Rican logistics manifests, unregistered customers (no slCode) are
-// prefixed with their city or delivery zone:
-//   "ALAJUELA FRANCISCO MEJIA"  →  city = ALAJUELA, name = FRANCISCO MEJIA
-//   "BB SONIA VALVERDE"         →  zone = BB, name = SONIA VALVERDE
-//
-// These prefixes are NOT part of the person's name and must never be confused
-// with tokens of a registered customer's name.  Any entry whose first normalized
-// token is in this set is treated as an unregistered-customer row.
-export const ROUTING_PREFIXES = new Set([
-  'ALAJUELA', 'HEREDIA', 'CARTAGO', 'LIMON', 'PUNTARENAS',
-  'GUANACASTE', 'LIBERIA', 'NICOYA', 'GRECIA', 'ATENAS',
-  'DESAMPARADOS', 'BB', 'SAN JOSE', 'SANJOSE',
-]);
-
+ 
 /** Returns true when the manifest name starts with a known routing/city prefix. */
 export function hasRoutingPrefix(manifestName: string): boolean {
   const firstToken = normalizeName(manifestName).split(' ')[0];
@@ -1135,3 +1122,104 @@ export async function forgetMatchFeedback(manifestName: string): Promise<void> {
     console.warn('[MatchLearning] Failed to forget match feedback:', error);
   }
 }
+
+/**
+ * ─── CASCADE CUSTOMER NAME UPDATE TO LEARNING COLLECTIONS ──────────────────────────
+ *
+ * INVARIANT: When a customer's registered full name changes in the CRM/Directory:
+ * 1. ONLY the human-readable display names (`fullName` in `match_feedback`, `matchedName`
+ *    in `manifest_learning_patterns`) are synchronized to the new name.
+ * 2. `slCode` is NEVER modified.
+ * 3. `manifestName` and `normalizedName` are intentionally preserved so existing learned
+ *    manifest spelling variations and nicknames continue matching the correct customer.
+ * 4. In-memory `learnedCache`, `learnedCacheIndex`, and `cachedIndexes.byName` are patched
+ *    immediately so subsequent lookups in the same browser session reflect the new name
+ *    and evict the stale normalized name from the index (preventing false matches).
+ *
+ * @param slCode - The customer's unique SL code (case-insensitive)
+ * @param newFullName - The newly updated full name of the customer
+ * @returns Object with counts of updated documents in feedback and pattern collections
+ */
+export async function cascadeCustomerNameUpdateToLearning(
+  slCode: string,
+  newFullName: string
+): Promise<{ updatedFeedback: number; updatedPatterns: number }> {
+  if (!slCode || !newFullName) return { updatedFeedback: 0, updatedPatterns: 0 };
+  const upperSl = slCode.trim().toUpperCase();
+  const trimmedName = newFullName.trim();
+  if (!trimmedName) return { updatedFeedback: 0, updatedPatterns: 0 };
+
+  let updatedFeedback = 0;
+  let updatedPatterns = 0;
+
+  try {
+    const batch = writeBatch(db);
+    let batchOps = 0;
+
+    // 1. Update match_feedback docs by slCode
+    const qFeedback = query(collection(db, 'match_feedback'), where('slCode', '==', upperSl));
+    const snapFeedback = await getDocs(qFeedback);
+    snapFeedback.forEach(d => {
+      const data = d.data() as MatchFeedback;
+      if (data.fullName !== trimmedName) {
+        batch.update(d.ref, { fullName: trimmedName, updatedAt: serverTimestamp() });
+        batchOps++;
+        updatedFeedback++;
+      }
+    });
+
+    // 2. Update manifest_learning_patterns docs by slCode
+    const qPatterns = query(collection(db, PATTERNS_COL), where('slCode', '==', upperSl));
+    const snapPatterns = await getDocs(qPatterns);
+    snapPatterns.forEach(d => {
+      const data = d.data();
+      if (data['matchedName'] !== trimmedName) {
+        batch.update(d.ref, { matchedName: trimmedName, updatedAt: serverTimestamp() });
+        batchOps++;
+        updatedPatterns++;
+      }
+    });
+
+    if (batchOps > 0) {
+      await batch.commit();
+      console.log(`[MatchLearning] 🔄 Cascaded name update for ${upperSl} → "${trimmedName}" (${updatedFeedback} feedback, ${updatedPatterns} patterns)`);
+    }
+
+    // 3. Mutate in-memory learned cache if loaded
+    if (learnedCache && learnedCache.length > 0) {
+      let cacheMutated = false;
+      for (const item of learnedCache) {
+        if (item.slCode && item.slCode.toUpperCase() === upperSl) {
+          item.fullName = trimmedName;
+          cacheMutated = true;
+        }
+      }
+      if (cacheMutated && learnedCacheIndex) {
+        for (const entry of learnedCacheIndex.values()) {
+          if (entry.slCode && entry.slCode.toUpperCase() === upperSl) {
+            entry.fullName = trimmedName;
+          }
+        }
+        if (learnedCollisionMap) {
+          for (const list of learnedCollisionMap.values()) {
+            for (const item of list) {
+              if (item.slCode && item.slCode.toUpperCase() === upperSl) {
+                item.fullName = trimmedName;
+              }
+            }
+          }
+        }
+        setLearnedIndex(learnedCacheIndex, learnedCollisions);
+      }
+    }
+
+    // 4. Update customer loader cache & indexes
+    const { patchCustomerFullNameInCache } = await import('./matching/customer-loader');
+    patchCustomerFullNameInCache(upperSl, trimmedName);
+  } catch (err) {
+    console.warn(`[MatchLearning] Error cascading customer name update for ${upperSl}:`, err);
+  }
+
+  return { updatedFeedback, updatedPatterns };
+}
+

@@ -200,12 +200,13 @@ function normalise(inv: PreviewableInvoice, customerConsolidationEnabled?: boole
             description: i.description || i.trackingNumber || "—",
             tracking: i.trackingNumber || "",
             // Fallback to items[].weight when invoiceItems[].weight is missing (legacy invoices)
-            weight:
+            weight: Number(
               i.weight && i.weight > 0
                 ? i.weight
                 : (itemsArr[idx]?.weight ?? 0),
-            realWeight: i.realWeight != null ? i.realWeight : undefined,
-            amount: i.totalPrice ?? i.unitPrice ?? 0,
+            ) || 0,
+            realWeight: i.realWeight != null ? Number(i.realWeight) : undefined,
+            amount: Number(i.totalPrice ?? i.unitPrice ?? i.amount ?? i.price ?? 0) || 0,
             requiresPermit: !!(
               i.isPermiso ||
               i.requiresPermit ||
@@ -214,11 +215,11 @@ function normalise(inv: PreviewableInvoice, customerConsolidationEnabled?: boole
             isManual: !!i.isManual,
           }))
         : itemsArr.map((i) => ({
-            description: i.description,
+            description: i.description || (i as any).tracking || "—",
             tracking: i.tracking,
-            weight: i.weight,
-            realWeight: (i as any).realWeight ?? undefined,
-            amount: i.amount,
+            weight: Number(i.weight ?? 0) || 0,
+            realWeight: (i as any).realWeight != null ? Number((i as any).realWeight) : undefined,
+            amount: Number(i.amount ?? (i as any).totalPrice ?? (i as any).unitPrice ?? (i as any).price ?? 0) || 0,
             requiresPermit:
               !!(i as any).isPermiso || !!(i as any).requiresPermit,
             isManual: !!(i as any).isManual,
@@ -397,10 +398,10 @@ function normalise(inv: PreviewableInvoice, customerConsolidationEnabled?: boole
         tracking: i.trackingNumber || "",
         isManual: !!(i as any).isManual,
         // Also check package.weight as fallback for SP1 invoices that may store weight there
-        weight: i.weight && i.weight > 0 ? i.weight : 0,
+        weight: Number(i.weight && i.weight > 0 ? i.weight : 0) || 0,
         realWeight:
-          (i as any).realWeight != null ? (i as any).realWeight : undefined,
-        amount: i.totalPrice ?? i.unitPrice ?? 0,
+          (i as any).realWeight != null ? Number((i as any).realWeight) : undefined,
+        amount: Number(i.totalPrice ?? i.unitPrice ?? (i as any).amount ?? (i as any).price ?? 0) || 0,
         requiresPermit:
           isPermitManifest || !!(i.requiresPermit || i.package?.requiresPermit),
       }));
@@ -555,8 +556,8 @@ export const NovaInvoicePreview = memo(function NovaInvoicePreview({
           <div class="item-name">Servicios Logísticos${item.requiresPermit ? ' <span class="permit-badge">&#9888; PERMISOS</span>' : ""}</div>
           <div class="item-desc">${escHtml(formatInvoiceItemCaption(item, { source: d.source }))}</div>
         </td>
-        <td style="text-align:center;">${item.weight || item.realWeight ? `${Number(item.realWeight ?? item.weight).toFixed(2)} ${d.source === "maritime" ? "FT³" : "kg"}` : "\u2014"}</td>
-        <td style="text-align:right;">${sym}${item.amount.toFixed(2)}</td>
+        <td style="text-align:center;">${item.weight || item.realWeight ? `${(Number(item.realWeight ?? item.weight) || 0).toFixed(2)} ${d.source === "maritime" ? "FT³" : "kg"}` : "\u2014"}</td>
+        <td style="text-align:right;">${sym}${(Number(item.amount) || 0).toFixed(2)}</td>
       </tr>
     `,
       )
@@ -1339,7 +1340,7 @@ export const NovaInvoicePreview = memo(function NovaInvoicePreview({
                             }}
                           >
                             {sym}
-                            {item.amount.toFixed(2)}
+                            {(Number(item.amount) || 0).toFixed(2)}
                           </td>
                         </tr>
                       ))}

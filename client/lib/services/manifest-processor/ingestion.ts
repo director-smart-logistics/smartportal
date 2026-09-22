@@ -19,6 +19,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { logAction, getManifestMoveHistory, type ManifestMoveEvent } from '../audit-service';
+import { removeManyFromConsolidation } from '../manifest-consolidation-service';
 import {
   type IngestResult,
   type ManifestRow,
@@ -528,6 +529,7 @@ export async function upsertManifestPackageOverrides(
     const batch = writeBatch(db);
     let batchUpdated = 0;
     let batchSkipped = 0;
+    const reclaimedTrackings: string[] = [];
 
     for (const { row, idx } of chunk) {
       const trackingId = row.tracking.toUpperCase();
@@ -547,12 +549,28 @@ export async function upsertManifestPackageOverrides(
         pkgCurrentMf &&
         !allowedSourceSet.has(pkgCurrentMf);
 
+      // ─── FOREIGN MANIFEST COLLISION GUARD ──────────────────────────────────────────
+      // INVARIANT: If a package belongs to a different, active real manifest (not 'consolidacion_transitoria'),
+      // Nova MUST NEVER silently reclaim, hijack or overwrite its manifestNumber unless the operator explicitly
+      // provided a rowManifestOverride. Violating this invariant causes silent cross-manifest package theft.
       if (isForeignManifest) {
         batchSkipped += 1;
         continue;
       }
 
-      const isTrans = pkgInfo.isTransitoria;
+      const targetManifestNumberRaw = (options?.rowManifestOverrides?.[trackingId] ?? manifestNumber) || row.manifiesto;
+      const targetManifestNumber = (targetManifestNumberRaw || '').trim();
+
+      // ─── TRANSITORIA RECLAMATION CONTRACT ──────────────────────────────────────────
+      // INVARIANT: If an existing package was parked in 'consolidacion_transitoria' (e.g. from an
+      // invoice annulment) and the operator is now saving/ingesting it under an active real manifest,
+      // the package must be cleanly reclaimed:
+      //   1. Update manifestNumber & manifestId to the real manifest.
+      //   2. Respect the operator-chosen consolidation flag (row.consolidacion).
+      //   3. Queue the trackingId in reclaimedTrackings to delete it from manifest_consolidation.
+      if (pkgInfo.isTransitoria && targetManifestNumber.toLowerCase() !== 'consolidacion_transitoria') {
+        reclaimedTrackings.push(trackingId);
+      }
 
       const adjustment = options?.priceAdjustments?.[trackingId]
         ?? options?.priceAdjustments?.[idx]
@@ -598,13 +616,13 @@ export async function upsertManifestPackageOverrides(
           price:          effectivePrice,
           ...(tc > 0 ? { costCRC: Math.round(effectivePrice * tc), exchangeRate: tc } : {}),
           // Consolidation + permit flags — operator-controlled
-          isConsolidated: isTrans ? true : row.consolidacion || false,
-          consolidacion:  isTrans ? true : row.consolidacion || false,
+          isConsolidated: row.consolidacion || false,
+          consolidacion:  row.consolidacion || false,
           requiresPermit: row.permisos || false,
           permisos:       row.permisos || false,
           // Manifest reassignment support
-          manifestNumber: isTrans ? 'consolidacion_transitoria' : (options?.rowManifestOverrides?.[trackingId] ?? manifestNumber) || row.manifiesto,
-          manifestId:     isTrans ? 'consolidacion_transitoria' : (options?.rowManifestOverrides?.[trackingId] ?? manifestNumber) || row.manifiesto,
+          manifestNumber: targetManifestNumber,
+          manifestId:     targetManifestNumber,
           // Round-trip fidelity fields (so reloads see the full row shape)
           pesoRedondeo:       effectivePesoRedondeo ?? row.pesoRedondeo ?? null,
           matchSource:        row.matchSource ?? '',
@@ -627,6 +645,13 @@ export async function upsertManifestPackageOverrides(
       await batch.commit();
       result.updated += batchUpdated;
       result.skippedNew += batchSkipped;
+      if (reclaimedTrackings.length > 0) {
+        try {
+          await removeManyFromConsolidation(reclaimedTrackings);
+        } catch (err) {
+          console.warn('[Nova][upsertManifestPackageOverrides] failed to remove reclaimed trackings from consolidation:', err);
+        }
+      }
     } catch (err) {
       result.errors += chunk.length;
       console.warn('[Nova][upsertManifestPackageOverrides] batch failed:', err);
@@ -744,6 +769,7 @@ export async function ingestManifestToPackages(
     const batch = writeBatch(db);
     let batchInserted = 0;
     let batchUpdated  = 0;
+    const reclaimedTrackings: string[] = [];
 
     for (const { row, idx } of chunk) {
       if (!row.tracking) { result.errors++; continue; }
@@ -762,9 +788,21 @@ export async function ingestManifestToPackages(
         currentMfUpper &&
         !allowedSourceSet.has(currentMfUpper);
 
+      // ─── FOREIGN MANIFEST COLLISION GUARD ──────────────────────────────────────────
+      // INVARIANT: Do not overwrite packages belonging to a different active manifest unless explicitly overridden.
       if (isForeignManifest) {
         result.skipped++;
         continue;
+      }
+
+      const targetManifestNumberRaw = (options?.rowManifestOverrides?.[trackingId] ?? manifestNumber) || row.manifiesto;
+      const targetManifestNumber = (targetManifestNumberRaw || '').trim();
+
+      // ─── TRANSITORIA RECLAMATION CONTRACT ──────────────────────────────────────────
+      // INVARIANT: When re-ingesting a package that was parked in 'consolidacion_transitoria' into a real manifest,
+      // queue it in reclaimedTrackings so post-batch it is purged from manifest_consolidation.
+      if (isExisting && isTransitoria && targetManifestNumber.toLowerCase() !== 'consolidacion_transitoria') {
+        reclaimedTrackings.push(trackingId);
       }
 
       const adjustment = options?.priceAdjustments?.[trackingId]
@@ -819,10 +857,6 @@ export async function ingestManifestToPackages(
       const ripMatchScore        = Number.isFinite(row.matchScore) ? row.matchScore : (effectiveSlCode ? 1 : 0);
       const ripPrecioSinPermiso  = Number.isFinite(row.precioSinPermiso) ? row.precioSinPermiso : effectivePrice;
       const ripPrecioConPermiso  = Number.isFinite(row.precioConPermiso) ? row.precioConPermiso : effectivePrice;
-      const targetManifestNumberRaw = isTransitoria
-        ? 'consolidacion_transitoria'
-        : (options?.rowManifestOverrides?.[trackingId] ?? manifestNumber) || row.manifiesto;
-      const targetManifestNumber = (targetManifestNumberRaw || '').trim();
 
       // 🚨 AUTOMATED PRICING GUARD: Detect if a package is being reassigned to a different real manifest.
       // If so, all manual price adjustments, stale cost/pricing overrides, and rounding weights
@@ -874,8 +908,8 @@ export async function ingestManifestToPackages(
         paymentStatus:      'pending',
         invoiceReady:       false,
         // === Consolidation ===
-        isConsolidated:     isTransitoria ? true : row.consolidacion || false,
-        consolidacion:      isTransitoria ? true : row.consolidacion || false,
+        isConsolidated:     row.consolidacion || false,
+        consolidacion:      row.consolidacion || false,
         // === Permits ===
         requiresPermit:     row.permisos || false,
         permisos:           row.permisos || false,
@@ -1003,6 +1037,13 @@ export async function ingestManifestToPackages(
       await batch.commit();
       result.inserted += batchInserted;
       result.updated  += batchUpdated;
+      if (reclaimedTrackings.length > 0) {
+        try {
+          await removeManyFromConsolidation(reclaimedTrackings);
+        } catch (err) {
+          console.warn('[Nova][ingestManifestToPackages] failed to remove reclaimed trackings from consolidation:', err);
+        }
+      }
     } catch {
       result.errors += chunk.length;
     }

@@ -149,6 +149,115 @@ async function sendRouteUpdateAlert(
 }
 
 /**
+ * ─── BACKEND CASCADE: CUSTOMER NAME UPDATE TO NOVA LEARNING ─────────────────────
+ * Synchronizes customer display name changes across Firestore collections
+ * `match_feedback` and `manifest_learning_patterns`.
+ *
+ * Invariant:
+ * - Batched in chunks of 400 operations to safely stay below Firestore's 500-op limit.
+ * - Only modifies `fullName` / `matchedName`. Does NOT alter `slCode` or pattern structure.
+ */
+async function cascadeNameToLearningBackend(
+  slCode: string,
+  newFullName: string
+): Promise<{ updatedFeedback: number; updatedPatterns: number }> {
+  let batch = db.batch();
+  let batchOps = 0;
+  let updatedFeedback = 0;
+  let updatedPatterns = 0;
+
+  const fbSnap = await db.collection("match_feedback").where("slCode", "==", slCode).get();
+  for (const d of fbSnap.docs) {
+    const dData = d.data();
+    if (dData.fullName !== newFullName) {
+      batch.update(d.ref, {
+        fullName: newFullName,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      batchOps++;
+      updatedFeedback++;
+      if (batchOps >= 400) {
+        await batch.commit();
+        batch = db.batch();
+        batchOps = 0;
+      }
+    }
+  }
+
+  const patSnap = await db.collection("manifest_learning_patterns").where("slCode", "==", slCode).get();
+  for (const d of patSnap.docs) {
+    const dData = d.data();
+    if (dData.matchedName !== newFullName) {
+      batch.update(d.ref, {
+        matchedName: newFullName,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      batchOps++;
+      updatedPatterns++;
+      if (batchOps >= 400) {
+        await batch.commit();
+        batch = db.batch();
+        batchOps = 0;
+      }
+    }
+  }
+
+  if (batchOps > 0) {
+    await batch.commit();
+  }
+
+  return { updatedFeedback, updatedPatterns };
+}
+
+/**
+ * ─── BACKEND PURGE: DELETE NOVA LEARNING PATTERNS ON CUSTOMER REMOVAL ───────────
+ * When a customer is hard-deleted or soft-deleted (`status === 'deleted'` or `isActive === false`),
+ * their historical match feedback and manifest learning patterns must be purged.
+ *
+ * Invariant:
+ * - Prevents future packages with similar names from being assigned to a deleted/inactive customer.
+ * - Batched in chunks of 400 operations.
+ */
+async function purgeLearningForSlCodeBackend(
+  slCode: string
+): Promise<{ deletedFeedback: number; deletedPatterns: number }> {
+  let batch = db.batch();
+  let batchOps = 0;
+  let deletedFeedback = 0;
+  let deletedPatterns = 0;
+
+  const fbSnap = await db.collection("match_feedback").where("slCode", "==", slCode).get();
+  for (const d of fbSnap.docs) {
+    batch.delete(d.ref);
+    batchOps++;
+    deletedFeedback++;
+    if (batchOps >= 400) {
+      await batch.commit();
+      batch = db.batch();
+      batchOps = 0;
+    }
+  }
+
+  const patSnap = await db.collection("manifest_learning_patterns").where("slCode", "==", slCode).get();
+  for (const d of patSnap.docs) {
+    batch.delete(d.ref);
+    batchOps++;
+    deletedPatterns++;
+    if (batchOps >= 400) {
+      await batch.commit();
+      batch = db.batch();
+      batchOps = 0;
+    }
+  }
+
+  if (batchOps > 0) {
+    await batch.commit();
+  }
+
+  return { deletedFeedback, deletedPatterns };
+}
+
+/**
  * Firestore trigger on SP1 customer write.
  */
 export const onCustomerWritten = onDocumentWritten(
@@ -165,9 +274,20 @@ export const onCustomerWritten = onDocumentWritten(
     const before = event.data.before?.data();
     const after = event.data.after?.data();
 
-    // 1. Deletion check
+    // 1. Deletion check — purge active learning feedback and patterns for deleted customer
     if (before && !after) {
-      logger.info(`[customer-trigger] Customer ${customerId} deleted in SP1.`);
+      const slCode = (before.slCode || customerId || '').trim().toUpperCase();
+      logger.info(`[customer-trigger] Customer ${customerId} (${slCode}) deleted in SP1.`);
+      if (slCode) {
+        try {
+          const { deletedFeedback, deletedPatterns } = await purgeLearningForSlCodeBackend(slCode);
+          if (deletedFeedback > 0 || deletedPatterns > 0) {
+            logger.info(`[customer-trigger] Purged ${deletedFeedback} feedback and ${deletedPatterns} patterns for deleted customer ${slCode}`);
+          }
+        } catch (purgeErr) {
+          logger.error(`[customer-trigger] Failed to purge Nova learning records for ${slCode}:`, purgeErr);
+        }
+      }
       return;
     }
 
@@ -177,19 +297,60 @@ export const onCustomerWritten = onDocumentWritten(
     const afterRuta = after.ruta;
     const beforeCons = before?.consolidationEnabled;
     const afterCons = after.consolidationEnabled;
-    const slCode = after.slCode || customerId;
+    const slCode = (after.slCode || customerId || '').trim().toUpperCase();
+
+    const beforeFullName = (before?.fullName || `${before?.firstName || ''} ${before?.lastName || ''}`).trim();
+    const afterFullName = (after.fullName || `${after.firstName || ''} ${after.lastName || ''}`).trim();
+
+    const beforeStatus = before?.status;
+    const afterStatus = after.status;
+    const beforeActive = before?.isActive !== false;
+    const afterActive = after.isActive !== false;
+
+    const statusBecameDeleted = (afterStatus === 'deleted' || !afterActive) &&
+      (beforeStatus !== 'deleted' || beforeActive);
 
     // 2. Loop prevention and change validation
     const rutaChanged = beforeRuta !== afterRuta;
     const consChanged = beforeCons !== afterCons;
+    const nameChanged = Boolean(afterFullName && beforeFullName !== afterFullName);
 
+    if (!rutaChanged && !consChanged && !nameChanged && !statusBecameDeleted && before !== undefined) {
+      return;
+    }
+
+    logger.info(`[customer-trigger] Customer ${slCode} update detected in SP1: rutaChanged=${rutaChanged}, consChanged=${consChanged}, nameChanged=${nameChanged}, statusBecameDeleted=${statusBecameDeleted}`);
+
+    // 3. Purge learning records if customer became deleted or inactive (e.g. soft delete from SP2 or SP1)
+    if (statusBecameDeleted && slCode) {
+      try {
+        const { deletedFeedback, deletedPatterns } = await purgeLearningForSlCodeBackend(slCode);
+        if (deletedFeedback > 0 || deletedPatterns > 0) {
+          logger.info(`[customer-trigger] Purged ${deletedFeedback} feedback and ${deletedPatterns} patterns for deactivated/deleted customer ${slCode}`);
+        }
+      } catch (purgeErr) {
+        logger.error(`[customer-trigger] Failed to purge Nova learning records for deactivated customer ${slCode}:`, purgeErr);
+      }
+    }
+
+    // 4. Cascade customer name updates to Nova learning collections (match_feedback & manifest_learning_patterns)
+    if (nameChanged && slCode && afterFullName && !statusBecameDeleted) {
+      try {
+        const { updatedFeedback, updatedPatterns } = await cascadeNameToLearningBackend(slCode, afterFullName);
+        if (updatedFeedback > 0 || updatedPatterns > 0) {
+          logger.info(`[customer-trigger] Cascaded name update for ${slCode} -> "${afterFullName}" (${updatedFeedback} feedback, ${updatedPatterns} patterns)`);
+        }
+      } catch (nameErr) {
+        logger.error(`[customer-trigger] Failed to cascade customer name update to Nova learning for ${slCode}:`, nameErr);
+      }
+    }
+
+    // If only name or status changed on an existing customer, no route or consolidation processing is needed
     if (!rutaChanged && !consChanged && before !== undefined) {
       return;
     }
 
-    logger.info(`[customer-trigger] Customer ${slCode} update detected in SP1: rutaChanged=${rutaChanged}, consChanged=${consChanged}`);
-
-    // 3. Resolve preferredRouteId and preferredRoute based on route name (ruta)
+    // 4. Resolve preferredRouteId and preferredRoute based on route name (ruta)
     const { preferredRouteId, preferredRoute } = await resolvePreferredRoute(afterRuta);
     const currentRouteId = after.preferredRouteId || null;
     const currentRoute = after.preferredRoute || null;

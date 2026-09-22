@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * NovaInvoicePreview.spec.tsx
  *
@@ -24,8 +25,10 @@
  * contract without first checking commits 53d8cd3f4 and a77fccf38.
  */
 
+import React from "react";
 import { describe, it, expect } from "vitest";
-import { formatInvoiceItemCaption } from "../NovaInvoicePreview";
+import { render } from "@testing-library/react";
+import { NovaInvoicePreview, formatInvoiceItemCaption } from "../NovaInvoicePreview";
 import { resolveEffectiveCustomerName } from "@/lib/utils/customer-name";
 
 describe("formatInvoiceItemCaption — REGULAR items (air manifest / encomiendas)", () => {
@@ -237,6 +240,84 @@ describe("NovaInvoicePreview — Clean Customer Name Resolution Invariant", () =
     });
     expect(name).toBe("DAYANA MARIA JIMENEZ ESQUIVEL");
     expect(name).not.toContain("Cliente Pre-alertado");
+  });
+});
+
+describe("NovaInvoicePreview — Component Rendering & Defensive Shape Resilience", () => {
+  it("renders without crashing when items have string amount, null or undefined values", () => {
+    const malformedInvoice: any = {
+      invoiceNumber: "SL7189-20260921120000000",
+      amount: "24.00",
+      totalAmount: "24.00",
+      subtotalAmount: "24.00",
+      taxAmount: "0.00",
+      clientName: "ALBERTO FLORES CARDENAS",
+      slCode: "SL7189",
+      clientEmail: "alberto@example.com",
+      clientRoute: "SJ Escazu",
+      items: [
+        {
+          tracking: "9631091350722516540500383613429045",
+          description: "PKG 1",
+          weight: "0.76",
+          amount: "12.00",
+        },
+        {
+          tracking: "9631091350722516540500383613429046",
+          description: "PKG 2",
+          weight: null,
+          amount: null,
+        },
+        {
+          tracking: "9631091350722516540500383613429047",
+          description: "PKG 3",
+          amount: undefined,
+        },
+      ],
+    };
+
+    const { container } = render(
+      <NovaInvoicePreview invoice={malformedInvoice} inline={true} />
+    );
+
+    expect(container).toBeDefined();
+    expect(container.textContent).toContain("ALBERTO FLORES CARDENAS");
+    expect(container.textContent).toContain("9631091350722516540500383613429045");
+  });
+
+  it("renders SP1 shape invoice with non-numeric totalPrice or weights without throwing", () => {
+    const sp1Invoice: any = {
+      invoiceNumber: "INV-SP1-001",
+      totalAmount: 18.00,
+      customer: {
+        fullName: "GABRIELA MARITZA NAVARRO CHAVES",
+        slCode: "SL261072",
+        email: "gabriela@example.com",
+        ruta: "Heredia",
+        consolidationEnabled: false,
+      },
+      invoiceItems: [
+        {
+          trackingNumber: "1ZX397V30397282179",
+          description: "Zapatos",
+          weight: "1.36",
+          totalPrice: "18.00",
+        },
+      ],
+    };
+
+    const { container } = render(
+      <NovaInvoicePreview
+        invoice={sp1Invoice}
+        customerConsolidationEnabled={false}
+        inline={true}
+      />
+    );
+
+    expect(container).toBeDefined();
+    expect(container.textContent).toContain("GABRIELA MARITZA NAVARRO CHAVES");
+    expect(container.textContent).toContain("1ZX397V30397282179");
+    expect(container.textContent).not.toContain("Consolidación");
   });
 });
 

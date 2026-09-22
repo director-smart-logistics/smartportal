@@ -82,7 +82,15 @@ export function useUpdateCustomer(customerId: string) {
 
   return useMutation({
     mutationFn: async (data: any) => {
-      return await firestoreApi.customers.update(customerId, data);
+      const res = await firestoreApi.customers.update(customerId, data);
+      const slCode = data.slCode || customerId;
+      const fullName = data.fullName;
+      if (slCode && fullName) {
+        import('@/lib/services/match-learning').then(m => {
+          m.cascadeCustomerNameUpdateToLearning(slCode, fullName).catch(console.error);
+        }).catch(() => {});
+      }
+      return res;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: customersKeys.detail(customerId) });
@@ -100,7 +108,13 @@ export function useDeleteCustomer() {
 
   return useMutation({
     mutationFn: async (customerId: string) => {
-      return await firestoreApi.customers.delete(customerId);
+      const res = await firestoreApi.customers.delete(customerId);
+      if (customerId) {
+        import('@/lib/services/match-learning').then(m => {
+          m.deleteLearnedFeedbackForSlCode(customerId).catch(console.error);
+        }).catch(() => {});
+      }
+      return res;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: customersKeys.lists() });

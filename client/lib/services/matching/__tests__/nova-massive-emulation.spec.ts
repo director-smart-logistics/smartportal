@@ -23,6 +23,8 @@ vi.mock('react', () => ({
 // Mock Firebase Config
 vi.mock('@/lib/firebase/config', () => ({
   db: { __db: true },
+  app: { name: 'mockApp' },
+  sp2App: null,
 }));
 
 // Mock Firebase Functions

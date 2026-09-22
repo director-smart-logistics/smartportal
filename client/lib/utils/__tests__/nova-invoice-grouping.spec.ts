@@ -297,6 +297,21 @@ describe('computeAutoConsolidationKeys', () => {
     expect(result.has('SL66')).toBe(true);
   });
 
+  it('REGRESSION: never activates when customer.consolidationEnabled is explicitly false (even if row.consolidacion is true)', () => {
+    // Alberto Flores / Gabriela Maritza Navarro case: rows may carry consolidacion=true from past manifests,
+    // but customer profile has consolidationEnabled=false. Must NEVER consolidate!
+    const rows: InvoiceGroupingRow[] = [
+      row({ slCode: 'SL7189', consolidacion: true }),
+      row({ slCode: 'SL7189', consolidacion: true }),
+    ];
+    const result = computeAutoConsolidationKeys({
+      ...emptyInput,
+      rows,
+      customerConsolidationEnabled: new Map([['SL7189', false]]),
+    });
+    expect(result.has('SL7189')).toBe(false);
+  });
+
   it('respects operatorOverrideKeys — skips slCodes the operator manually toggled', () => {
     const rows: InvoiceGroupingRow[] = [
       row({ slCode: 'SL66', consolidacion: true }),

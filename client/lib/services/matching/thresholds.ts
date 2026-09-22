@@ -146,6 +146,17 @@ export const MATCH_THRESHOLDS = {
 
 export type MatchThresholds = typeof MATCH_THRESHOLDS;
 
+// ─── Routing / city prefix set ─────────────────────────────────────────────────
+// In Costa Rican logistics manifests, unregistered customers (no slCode) are
+// prefixed with their city or delivery zone:
+//   "ALAJUELA FRANCISCO MEJIA"  →  city = ALAJUELA, name = FRANCISCO MEJIA
+//   "BB SONIA VALVERDE"         →  zone = BB, name = SONIA VALVERDE
+export const ROUTING_PREFIXES = new Set([
+  'ALAJUELA', 'HEREDIA', 'CARTAGO', 'LIMON', 'PUNTARENAS',
+  'GUANACASTE', 'LIBERIA', 'NICOYA', 'GRECIA', 'ATENAS',
+  'DESAMPARADOS', 'BB', 'SAN JOSE', 'SANJOSE',
+]);
+
 // ── Compile-time invariant checks ─────────────────────────────────────
 // These type assertions ensure threshold relationships are never violated
 // during development. If a future change breaks an invariant, TypeScript

@@ -986,9 +986,18 @@ export const ResultSummary = memo(function ResultSummary({
       if (!slCode || slCode === "BB" || slCode === "M" || slCode === "SR")
         return;
       if (opOverrides.has(slCode)) return; // operator already made a deliberate choice
+      const isConsolExplicitlyDisabled =
+        customerContactMap.has(slCode) &&
+        !customerContactMap.get(slCode)?.consolidationEnabled;
+
       if (isConsolidatedInvoice(inv)) {
-        patchSeparate[slCode] = true;
-        patchMerged[slCode] = false;
+        if (!isConsolExplicitlyDisabled) {
+          patchSeparate[slCode] = true;
+          patchMerged[slCode] = false;
+        } else {
+          patchMerged[slCode] = true;
+          patchSeparate[slCode] = false;
+        }
       } else if (inv.isMergedSingle) {
         if (!(slCode in patchSeparate)) {
           patchMerged[slCode] = true;
@@ -1002,10 +1011,7 @@ export const ResultSummary = memo(function ResultSummary({
     // and stays consistent with the table's grouping (effective slCode after
     // matchOverrides / slCodeOverrides). This ensures that when an operator
     // manually links a row to an existing customer, the group size recomputes
-    // and consolidation auto-activates. Also honours row.consolidacion=true
-    // as a trigger — not just customer.consolidationEnabled — so rows already
-    // carrying the "C" badge converge on consolidation as soon as the group
-    // reaches ≥2 effective members.
+    // and consolidation auto-activates ONLY if the customer is configured for consolidation.
     const consolEnabledMap = new Map<string, boolean>();
     customerContactMap.forEach((info, sl) =>
       consolEnabledMap.set(sl, !!info.consolidationEnabled),
@@ -1022,6 +1028,18 @@ export const ResultSummary = memo(function ResultSummary({
       if (slCode in patchSeparate || slCode in patchMerged) return;
       patchSeparate[slCode] = true;
       patchMerged[slCode] = false;
+    });
+
+    // Clean up any stale separateInvoices state for customers whose profile does not enable consolidation
+    customerContactMap.forEach((info, sl) => {
+      if (!info.consolidationEnabled && !opOverrides.has(sl)) {
+        if (patchSeparate[sl] === true) {
+          patchSeparate[sl] = false;
+        }
+        if (separateInvoices[sl] === true && !(sl in patchSeparate)) {
+          patchSeparate[sl] = false;
+        }
+      }
     });
 
     // Step 3: temp customers (SL-NAN-*) with 2+ rows → auto Factura única.
@@ -3067,6 +3085,12 @@ export const ResultSummary = memo(function ResultSummary({
     groups.forEach((g, slCode) => {
       if (g.indices.length < 2) return;
       if (!separateInvoices[slCode]) return; // consolidation not enabled for this group
+      if (
+        customerContactMap.has(slCode) &&
+        customerContactMap.get(slCode)?.consolidationEnabled === false
+      ) {
+        return;
+      }
       if (manifestShipping !== "air") return; // ceiling billing is air-only — sea uses cubic-foot pricing
       const res = calculatePrice(
         Math.ceil(g.sumPeso),
@@ -7910,10 +7934,15 @@ export const ResultSummary = memo(function ResultSummary({
                                           rowList: (typeof entries)[0]["row"][],
                                           forceIndividualPricing = false,
                                         ): InvoiceRecord => {
+                                          const isCustomerConsolDisabled =
+                                            customerContactMap.has(effectiveSlCode) &&
+                                            customerContactMap.get(effectiveSlCode)?.consolidationEnabled === false;
                                           const isConsolidation =
                                             !forceIndividualPricing &&
                                             rowList.length > 1 &&
-                                            !rowList.some((r) => r.permisos);
+                                            !rowList.some((r) => r.permisos) &&
+                                            Boolean(separateInvoices[effectiveSlCode]) &&
+                                            !isCustomerConsolDisabled;
                                           const invoiceNumber =
                                             generateInvoiceNumber(
                                               effectiveSlCode,
@@ -7995,6 +8024,9 @@ export const ResultSummary = memo(function ResultSummary({
                                             slCode: effectiveSlCode,
                                             invoiceNumber,
                                             isConsolidation,
+                                            isMergedSingle:
+                                              rowList.length > 1 &&
+                                              !isConsolidation,
                                             ivaEnabled,
                                             subtotal: subtotalUSD,
                                             // BUG-I-AUDIT-03 FIX: derive CRC breakdown from totalCRC
