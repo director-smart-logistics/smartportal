@@ -128,7 +128,7 @@ export default function SettingsNew() {
       parseFloat(baseCost) +
       weight * parseFloat(costPerKg) +
       parseFloat(distanceFee);
-    return cost.toFixed(2);
+    return Number(cost || 0).toFixed(2);
   };
 
   const handleSaveInvoiceSettings = async () => {
@@ -566,7 +566,7 @@ export default function SettingsNew() {
                           data-testid="employer-ss-rate-input"
                         />
                         <span className="text-sm text-muted-foreground whitespace-nowrap min-w-[80px]">
-                          ({(parseFloat(employerSsRate) * 100).toFixed(2)}%)
+                          ({(Number(parseFloat(employerSsRate) || 0) * 100).toFixed(2)}%)
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground">
@@ -592,7 +592,7 @@ export default function SettingsNew() {
                           data-testid="employee-ss-rate-input"
                         />
                         <span className="text-sm text-muted-foreground whitespace-nowrap min-w-[80px]">
-                          ({(parseFloat(employeeSsRate) * 100).toFixed(2)}%)
+                          ({(Number(parseFloat(employeeSsRate) || 0) * 100).toFixed(2)}%)
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground">
@@ -618,7 +618,7 @@ export default function SettingsNew() {
                           data-testid="overtime-rate-input"
                         />
                         <span className="text-sm text-muted-foreground whitespace-nowrap min-w-[80px]">
-                          ({(parseFloat(overtimeRate) * 100).toFixed(0)}%)
+                          ({(Number(parseFloat(overtimeRate) || 0) * 100).toFixed(0)}%)
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground">

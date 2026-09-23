@@ -32,6 +32,8 @@ import {
   Search,
   User,
   ShieldAlert,
+  Users,
+  Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -73,12 +75,6 @@ interface ManifestViewSection {
   totalCustomers: number;
 }
 
-function classifyManifest(m: string): ManifestCategory {
-  const upper = m.toUpperCase().trim();
-  if (upper.includes('MEGA-MAN') || upper.includes('MEGA_MAN') || upper.startsWith('SL-MEGA-MAN')) return 'mega';
-  if (isPermitManifest(m)) return 'permit';
-  return 'regular';
-}
 
 export default function ConsolidationManifests() {
   const { customerSections, allManifestNumbers, allInvoices, allPackages, loading, error } =
@@ -606,6 +602,59 @@ export default function ConsolidationManifests() {
     return sections.filter(ms => ms.manifestNumber === TRANSITORIA_MANIFEST);
   }, [filteredSections]);
 
+  /**
+   * ── INVARIANT: Live Audit Counter Bar & Photo Traceability ─────────────────
+   * When operators or customers capture mobile photos of the left side of the screen:
+   * 1. The counter displays direct, left-aligned, small monospace text:
+   *    "{X} clientes • {Y} paquetes | Corte: DD/MM/AAAA HH:MM:SS"
+   *    (without redundant section labels, weight, or total system counts).
+   * 2. Each customer panel header is sequentially numbered (> 1. [Ruta] [SL] Nombre)
+   *    in muted non-bold font to allow immediate visual verification against the counter.
+   */
+  const transitoriaStats = useMemo(() => {
+    let customerCount = 0;
+    let packageCount = 0;
+    let totalWeight = 0;
+
+    for (const section of filteredSections) {
+      const transitoriaGroups = section.manifestGroups.filter(
+        g => g.manifestNumber === TRANSITORIA_MANIFEST
+      );
+      if (transitoriaGroups.length > 0) {
+        customerCount++;
+        for (const g of transitoriaGroups) {
+          packageCount += g.packages.length;
+          totalWeight += g.packages.reduce((sum, p) => sum + (p.weight ?? 0), 0);
+        }
+      }
+    }
+
+    return { customerCount, packageCount, totalWeight };
+  }, [filteredSections]);
+
+  const [auditTimestamp, setAuditTimestamp] = useState<string>('');
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setAuditTimestamp(
+        now.toLocaleDateString('es-CR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        }) + ' ' +
+        now.toLocaleTimeString('es-CR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        })
+      );
+    };
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const toggleManifestExpanded = useCallback((manifestNumber: string) => {
     setExpandedManifests(prev => {
       const next = new Set(prev);
@@ -887,7 +936,7 @@ export default function ConsolidationManifests() {
                     selectedManifests={selectedManifests}
                     onManifestsChange={setSelectedManifests}
                     manifestPackageCounts={manifestPackageCounts}
-                    classifyManifest={classifyManifest}
+                    triggerClassName="h-10 px-3.5 text-xs font-semibold rounded-lg shadow-sm w-full sm:w-auto sm:min-w-[220px]"
                   />
                 </div>
 
@@ -930,6 +979,24 @@ export default function ConsolidationManifests() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* ── Compact Audit Counter Bar (All on left in small text for photos) ── */}
+          <div
+            id="consolidation-audit-bar"
+            className="flex flex-wrap items-center gap-2 sm:gap-2.5 px-3 sm:px-6 py-1.5 bg-muted/20 border-b border-border text-[11px] font-mono text-muted-foreground"
+          >
+            <span className="font-medium text-foreground">
+              {transitoriaStats.customerCount} {transitoriaStats.customerCount === 1 ? 'cliente' : 'clientes'}
+            </span>
+            <span>•</span>
+            <span className="font-medium text-foreground">
+              {transitoriaStats.packageCount} {transitoriaStats.packageCount === 1 ? 'paquete' : 'paquetes'}
+            </span>
+            <span className="text-border">|</span>
+            <span>
+              Corte: <strong className="text-foreground">{auditTimestamp || 'Actualizado'}</strong>
+            </span>
           </div>
 
           {/* ── Error state ────────────────────────────────────────────── */}
@@ -1019,9 +1086,10 @@ export default function ConsolidationManifests() {
                   </div>
                 ) : (
                   <div className="space-y-0">
-                    {transitoriaClients.map(section => (
+                    {transitoriaClients.map((section, idx) => (
                       <ConsolidationCustomerCard
                         key={section.customer.slCode}
+                        itemIndex={idx + 1}
                         section={section}
                         compliance={complianceMap.get(section.customer.slCode)}
                         gracePeriodDays={gracePeriodDays}
@@ -1083,10 +1151,11 @@ export default function ConsolidationManifests() {
                     </Badge>
                   </div>
                 )}
-                {ms.customerSections.map(section => {
+                {ms.customerSections.map((section, idx) => {
                   return (
                     <ConsolidationCustomerCard
                       key={section.customer.slCode}
+                      itemIndex={idx + 1}
                       section={section}
                       compliance={complianceMap.get(section.customer.slCode)}
                       gracePeriodDays={gracePeriodDays}
@@ -1242,10 +1311,10 @@ export default function ConsolidationManifests() {
                       </div>
                       <div className="text-right shrink-0 space-y-1">
                         <p className="text-xs font-bold text-foreground">
-                          ${pkg.price.toFixed(2)}
+                          ${Number(pkg.price || 0).toFixed(2)}
                         </p>
                         <p className="text-[10px] text-muted-foreground">
-                          {pkg.weight.toFixed(2)} kg
+                          {Number(pkg.weight || 0).toFixed(2)} kg
                         </p>
                         {pkg.status && (
                           <span className="inline-block text-[9px] font-medium bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-900/50 px-1.5 py-0.2 rounded mt-1 capitalize">
@@ -1325,11 +1394,11 @@ export default function ConsolidationManifests() {
                     </div>
                     <div>
                       <span className="font-medium text-foreground/70">Peso:</span>{' '}
-                      <span className="text-foreground">{globalSearchResult.weight.toFixed(2)} kg</span>
+                      <span className="text-foreground">{Number(globalSearchResult.weight || 0).toFixed(2)} kg</span>
                     </div>
                     <div>
                       <span className="font-medium text-foreground/70">Precio:</span>{' '}
-                      <span className="text-foreground font-semibold text-foreground">${globalSearchResult.price.toFixed(2)}</span>
+                      <span className="text-foreground font-semibold text-foreground">${Number(globalSearchResult.price || 0).toFixed(2)}</span>
                     </div>
                     <div>
                       <span className="font-medium text-foreground/70">Ruta:</span>{' '}

@@ -697,7 +697,7 @@ export default function Scanner() {
                         >
                           {t("carrierLabel")}: <span className="font-medium">{scanResult.carrier}</span>
                           {scanResult.confidence && (
-                            <span className="ml-2">• {t("confidenceLabel")}: {(scanResult.confidence * 100).toFixed(0)}%</span>
+                            <span className="ml-2">• {t("confidenceLabel")}: {(Number(scanResult.confidence || 0) * 100).toFixed(0)}%</span>
                           )}
                         </div>
                       )}

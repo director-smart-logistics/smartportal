@@ -1417,7 +1417,7 @@ export function ScannerBodegaPage() {
                       Velocidad (Rate)
                     </label>
                     <span className="text-sm font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100">
-                      {speechSettings.rate.toFixed(2)}x
+                      {Number(speechSettings?.rate ?? 1).toFixed(2)}x
                     </span>
                   </div>
                   <input
@@ -1443,7 +1443,7 @@ export function ScannerBodegaPage() {
                       Tono (Pitch)
                     </label>
                     <span className="text-sm font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100">
-                      {speechSettings.pitch.toFixed(2)}
+                      {Number(speechSettings?.pitch ?? 1).toFixed(2)}
                     </span>
                   </div>
                   <input

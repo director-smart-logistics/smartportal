@@ -565,7 +565,7 @@ export function BulkMoveDialog({
                          destInvoice.status === 'sent'  ? 'Enviado' :
                          destInvoice.status === 'paid'  ? 'Pagado' : destInvoice.status}
                       </span>
-                      <span className="text-muted-foreground">· USD {destInvoice.totalAmount.toFixed(2)}</span>
+                      <span className="text-muted-foreground">· USD {Number(destInvoice.totalAmount || 0).toFixed(2)}</span>
                       <span className="text-emerald-600 font-medium">+{packages.length} item{packages.length !== 1 ? 's' : ''}</span>
                     </span>
                   ) : (

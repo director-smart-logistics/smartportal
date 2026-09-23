@@ -1022,7 +1022,7 @@ export function CreatePackageModal({
                             <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
                               Precio est.
                             </span>
-                            <span>${computedPrice.price.toFixed(2)}</span>
+                            <span>${Number(computedPrice.price || 0).toFixed(2)}</span>
                             <span className="text-xs font-normal text-gray-400">
                               {computedPrice.currency}
                             </span>
@@ -1076,8 +1076,8 @@ export function CreatePackageModal({
                       step="0.01"
                       placeholder={
                         formData.permisos
-                          ? String(Math.ceil(formData.weight || 0))
-                          : (formData.weight || 0).toFixed(2)
+                          ? String(Math.ceil(Number(formData.weight || 0)))
+                          : Number(formData.weight || 0).toFixed(2)
                       }
                       value={formData.pesoRedondeo ?? ""}
                       onChange={(e) =>
@@ -1108,7 +1108,7 @@ export function CreatePackageModal({
                       step="0.01"
                       placeholder={
                         computedPrice && !computedPrice.quoteRequired
-                          ? computedPrice.price.toFixed(2)
+                          ? Number(computedPrice.price || 0).toFixed(2)
                           : "0.00"
                       }
                       value={formData.priceOverride ?? ""}
@@ -1187,7 +1187,7 @@ export function CreatePackageModal({
                       >
                         Peso vol.: {volWeight} kg
                         {formData.weight > 0 &&
-                          ` — se cobra: ${Math.max(volWeight, formData.weight).toFixed(2)} kg`}
+                          ` — se cobra: ${Number(Math.max(volWeight, formData.weight) || 0).toFixed(2)} kg`}
                       </p>
                     )}
                   </div>

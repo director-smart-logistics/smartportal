@@ -992,10 +992,10 @@ export default function ReturnedPackages() {
                             </span>
 
                             {/* Weight */}
-                            {pkg.weight != null && pkg.weight > 0 && (
+                            {Number(pkg.weight || 0) > 0 && (
                               <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground shrink-0">
                                 <Scale className="h-2.5 w-2.5" aria-hidden />
-                                {pkg.weight.toFixed(2)} kg
+                                {Number(pkg.weight || 0).toFixed(2)} kg
                               </span>
                             )}
 

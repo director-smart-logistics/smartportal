@@ -335,7 +335,7 @@ export function InvoiceEditModal({
                             Total del item:
                           </span>
                           <span className="text-lg font-bold text-foreground">
-                            {invoice.currency} ${item.totalPrice.toFixed(2)}
+                            {invoice.currency} ${Number(item.totalPrice || 0).toFixed(2)}
                           </span>
                         </div>
                       </div>
@@ -407,7 +407,7 @@ export function InvoiceEditModal({
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Subtotal:</span>
                 <span className="font-medium">
-                  {invoice.currency} ${totals.subtotal.toFixed(2)}
+                  {invoice.currency} ${Number(totals.subtotal || 0).toFixed(2)}
                 </span>
               </div>
               {discountPercentage > 0 && (
@@ -416,21 +416,21 @@ export function InvoiceEditModal({
                     Descuento ({discountPercentage}%):
                   </span>
                   <span className="font-medium text-orange-600">
-                    -{invoice.currency} ${totals.discountAmount.toFixed(2)}
+                    -{invoice.currency} ${Number(totals.discountAmount || 0).toFixed(2)}
                   </span>
                 </div>
               )}
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">IVA (13%):</span>
                 <span className="font-medium">
-                  {invoice.currency} ${totals.tax.toFixed(2)}
+                  {invoice.currency} ${Number(totals.tax || 0).toFixed(2)}
                 </span>
               </div>
               <Separator />
               <div className="flex items-center justify-between">
                 <span className="text-base font-semibold">Total:</span>
                 <span className="text-xl font-bold text-primary">
-                  {invoice.currency} ${totals.total.toFixed(2)}
+                  {invoice.currency} ${Number(totals.total || 0).toFixed(2)}
                 </span>
               </div>
             </div>

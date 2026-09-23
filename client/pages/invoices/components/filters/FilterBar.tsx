@@ -42,6 +42,7 @@ interface FilterBarProps {
   setManifestFilter: (val: string) => void;
   manifestOptions: string[];
   manifestPackageCounts?: Map<string, number>;
+  manifestMergedMap?: Map<string, string>;
   dataLoadLimit: 'last24hours' | 'last48hours' | 'last4days' | 3000 | 5000 | 10000;
   setDataLoadLimit: (val: 'last24hours' | 'last48hours' | 'last4days' | 3000 | 5000 | 10000) => void;
   routeFilter: string;
@@ -73,7 +74,7 @@ export const FilterBar = React.memo(function FilterBar({
   statusFilterOpen, setStatusFilterOpen,
   invoiceStatusFilters, setInvoiceStatusFilters,
   manifestFilter, setManifestFilter, manifestOptions,
-  manifestPackageCounts,
+  manifestPackageCounts, manifestMergedMap,
   dataLoadLimit, setDataLoadLimit,
   routeFilter, setRouteFilter, routeOptions,
   tempCustomerFilter, setTempCustomerFilter,
@@ -307,6 +308,7 @@ export const FilterBar = React.memo(function FilterBar({
             setPageIndex(0);
           }}
           manifestPackageCounts={manifestPackageCounts}
+          manifestMergedMap={manifestMergedMap}
           singleSelect
           triggerClassName="w-full sm:w-auto sm:min-w-[200px] h-9 text-sm"
           allLabel={manifestOptions.length === 0 ? 'Sin manifiestos' : 'Todos los manifiestos'}
@@ -566,13 +568,13 @@ export const FilterBar = React.memo(function FilterBar({
             {statsTotalWeight !== undefined && statsTotalWeight > 0 && (
               <>
                 <span className="text-border select-none">·</span>
-                <span>{statsTotalWeight.toFixed(2)} kg</span>
+                <span>{Number(statsTotalWeight || 0).toFixed(2)} kg</span>
               </>
             )}
             {statsTotalAmount !== undefined && statsTotalAmount > 0 && (
               <>
                 <span className="text-border select-none">·</span>
-                <span>${statsTotalAmount.toFixed(2)}</span>
+                <span>${Number(statsTotalAmount || 0).toFixed(2)}</span>
               </>
             )}
           </motion.div>

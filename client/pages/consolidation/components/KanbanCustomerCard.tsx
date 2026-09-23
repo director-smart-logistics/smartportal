@@ -241,7 +241,7 @@ export function KanbanCustomerCard({
                   </span>
                   <InvoiceStatusDot status={ig.invoice.status} size="xs" />
                   <span className="text-[9px] text-muted-foreground ml-auto">
-                    ${ig.invoice.totalAmount.toFixed(2)}
+                    ${Number(ig.invoice.totalAmount || 0).toFixed(2)}
                   </span>
                 </div>
               ) : (

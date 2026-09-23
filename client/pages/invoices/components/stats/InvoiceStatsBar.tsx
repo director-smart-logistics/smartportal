@@ -53,11 +53,11 @@ export const InvoiceStatsBar = memo(function InvoiceStatsBar({ invoices }: Invoi
       <span className="text-border select-none">·</span>
       <span className="flex items-center gap-1">
         <Scale className="h-3 w-3 shrink-0" />
-        {filteredStats.totalWeight.toFixed(2)} {invoices.length > 0 && invoices.every(i => i.source === 'maritime') ? 'FT³' : 'kg'}
+        {Number(filteredStats.totalWeight || 0).toFixed(2)} {invoices.length > 0 && invoices.every(i => i.source === 'maritime') ? 'FT³' : 'kg'}
       </span>
       <span className="text-border select-none">·</span>
       <span className="flex items-center gap-1">
-        ${filteredStats.totalAmount.toFixed(2)}
+        ${Number(filteredStats.totalAmount || 0).toFixed(2)}
       </span>
     </div>
   );

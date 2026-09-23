@@ -26,6 +26,87 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1627',
+    date: '2026-09-22',
+    layer: 'both',
+    type: 'feature',
+    title: 'Contador de Auditoría en Vivo, Numeración Secuencial y Blindaje de Consolidación Transitoria',
+    description:
+      '1. **Barra de Auditoría y Contador en Vivo (`ConsolidationManifests.tsx`)**: Barra compacta alineada a la izquierda en tipografía monoespaciada pequeña (`{X} clientes • {Y} paquetes | Corte: DD/MM/AAAA HH:MM:SS`) sin etiquetas ni pesos redundantes, optimizada para capturas fotográficas de pantalla.\\n' +
+      '2. **Numeración Secuencial de Clientes (`ConsolidationCustomerCard.tsx`)**: Enumeración correlativa en color muted no-bold (`> 1.`, `> 2.`, ...) después del chevron en cada panel colapsable para conteo visual inmediato.\\n' +
+      '3. **Suscripción Multi-Query Concurrente (`useConsolidationData.ts`)**: Fusión en tiempo real de paquetes con `consolidacion == true`, `updatedManifest == "consolidacion_transitoria"` y `manifestNumber == "consolidacion_transitoria"`. Eliminada cualquier exclusión por flag de cliente.\\n' +
+      '4. **Resolución de Día 0 y Alerta de 90+ Días (`ConsolidationCustomerCard.tsx`, `consolidation-carry-on-service.ts`)**: Preservación estricta de fechas originales desde notas de auditoría en statusHistory para facturas anuladas, y badge "Más de 90 días" para clientes que superan el límite de custodia.\\n' +
+      '5. **Suite de Invariantes y Anti-Regresión**: 10 nuevas pruebas de invariantes (`consolidation-transitoria-live-invariants.spec.ts`) con 100% de éxito.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'feat(consolidation): live audit counter, panel numbering, multi-query subscription and transitoria invariants (v0.0.1627)',
+  },
+  {
+    version: '0.0.1626',
+    date: '2026-09-22',
+    layer: 'both',
+    type: 'fix',
+    title: 'Invalidación Instantánea de Caché y Entrega de Versiones en Navegadores',
+    description:
+      '1. **Encabezados `Cache-Control` en Firebase Hosting (`firebase.json`)**: Configurado `no-cache, no-store, must-revalidate` para todas las rutas HTML (`**`) para que cualquier navegador obtenga la versión más reciente en cada recarga.\\n' +
+      '2. **Caché Inmutable en Assets Estáticos**: `public, max-age=31536000, immutable` aplicado a scripts, estilos y fuentes compiladas con hash.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(hosting): configure strict no-cache on SPA document routes and immutable caching on static assets (v0.0.1626)',
+  },
+  {
+    version: '0.0.1625',
+    date: '2026-09-22',
+    layer: 'fe',
+    type: 'fix',
+    title: 'Blindaje Defensivo en Generación e Impresión de Manifiestos de Ruta y Encomiendas',
+    description:
+      '1. **Corrección de Runtime TypeError en `total.toFixed()` (`nova-print.ts`)**: Se blindó la función constructora del HTML para impresión de Manifiestos de Ruta (`buildRouteManifestHTML`) y Manifiesto de Encomiendas (`buildEncomiendaServiceManifestHTML`) asegurando que todos los montos de facturas, subtotales, precios unitarios, pesos y tipos de cambio sean convertidos a número (`Number(...) || 0`) antes de ejecutar `.reduce()` y `.toFixed(2)`.\\n' +
+      '2. **Mapeo Seguro en Modales y Páginas**: Se envolvió de forma defensiva la vinculación de `pkgInvoice.totalAmount` y `pkgInvoice.amountCRC` en `NovaTableModal.tsx`, `Invoices.tsx` y `RoutesManagement.tsx`.\\n' +
+      '3. **Verificación y Pruebas Unitarias**: Añadidos tests unitarios en `nova-print.spec.ts` para casos con cadenas numéricas (`"24.00"`) y valores nulos. 189 suites de pruebas pasando al 100% (2,469 tests) y `tsc --noEmit` completado con 0 errores.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(print): defensive numeric coercion for route manifests and encomienda print templates (v0.0.1625)',
+  },
+  {
+    version: '0.0.1624',
+    date: '2026-09-22',
+    layer: 'fe',
+    type: 'refactor',
+    title: 'Auditoría Profunda y Blindaje Numérico Integral en Componentes, Páginas y Módulos',
+    description:
+      '1. **Blindaje Defensivo contra `NaN` y TypeErrors en `.toFixed()`**: Auditoría exhaustiva componente por componente a lo largo de toda la aplicación (`EditInvoiceModal`, `Invoices`, `InvoiceStatsBar`, `FilterBar`, `RoutesManagement`, `DriverRouteWizard`, `PackagesDataTable`, `Packages`, `CreatePackageModal`, `PackageInvoicesModal`, `PackageDetailsModal`, `ConsolidationManifests`, `ReturnedPackages`, `AddToConsolidationDialog`, `ConsolidationCustomerCard`, `KanbanPackageItem`, `EncomiendaManifests`, `EncomiendaCustomerCard`, `Nova`, `Scanner`, `EntregasAdminComponents`, `ManifestRow`, `ManifestDetailsModal`, `MovePackagesModal`). Cada operación de formateo numérico fue envuelta en conversiones defensivas `Number(... || 0)`.\\n' +
+      '2. **Verificación Estricta en TypeScript y Node 22**: Typecheck `tsc --noEmit` completado con 0 errores y suite completa de pruebas ejecutada con éxito (186 suites / 2,459 pruebas pasando al 100% en Node 22 `v22.22.2`).\\n' +
+      '3. **Cero Regresiones Garantizadas**: Garantizada la estabilidad del ciclo de vida de trackings, consolidación transitoria, cálculo de impuestos/descuentos y renderizado de métricas financieras.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'refactor(core): comprehensive deep audit and defensive numeric safeguards across all components and modules (v0.0.1624)',
+  },
+  {
+    version: '0.0.1623',
+    date: '2026-09-22',
+    layer: 'both',
+    type: 'fix',
+    title: 'Soporte Unificado y Blindaje de Manifiestos Fusionados (MEGA-MAN) en ManifestPicker, Invoices, Rutas y Consolidación',
+    description:
+      '1. **ManifestPicker Unificado y Estado Deshabilitado (`ManifestPicker.tsx`)**: Todos los sub-manifiestos fusionados en un MEGA-MAN ahora se muestran visualmente con badge "Fusionado", texto tachado y estado deshabilitado (`aria-disabled`, `cursor-not-allowed`, checkbox disabled) impidiendo su selección individual errónea y guiando al operador a elegir el MEGA-MAN activo.\\n' +
+      '2. **Resolución Automática y Blindaje contra Falsos Positivos**: `ManifestPicker` ahora resuelve de forma estricta los manifiestos fusionados validando que el target sea un string diferente al manifiesto mismo, evitando tachaduras indebidas en MEGA-MAN y manifiestos activos. Se alineó la vista de Consolidación (`ConsolidationManifests.tsx`, `ConsolidationFilters.tsx`) con el estándar visual de la aplicación.\\n' +
+      '3. **Soporte de Búsqueda y Suscripciones en Invoices y Rutas**: `Invoices.tsx` y `RoutesManagement.tsx` resuelven automáticamente `mergedInto`, `fusedManifests` y `fusedFrom` al consultar paquetes y facturas en Firestore, permitiendo que tanto filtros individuales como consolidados devuelvan la totalidad de datos correspondientes.\\n' +
+      '4. **Suite Completa de Pruebas Funcionales**: Creados tests funcionales dedicados en `ManifestPickerMergedFlows.spec.tsx`, `InvoicesMergedManifestFlows.spec.tsx` y `RoutesMergedManifestFlows.spec.tsx`. 186 suites de prueba pasando al 100% en Node 22 (2,459 tests) y `tsc --noEmit` sin errores.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(manifest-picker/consolidation/invoices/routes): align ManifestPicker with strict merge resolution and add comprehensive functional tests (v0.0.1623)',
+  },
+  {
+    version: '0.0.1622',
+    date: '2026-09-22',
+    layer: 'both',
+    type: 'fix',
+    title: 'Blindaje de Cálculo de Rutas y Jerarquía Estricta de Manifiesto para Consolidación Transitoria',
+    description:
+      '1. **Blindaje Defensivo en Gestión de Rutas (`RoutesManagement.tsx`)**: Se envolvieron de forma segura todos los cálculos y conversiones numéricas en USD y CRC con `Number(...) || 0`, protegiendo la interfaz contra `NaN` y valores no definidos en montos, pesos y tipos de cambio. Se normalizó el ordenamiento por peso (`weight` / `peso`) y monto (`totalAmount` / `amount`).\\n' +
+      '2. **Jerarquía Estricta de Manifiesto en `isTransitoria` (`ingestion.ts`, `triggers.ts`, `useConsolidationData.ts`)**: Se implementó una resolución jerárquica estricta (`manifestId` > `manifestNumber` > `manifiesto` > `updatedManifest`). Cuando un paquete tiene un manifiesto real asignado (ej. `18-09-2026DAN`), ya no es tratado como transitorio independientemente de valores históricos en `updatedManifest`, previniendo que paquetes pagados o despachados reaparezcan indebidamente en la vista de consolidación.\\n' +
+      '3. **Protección Numérica en Componentes de Consolidación y Modales**: Normalización defensiva con `Number(invoice.totalAmount || 0).toFixed(2)` en `ConsolidationInvoiceRow.tsx`, `KanbanCustomerCard.tsx`, `ManifestGroup.tsx`, `ManifestSectionCard.tsx`, `BulkMoveDialog.tsx` y `SendEmailDialog.tsx`.\\n' +
+      '4. **Suite de Pruebas de Integridad**: Cobertura con 6 pruebas exhaustivas en `is-transitoria-hierarchy.spec.ts` validando la jerarquía de manifiestos y la exclusión de paquetes reasignados.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(routes/consolidation): defensive numerical calculations and strict manifest hierarchy for transitoria resolution (v0.0.1622)',
+  },
+  {
     version: '0.0.1621',
     date: '2026-09-22',
     layer: 'both',

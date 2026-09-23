@@ -62,14 +62,17 @@ const INACTIVE = new Set(["annulled", "cancelled", "void", "deleted"]);
 
 function isTransitoria(pkg: any): boolean {
   if (!pkg) return false;
-  const mId = String(pkg.manifestId || "").toLowerCase();
-  const mNum = String(pkg.manifestNumber || "").toLowerCase();
-  const uMf = String(pkg.updatedManifest || "").toLowerCase();
-  return (
-    mId === "consolidacion_transitoria" ||
-    mNum === "consolidacion_transitoria" ||
-    uMf === "consolidacion_transitoria"
-  );
+  const mId = String(pkg.manifestId || "").trim().toLowerCase();
+  const mNum = String(pkg.manifestNumber || "").trim().toLowerCase();
+  const mnf = String(pkg.manifiesto || "").trim().toLowerCase();
+  const uMf = String(pkg.updatedManifest || "").trim().toLowerCase();
+  // Hierarchical resolution: manifestId > manifestNumber > manifiesto > updatedManifest.
+  // If a package has an active real manifest assigned (e.g. '18-09-2026DAN'),
+  // it is NOT in transitoria, regardless of any stale historical value in updatedManifest.
+  if (mId) return mId === "consolidacion_transitoria";
+  if (mNum) return mNum === "consolidacion_transitoria";
+  if (mnf) return mnf === "consolidacion_transitoria";
+  return uMf === "consolidacion_transitoria";
 }
 
 // Fields we manage. If a write only touches these, we skip to break the

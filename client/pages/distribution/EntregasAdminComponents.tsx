@@ -34,7 +34,7 @@ export function fmtDate(iso?: string) {
   catch { return '—'; }
 }
 export function fmtCRC(n: number) { return `₡${Math.round(n).toLocaleString('es-CR')}`; }
-export function fmtUSD(n: number) { return `$${n.toFixed(2)}`; }
+export function fmtUSD(n: number) { return `$${Number(n || 0).toFixed(2)}`; }
 export function elapsed(iso?: string) {
   if (!iso) return '—';
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);

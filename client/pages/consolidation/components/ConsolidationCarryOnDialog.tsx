@@ -323,7 +323,7 @@ export function ConsolidationCarryOnDialog({
                       </span>
                       {pkg.weight != null && (
                         <span className="text-[10px] tabular-nums text-muted-foreground">
-                          ({pkg.weight.toFixed(2)} kg)
+                          ({Number(pkg.weight || 0).toFixed(2)} kg)
                         </span>
                       )}
                     </div>
@@ -369,7 +369,7 @@ export function ConsolidationCarryOnDialog({
               </span>
               <span className="flex items-center gap-1">
                 <Scale className="h-3 w-3" aria-hidden />
-                {totalWeight.toFixed(2)} kg
+                {Number(totalWeight || 0).toFixed(2)} kg
               </span>
             </div>
           </div>

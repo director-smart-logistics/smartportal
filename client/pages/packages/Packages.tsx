@@ -480,6 +480,19 @@ export default function PackagesEnhanced() {
     return counts;
   }, [manifestsData]);
 
+  const manifestMergedMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (manifestsData || []).forEach((m: any) => {
+      if (m.mergedInto) {
+        const id = (m.id || '').trim();
+        const num = (m.manifestNumber || '').trim();
+        if (id) map.set(id, m.mergedInto);
+        if (num) map.set(num, m.mergedInto);
+      }
+    });
+    return map;
+  }, [manifestsData]);
+
   // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -2219,7 +2232,7 @@ export default function PackagesEnhanced() {
                         </span>
                         {totalWeight > 0 && (
                           <span className={`text-xs ${isDark ? "text-gray-400" : "text-gray-500"}`}>
-                            {totalWeight.toFixed(2)} kg
+                            {Number(totalWeight || 0).toFixed(2)} kg
                           </span>
                         )}
                       </div>

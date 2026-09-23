@@ -384,7 +384,7 @@ const TrackingCard = memo(function TrackingCard({ result }: { result: NovaTracki
                   Precio Est. ({isColom ? 'Colombia' : 'Aéreo USA'})
                 </p>
                 <p className="text-lg font-bold text-emerald-900 leading-tight">
-                  ${priceResult.price.toFixed(2)}{' '}
+                  ${Number(priceResult.price || 0).toFixed(2)}{' '}
                   <span className="text-xs font-medium text-emerald-700">{priceResult.currency}</span>
                 </p>
                 {priceResult.breakdown && (

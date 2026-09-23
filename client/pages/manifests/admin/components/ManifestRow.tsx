@@ -116,7 +116,7 @@ export const ManifestRow = React.memo(function ManifestRow({
 
             {/* 5b. Total Weight cell */}
             <div className="border-r border-border flex items-center justify-center font-mono font-bold text-foreground text-center">
-              {manifest.totalWeight ? `${manifest.totalWeight.toFixed(2)} kg` : '0.00 kg'}
+              {manifest.totalWeight ? `${Number(manifest.totalWeight || 0).toFixed(2)} kg` : '0.00 kg'}
             </div>
 
             {/* 6. USD Price cell */}

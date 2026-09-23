@@ -75,13 +75,13 @@ export function KanbanPackageItem({
         {pkg.weight != null && (
           <span className="flex items-center gap-0.5">
             <Scale className="h-2 w-2" aria-hidden />
-            {pkg.weight.toFixed(2)}
+            {Number(pkg.weight || 0).toFixed(2)}
           </span>
         )}
-        {pkg.price != null && pkg.price > 0 && (
+        {Number(pkg.price || 0) > 0 && (
           <span className="flex items-center gap-0.5">
             <DollarSign className="h-2 w-2" aria-hidden />
-            {pkg.price.toFixed(2)}
+            {Number(pkg.price || 0).toFixed(2)}
           </span>
         )}
       </div>

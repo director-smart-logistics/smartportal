@@ -498,11 +498,11 @@ export function PackageInvoicesModal({
                             )}>{inv.statusSp2}</span>
                           </div>
                           <div className="text-right font-mono">
-                            <span className="text-muted-foreground">${inv.amountSp1.toFixed(2)}</span>
+                            <span className="text-muted-foreground">${Number(inv.amountSp1 || 0).toFixed(2)}</span>
                             <span className="mx-1">|</span>
                             <span className={cn(
-                              Math.abs(inv.amountSp1 - inv.amountSp2) > 0.01 ? "text-amber-600 dark:text-amber-400 font-bold" : "text-foreground"
-                            )}>${inv.amountSp2.toFixed(2)}</span>
+                              Math.abs((inv.amountSp1 || 0) - (inv.amountSp2 || 0)) > 0.01 ? "text-amber-600 dark:text-amber-400 font-bold" : "text-foreground"
+                            )}>${Number(inv.amountSp2 || 0).toFixed(2)}</span>
                           </div>
                           <div className="text-center">
                             {inv.mismatch ? (

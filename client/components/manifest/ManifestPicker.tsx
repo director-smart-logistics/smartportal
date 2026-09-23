@@ -20,6 +20,8 @@
  */
 
 import React, { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { firestoreApi } from '@/lib/firebase/firestore-client';
 import {
   Search,
   Layers,
@@ -131,6 +133,8 @@ export interface ManifestPickerProps {
   id?: string;
   /** If true, only one manifest can be selected at a time */
   singleSelect?: boolean;
+  /** Optional map of manifest number/ID to target merged manifest (e.g. MEGA-MAN) */
+  manifestMergedMap?: Map<string, string>;
 }
 
 // ── Component ───────────────────────────────────────────────────────────────────
@@ -146,9 +150,61 @@ export function ManifestPicker({
   triggerClassName,
   id = 'manifest-picker',
   singleSelect = false,
+  manifestMergedMap,
 }: ManifestPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+
+  // Fallback internal query to automatically identify merged manifests across all screens
+  const { data: internalManifestsData } = useQuery({
+    queryKey: ['manifests', 'meta-merged-map'],
+    queryFn: async () => {
+      const res = await firestoreApi.manifests.list({
+        pageSize: 300,
+        orderByField: 'processedAt',
+        orderDirection: 'desc',
+      });
+      return (res.data || []) as Array<{
+        id: string;
+        manifestNumber?: string;
+        mergedInto?: string;
+      }>;
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const effectiveMergedMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (manifestMergedMap) {
+      manifestMergedMap.forEach((val, key) => {
+        const k = (key || '').trim();
+        const v = typeof val === 'string' ? val.trim() : '';
+        if (k && v && v.toLowerCase() !== k.toLowerCase()) {
+          map.set(k, v);
+        }
+      });
+    }
+    (internalManifestsData || []).forEach((m: any) => {
+      const target = typeof m.mergedInto === 'string' ? m.mergedInto.trim() : '';
+      if (
+        target &&
+        target.toLowerCase() !== 'true' &&
+        target.toLowerCase() !== 'false' &&
+        target.toLowerCase() !== 'null' &&
+        target.toLowerCase() !== 'undefined'
+      ) {
+        const id = (m.id || '').trim();
+        const num = (m.manifestNumber || '').trim();
+        if (id && id.toLowerCase() !== target.toLowerCase() && !map.has(id)) {
+          map.set(id, target);
+        }
+        if (num && num.toLowerCase() !== target.toLowerCase() && !map.has(num)) {
+          map.set(num, target);
+        }
+      }
+    });
+    return map;
+  }, [manifestMergedMap, internalManifestsData]);
 
   // Normalize selectedManifests to trimmed strings
   const trimmedSelected = useMemo(() => {
@@ -225,8 +281,20 @@ export function ManifestPicker({
     return result;
   }, [categorized, search]);
 
+  const getMergedTarget = (mf: string): string | undefined => {
+    const raw = effectiveMergedMap.get(mf) || effectiveMergedMap.get(mf.trim());
+    if (typeof raw === 'string' && raw.trim() && raw.trim().toLowerCase() !== mf.trim().toLowerCase()) {
+      return raw.trim();
+    }
+    return undefined;
+  };
+
+  const isManifestMerged = (mf: string): boolean => Boolean(getMergedTarget(mf));
+
   /** Toggle a single manifest */
   const toggleManifest = (mf: string) => {
+    if (isManifestMerged(mf)) return; // Disallow selection of merged manifests
+
     if (singleSelect) {
       const next = new Set<string>();
       if (!trimmedSelected.has(mf)) next.add(mf);
@@ -243,10 +311,10 @@ export function ManifestPicker({
     onManifestsChange(next);
   };
 
-  /** Toggle an entire category (filtered items only) */
+  /** Toggle an entire category (filtered items only, excluding merged manifests) */
   const toggleCategory = (cat: ManifestCategory) => {
     if (singleSelect) return;
-    const items = filteredCategorized[cat];
+    const items = filteredCategorized[cat].filter(m => !isManifestMerged(m));
     if (items.length === 0) return;
     const next = new Set<string>();
     selectedManifests.forEach(m => {
@@ -344,8 +412,9 @@ export function ManifestPicker({
               const meta = CATEGORY_META[cat];
               const allItems = categorized[cat];
               const items = filteredCategorized[cat];
-              const catSelected = items.filter(m => trimmedSelected.has(m)).length;
-              const allCatSelected = items.length > 0 && catSelected === items.length;
+              const eligibleItems = items.filter(m => !isManifestMerged(m));
+              const catSelected = eligibleItems.filter(m => trimmedSelected.has(m)).length;
+              const allCatSelected = eligibleItems.length > 0 && catSelected === eligibleItems.length;
 
               return (
                 <div key={cat} className="flex flex-col">
@@ -388,31 +457,51 @@ export function ManifestPicker({
                       items.map(mf => {
                         const isChecked = trimmedSelected.has(mf);
                         const count = cleanPackageCounts.get(mf) ?? 0;
+                        const mergedTarget = getMergedTarget(mf);
+                        const isMerged = Boolean(mergedTarget);
                         return (
                           <div
                             key={mf}
                             role="button"
-                            tabIndex={0}
-                            onClick={() => toggleManifest(mf)}
+                            aria-disabled={isMerged}
+                            tabIndex={isMerged ? -1 : 0}
+                            onClick={() => !isMerged && toggleManifest(mf)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
+                              if (!isMerged && (e.key === 'Enter' || e.key === ' ')) {
                                 e.preventDefault();
                                 toggleManifest(mf);
                               }
                             }}
+                            title={mergedTarget ? `Fusionado en ${mergedTarget} (no seleccionable)` : undefined}
                             className={cn(
-                              'w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-all cursor-pointer outline-none select-none border-l-2 border-transparent',
-                              'hover:bg-muted/50 focus-visible:bg-muted/50',
-                              isChecked && 'bg-red-500/10 text-red-700 dark:bg-red-950/40 dark:text-red-300 font-bold border-red-600',
+                              'w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-all outline-none select-none border-l-2 border-transparent',
+                              isMerged
+                                ? 'opacity-40 cursor-not-allowed bg-muted/20 hover:bg-muted/20 text-muted-foreground'
+                                : 'cursor-pointer hover:bg-muted/50 focus-visible:bg-muted/50',
+                              isChecked && !isMerged && 'bg-red-500/10 text-red-700 dark:bg-red-950/40 dark:text-red-300 font-bold border-red-600',
                             )}
                           >
                             <Checkbox
                               checked={isChecked}
-                              className="pointer-events-none shrink-0"
+                              disabled={isMerged}
+                              className={cn("pointer-events-none shrink-0", isMerged && "opacity-40")}
                               tabIndex={-1}
                             />
-                            <span className="font-mono text-[11px] flex-1 text-left truncate">{mf}</span>
-                            <span className="text-muted-foreground text-[10px] shrink-0 tabular-nums">
+                            <span className={cn(
+                              "font-mono text-[11px] flex-1 text-left truncate",
+                              isMerged && "line-through text-muted-foreground"
+                            )}>
+                              {mf}
+                            </span>
+                            {mergedTarget && (
+                              <span
+                                className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 font-medium shrink-0 border border-amber-200 dark:border-amber-900/50"
+                                title={`Fusionado en ${mergedTarget}`}
+                              >
+                                Fusionado
+                              </span>
+                            )}
+                            <span className={cn("text-muted-foreground text-[10px] shrink-0 tabular-nums", isMerged && "opacity-50")}>
                               {count} paq.
                             </span>
                           </div>

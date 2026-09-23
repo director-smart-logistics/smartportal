@@ -181,4 +181,40 @@ describe('Consolidation Functional Real-World Flows', () => {
     expect(overduePackages.length).toBe(3); // Aug 1, Aug 5 and Aug 10 are > 30 days by Sep 15
     expect(overduePackages[0].storageFee).toBeGreaterThan(0);
   });
+
+  it('Scenario 5: Admin retains packages in Consolidation view even when customer has consolidationEnabled: false', () => {
+    const mixedCustomerPackages: ConsolidatedPackage[] = [
+      {
+        id: 'pkg-gilberto-1',
+        trackingNumber: 'GFUS01072465360677',
+        customerName: 'Gilberto Jiménez Espinoza',
+        slCode: 'SL261337',
+        manifestNumber: 'consolidacion_transitoria',
+        weight: 1.5,
+        price: 15,
+        consolidationEnabled: false, // Customer document has consolidationEnabled: false
+        status: 'held_for_consolidation',
+        arrivedAt: '2026-09-18T10:00:00Z',
+      },
+      {
+        id: 'pkg-gilberto-2',
+        trackingNumber: 'GFUS01072465360678',
+        customerName: 'Gilberto Jiménez Espinoza',
+        slCode: 'SL261337',
+        manifestNumber: 'consolidacion_transitoria',
+        weight: 2.0,
+        price: 20,
+        consolidationEnabled: false,
+        status: 'held_for_consolidation',
+        arrivedAt: '2026-09-18T10:05:00Z',
+      },
+    ];
+
+    // Admin view groups by customer code regardless of consolidationEnabled on profile
+    const group = buildMasterPackageGroup('SL261337', 'Gilberto Jiménez Espinoza', mixedCustomerPackages);
+    expect(group.packageCount).toBe(2);
+    expect(group.totalWeight).toBe(3.5);
+    expect(group.totalValue).toBe(35);
+    expect(group.status).toBe('ready_to_invoice');
+  });
 });

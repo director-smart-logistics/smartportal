@@ -156,7 +156,7 @@ function esc(v: string | number | null | undefined): string {
  * e.g. 4560.00 → "4,560.00"  |  672.56 → 672.56
  */
 function fmtAmt(n: number): string {
-  const fixed = n.toFixed(2);
+  const fixed = Number(n || 0).toFixed(2);
   const [int, dec] = fixed.split('.');
   return int.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + dec;
 }

@@ -510,7 +510,7 @@ export function PackageDetailsModal({
                       Costo Calculado (Sistema)
                     </span>
                     <span className="text-sm font-semibold text-foreground">
-                      {pkg.calculatedCost != null ? `$${pkg.calculatedCost.toFixed(2)}` : "—"}
+                      {pkg.calculatedCost != null ? `$${Number(pkg.calculatedCost).toFixed(2)}` : "—"}
                     </span>
                   </div>
                 </div>

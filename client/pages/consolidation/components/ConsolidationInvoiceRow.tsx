@@ -1105,11 +1105,11 @@ export function ConsolidationInvoiceRow({
           </span>
           <span className="flex items-center gap-1">
             <Scale className="h-3 w-3" aria-hidden />
-            {totalWeight.toFixed(2)} kg
+            {Number(totalWeight || 0).toFixed(2)} kg
           </span>
           <span className="flex items-center gap-1 font-semibold text-foreground">
             <DollarSign className="h-3 w-3" aria-hidden />
-            {invoice.totalAmount.toFixed(2)} {invoice.currency}
+            {Number(invoice.totalAmount || 0).toFixed(2)} {invoice.currency}
           </span>
         </div>
       </div>
@@ -1371,10 +1371,10 @@ export function ConsolidationInvoiceRow({
                           {item.description || pkg?.description || '—'}
                         </td>
                         <td className="py-1.5 px-2 text-right tabular-nums">
-                          {(item.realWeight ?? item.weight ?? 0).toFixed(2)} kg
+                          {Number(item.realWeight ?? item.weight ?? 0).toFixed(2)} kg
                         </td>
                         <td className="py-1.5 px-2 text-right tabular-nums font-medium">
-                          ${(item.totalPrice || 0).toFixed(2)}
+                          ${Number(item.totalPrice || 0).toFixed(2)}
                         </td>
                       </tr>
                     );

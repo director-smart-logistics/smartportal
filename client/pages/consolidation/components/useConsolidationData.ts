@@ -1,18 +1,20 @@
 /**
- * useConsolidationData (v2 — Invoice-Centric)
+ * useConsolidationData (Package & Manifest-Driven Architecture)
  *
- * Real-time Firestore hook for the Consolidation Manifests module.
+ * Real-time Firestore hook for the Consolidation Manifests module (/consolidation/manifests).
  *
- * Three onSnapshot subscriptions:
- *  1. customers  where consolidationEnabled == true
- *  2. packages   where consolidacion == true
- *  3. invoices   where isConsolidation == true
- *
- * Returns data grouped as CustomerSection[] for the page to render,
- * enriched with compliance-relevant metrics (totalWeight, totalAmount,
- * manifestCount) for inline rule evaluation.
- *
- * The old `manifest_consolidation` mirror collection is NOT used.
+ * ARCHITECTURAL DESIGN & BUSINESS RULES:
+ * 1. 100% Package/Manifest-Driven: The view is primarily driven by packages flagged for
+ *    consolidation (`consolidacion == true`) and consolidation invoices.
+ * 2. NO `consolidationEnabled: true` Gating: The consolidation manifest and transitoria bucket
+ *    are purely administrative tools managed by the admin or management. Packages moved here
+ *    (via invoice annulment, manual move, or manifest assignment) MUST be displayed regardless
+ *    of whether the customer document in `customers` has `consolidationEnabled: true` or `false`.
+ * 3. Transitoria Precedence: If a package has `updatedManifest === 'consolidacion_transitoria'`,
+ *    this takes immediate precedence over historical `manifestNumber` fields to prevent packages
+ *    from being orphaned or hidden in already-billed manifests.
+ * 4. On-demand Customer Enrichment: Customer profiles are fetched on-demand by chunking the
+ *    unique `slCode`s of the packages present in the view, or synthesized from package metadata.
  */
 
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
@@ -48,10 +50,9 @@ export interface UseConsolidationDataResult {
 }
 
 export function useConsolidationData(): UseConsolidationDataResult {
-  const [customers, setCustomers] = useState<ConsolidationCustomer[]>([]);
+  const [customerProfiles, setCustomerProfiles] = useState<Map<string, ConsolidationCustomer>>(new Map());
   const [packages,  setPackages]  = useState<ConsolidationPackage[]>([]);
   const [invoices,  setInvoices]  = useState<ConsolidationInvoice[]>([]);
-  const [loadingCustomers, setLoadingCustomers] = useState(true);
   const [loadingPackages,  setLoadingPackages]  = useState(true);
   const [loadingInvoices,  setLoadingInvoices]  = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,124 +63,274 @@ export function useConsolidationData(): UseConsolidationDataResult {
     return () => { mounted.current = false; };
   }, []);
 
-  // ── 1. Consolidation customers ───────────────────────────────────────────
+  // ── 1. Consolidated packages (Multi-Query: consolidacion==true OR transitoria manifest) ──
   useEffect(() => {
-    const q = query(
-      collection(db, CUSTOMERS_COLLECTION),
-      where('consolidationEnabled', '==', true)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        if (!mounted.current) return;
-        const list: ConsolidationCustomer[] = snap.docs.map(d => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            slCode:   data.slCode   || d.id,
-            fullName: data.fullName || data.name || data.slCode || d.id,
-            email:    data.email,
-            phone:    data.phone || data.phoneNumber,
-            ruta:     data.ruta,
-            dni:      data.verifiedDni || data.dni,
-            courierService: data.courierService,
-          };
-        });
-        setCustomers(list);
-        setLoadingCustomers(false);
-      },
-      (err) => {
-        if (!mounted.current) return;
-        console.error('[ConsolidationData] customers error:', err);
-        setError('Error al cargar clientes de consolidación.');
-        setLoadingCustomers(false);
-      }
-    );
-    return unsub;
-  }, []);
+    const TRANSITORIA = 'consolidacion_transitoria';
+    const TERMINAL_STATUSES = new Set(['delivered', 'processed', 'returned', 'pickup']);
 
-  // ── 2. Consolidated packages ─────────────────────────────────────────────
-  useEffect(() => {
-    const q = query(
+    const mapDocToPackage = (id: string, data: any): ConsolidationPackage => {
+      const original  = data.manifestNumber  || data.manifiesto || '';
+      const updated   = data.updatedManifest  || '';
+      const origMfId  = data.originalManifestID || data.originalManifestId
+        || (data.manifiesto && (data.manifiesto || '').toLowerCase() !== TRANSITORIA ? data.manifiesto : '')
+        || '';
+
+      const uMf  = (data.updatedManifest || '').trim().toLowerCase();
+      const mId  = (data.manifestId || '').trim().toLowerCase();
+      const mNum = (data.manifestNumber || '').trim().toLowerCase();
+      const mnf  = (data.manifiesto || '').trim().toLowerCase();
+      const isTransitoria = uMf
+        ? uMf === TRANSITORIA
+        : mId
+        ? mId === TRANSITORIA
+        : mNum
+        ? mNum === TRANSITORIA
+        : mnf === TRANSITORIA;
+
+      const nativePrice =
+        typeof data.precio === 'number' ? data.precio
+        : typeof data.price === 'number' ? data.price
+        : typeof data.precioSinPermiso === 'number' ? data.precioSinPermiso
+        : typeof data.precioConPermiso === 'number' ? data.precioConPermiso
+        : undefined;
+
+      return {
+        id,
+        trackingNumber:   data.trackingNumber || data.tracking  || '',
+        description:      data.description   || data.descripcion || '',
+        weight:           typeof data.weight === 'number' ? data.weight
+                          : (typeof data.peso === 'number' ? data.peso : undefined),
+        status:           data.status || '',
+        manifestNumber:   original,
+        updatedManifest:  updated,
+        manifestUpdatedAt: data.manifestUpdatedAt,
+        slCode:           data.slCode || '',
+        customerName:     data.customerName || data.nombreCliente || '',
+        ruta:             data.ruta || '',
+        origin:           data.origin || data.origen || 'USA',
+        destination:      data.destination || data.destino || 'CR',
+        requiresPermit:   data.requiresPermit || data.permisos || false,
+        createdAt:        data.createdAt || data.savedAt || '',
+        savedAt:          data.savedAt || '',
+        isReassigned:     !!updated && updated !== original,
+        isTransitoria,
+        originalManifestID: origMfId,
+        price:            nativePrice,
+        currency:         data.currency || (nativePrice != null ? 'USD' : undefined),
+        invoicedAt:       data.invoicedAt || '',
+        annulledInvoiceId: data.annulledInvoiceId || '',
+        annulledInvoiceNumber: data.annulledInvoiceNumber || '',
+        annulledAt:       data.annulledAt || '',
+        firstConsolidatedAt: data.firstConsolidatedAt || '',
+        statusHistory:    data.statusHistory || [],
+      };
+    };
+
+    const snap1Docs = new Map<string, any>();
+    const snap2Docs = new Map<string, any>();
+    const snap3Docs = new Map<string, any>();
+
+    const mergeAndEmitPackages = () => {
+      if (!mounted.current) return;
+      const combined = new Map<string, any>();
+      snap1Docs.forEach((d, id) => combined.set(id, d));
+      snap2Docs.forEach((d, id) => combined.set(id, d));
+      snap3Docs.forEach((d, id) => combined.set(id, d));
+
+      const list: ConsolidationPackage[] = [];
+      for (const [id, data] of combined.entries()) {
+        const st = (data.status || '').toLowerCase();
+        if (TERMINAL_STATUSES.has(st)) continue;
+        list.push(mapDocToPackage(id, data));
+      }
+      setPackages(list);
+      setLoadingPackages(false);
+    };
+
+    // Query 1: explicit consolidation flag with composite index
+    const qConsolidation = query(
       collection(db, PACKAGES_COLLECTION),
       where('consolidacion', '==', true),
       where('status', 'not-in', ['delivered', 'processed', 'returned', 'pickup'])
     );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        if (!mounted.current) return;
-        const TRANSITORIA = 'consolidacion_transitoria';
-        const list: ConsolidationPackage[] = snap.docs
-          .map(d => {
-          const data = d.data() as any;
-          const original  = data.manifestNumber  || data.manifiesto || '';
-          const updated   = data.updatedManifest  || '';
-          // For packages moved to transitoria by the old handler, `originalManifestID`
-          // was never saved. However, the old handler ONLY updated `manifestId` and
-          // `manifestNumber` — it never touched the legacy `manifiesto` field.
-          // That field still holds the real origin manifest number, so we use it
-          // as a fallback to recover the correct grouping key.
-          const origMfId  = data.originalManifestID || data.originalManifestId
-            || (data.manifiesto && (data.manifiesto || '').toLowerCase() !== TRANSITORIA ? data.manifiesto : '')
-            || '';
-          // Detect whether this package is currently in the transitoria bucket
-          const isTransitoria =
-            (data.manifestId || '').toLowerCase() === TRANSITORIA ||
-            (original || '').toLowerCase()        === TRANSITORIA ||
-            (data.manifiesto || '').toLowerCase() === TRANSITORIA ||
-            (updated || '').toLowerCase()         === TRANSITORIA;
-          // Map the package's OWN price (set during Nova processing)
-          const nativePrice =
-            typeof data.precio === 'number' ? data.precio
-            : typeof data.price === 'number' ? data.price
-            : typeof data.precioSinPermiso === 'number' ? data.precioSinPermiso
-            : typeof data.precioConPermiso === 'number' ? data.precioConPermiso
-            : undefined;
 
-          return {
-            id:               d.id,
-            trackingNumber:   data.trackingNumber || data.tracking  || '',
-            description:      data.description   || data.descripcion || '',
-            weight:           typeof data.weight === 'number' ? data.weight
-                              : (typeof data.peso === 'number' ? data.peso : undefined),
-            status:           data.status || '',
-            manifestNumber:   original,
-            updatedManifest:  updated,
-            manifestUpdatedAt: data.manifestUpdatedAt,
-            slCode:           data.slCode || '',
-            customerName:     data.customerName || data.nombreCliente || '',
-            ruta:             data.ruta || '',
-            origin:           data.origin || data.origen || 'USA',
-            destination:      data.destination || data.destino || 'CR',
-            requiresPermit:   data.requiresPermit || data.permisos || false,
-            createdAt:        data.createdAt || data.savedAt || '',
-            savedAt:          data.savedAt || '',
-            isReassigned:     !!updated && updated !== original,
-            isTransitoria,
-            originalManifestID: origMfId,
-            price:            nativePrice,
-            currency:         data.currency || (nativePrice != null ? 'USD' : undefined),
-            invoicedAt:       data.invoicedAt || '',
-            annulledInvoiceId: data.annulledInvoiceId || '',
-            annulledInvoiceNumber: data.annulledInvoiceNumber || '',
-            annulledAt:       data.annulledAt || '',
-            firstConsolidatedAt: data.firstConsolidatedAt || '',
-            statusHistory:    data.statusHistory || [],
-          };
-        });
-        setPackages(list);
-        setLoadingPackages(false);
+    // Query 2: packages moved to transitoria in updatedManifest (regardless of consolidacion flag)
+    const qUpdatedTransitoria = query(
+      collection(db, PACKAGES_COLLECTION),
+      where('updatedManifest', '==', TRANSITORIA)
+    );
+
+    // Query 3: packages whose manifestNumber is transitoria (regardless of consolidacion flag)
+    const qManifestNumberTransitoria = query(
+      collection(db, PACKAGES_COLLECTION),
+      where('manifestNumber', '==', TRANSITORIA)
+    );
+
+    const unsub1 = onSnapshot(
+      qConsolidation,
+      (snap) => {
+        snap1Docs.clear();
+        snap.docs.forEach(d => snap1Docs.set(d.id, d.data()));
+        mergeAndEmitPackages();
       },
       (err) => {
-        if (!mounted.current) return;
-        console.error('[ConsolidationData] packages error:', err);
-        setError('Error al cargar paquetes de consolidación.');
-        setLoadingPackages(false);
+        console.error('[ConsolidationData] qConsolidation error:', err);
+        if (mounted.current) setLoadingPackages(false);
       }
     );
-    return unsub;
+
+    const unsub2 = onSnapshot(
+      qUpdatedTransitoria,
+      (snap) => {
+        snap2Docs.clear();
+        snap.docs.forEach(d => snap2Docs.set(d.id, d.data()));
+        mergeAndEmitPackages();
+      },
+      (err) => {
+        console.error('[ConsolidationData] qUpdatedTransitoria error:', err);
+      }
+    );
+
+    const unsub3 = onSnapshot(
+      qManifestNumberTransitoria,
+      (snap) => {
+        snap3Docs.clear();
+        snap.docs.forEach(d => snap3Docs.set(d.id, d.data()));
+        mergeAndEmitPackages();
+      },
+      (err) => {
+        console.error('[ConsolidationData] qManifestNumberTransitoria error:', err);
+      }
+    );
+
+    return () => {
+      unsub1();
+      unsub2();
+      unsub3();
+    };
   }, []);
+
+
+  // ── 2. Identify all relevant SL codes from active packages & invoices ─────
+  const targetSlCodes = useMemo(() => {
+    const set = new Set<string>();
+    for (const pkg of packages) {
+      const code = (pkg.slCode || '').trim();
+      if (code) set.add(code);
+    }
+    for (const inv of invoices) {
+      const code = (inv.slCode || '').trim();
+      if (code) set.add(code);
+    }
+    return Array.from(set);
+  }, [packages, invoices]);
+
+  // ── 3. Fetch full customer details for the relevant SL codes ──────────────
+  useEffect(() => {
+    if (!targetSlCodes.length) {
+      setCustomerProfiles(new Map());
+      return;
+    }
+
+    const CHUNK = 30;
+    const unsubs: (() => void)[] = [];
+    const chunkMaps: Map<string, ConsolidationCustomer>[] = [];
+
+    for (let i = 0; i < targetSlCodes.length; i += CHUNK) {
+      const chunk = targetSlCodes.slice(i, i + CHUNK);
+      const chunkIndex = chunkMaps.length;
+      chunkMaps.push(new Map());
+
+      const q = query(
+        collection(db, CUSTOMERS_COLLECTION),
+        where('slCode', 'in', chunk)
+      );
+      const unsub = onSnapshot(
+        q,
+        (snap) => {
+          if (!mounted.current) return;
+          const currentChunkMap = new Map<string, ConsolidationCustomer>();
+          snap.docs.forEach((d) => {
+            const data = d.data() as any;
+            const slCode = (data.slCode || d.id || '').toUpperCase();
+            if (slCode) {
+              currentChunkMap.set(slCode, {
+                id: d.id,
+                slCode: data.slCode || d.id,
+                fullName: data.fullName || data.name || data.slCode || d.id,
+                email: data.email,
+                phone: data.phone || data.phoneNumber,
+                ruta: data.ruta,
+                dni: data.verifiedDni || data.dni,
+                courierService: data.courierService,
+              });
+            }
+          });
+          chunkMaps[chunkIndex] = currentChunkMap;
+
+          const merged = new Map<string, ConsolidationCustomer>();
+          for (const cm of chunkMaps) {
+            for (const [code, cust] of cm.entries()) {
+              merged.set(code, cust);
+            }
+          }
+          setCustomerProfiles(merged);
+        },
+        (err) => {
+          console.warn('[ConsolidationData] customer profiles query error:', err);
+        }
+      );
+      unsubs.push(unsub);
+    }
+
+    return () => unsubs.forEach((u) => u());
+  }, [targetSlCodes]);
+
+  // ── Unified effective customers list ─────────────────────────────────────
+  const allEffectiveCustomers = useMemo((): ConsolidationCustomer[] => {
+    const customerMap = new Map<string, ConsolidationCustomer>();
+
+    // 1. Populated profiles from customers collection
+    for (const [code, c] of customerProfiles.entries()) {
+      customerMap.set(code, c);
+    }
+
+    // 2. Synthesized customer records directly from packages
+    for (const pkg of packages) {
+      const code = (pkg.slCode || '').trim();
+      if (!code) continue;
+      const upperCode = code.toUpperCase();
+      if (!customerMap.has(upperCode)) {
+        customerMap.set(upperCode, {
+          id: code,
+          slCode: code,
+          fullName: pkg.customerName || code,
+          email: (pkg as any).customerEmail,
+          phone: (pkg as any).customerPhone,
+          ruta: pkg.ruta || '',
+          dni: (pkg as any).customerDni,
+          courierService: (pkg as any).courierService,
+        });
+      }
+    }
+
+    // 3. Synthesized customer records directly from invoices
+    for (const inv of invoices) {
+      const code = (inv.slCode || '').trim();
+      if (!code) continue;
+      const upperCode = code.toUpperCase();
+      if (!customerMap.has(upperCode)) {
+        customerMap.set(upperCode, {
+          id: code,
+          slCode: code,
+          fullName: inv.clientName || code,
+          ruta: '',
+        });
+      }
+    }
+
+    return Array.from(customerMap.values());
+  }, [customerProfiles, packages, invoices]);
 
   // ── 3. Consolidation invoices ─────────────────────────────────────────────
   // DUAL-QUERY STRATEGY to handle historical invoices where isConsolidation was
@@ -187,7 +338,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
   // customers, where buildInvoiceData set isConsolidation = rows.length > 1 = false).
   //
   // Query A: isConsolidation == true  — all properly flagged invoices (new invoices)
-  // Query B: slCode in [consolidation customer slCodes] — catches invoices that belong
+  // Query B: slCode in [all effective customer slCodes] — catches invoices that belong
   //           to consolidation customers regardless of the isConsolidation flag value.
   //           This is the safety net for the historical data bug.
   //
@@ -253,9 +404,9 @@ export function useConsolidationData(): UseConsolidationDataResult {
     });
   }, [flushInvoices]);
 
-  // Query B — by slCode for all customers with consolidation enabled.
+  // Query B — by slCode for all effective consolidation customers.
   useEffect(() => {
-    const slCodes = customers.map(c => c.slCode).filter(Boolean);
+    const slCodes = allEffectiveCustomers.map(c => c.slCode).filter(Boolean);
     if (!slCodes.length) {
       queryBMapRef.current.clear();
       flushInvoices();
@@ -298,35 +449,31 @@ export function useConsolidationData(): UseConsolidationDataResult {
     }
 
     return () => unsubs.forEach(u => u());
-  }, [customers, flushInvoices]);
+  }, [allEffectiveCustomers, flushInvoices]);
 
 
   // ── Derived indexes ──────────────────────────────────────────────────────
-  const customerSlCodes = useMemo(
-    () => new Set(customers.map(c => c.slCode)),
-    [customers]
-  );
-
   /** Terminal statuses — packages that have completed their lifecycle */
   const EXCLUDED_PKG_STATUSES = useMemo(
     () => new Set(['delivered', 'processed', 'returned', 'pickup']),
     []
   );
 
-  /** Packages keyed by slCode (only those matching known consolidation customers).
+  /** Packages keyed by slCode.
    *  Excludes terminal-status packages (delivered/processed/returned/pickup). */
   const packagesBySlCode = useMemo(() => {
     const map = new Map<string, ConsolidationPackage[]>();
     for (const pkg of packages) {
-      if (!pkg.slCode || !customerSlCodes.has(pkg.slCode)) continue;
+      const code = (pkg.slCode || '').trim().toUpperCase();
+      if (!code) continue;
       // Skip packages that have completed their lifecycle
       const status = (pkg.status || '').toLowerCase();
       if (EXCLUDED_PKG_STATUSES.has(status)) continue;
-      if (!map.has(pkg.slCode)) map.set(pkg.slCode, []);
-      map.get(pkg.slCode)!.push(pkg);
+      if (!map.has(code)) map.set(code, []);
+      map.get(code)!.push(pkg);
     }
     return map;
-  }, [packages, customerSlCodes, EXCLUDED_PKG_STATUSES]);
+  }, [packages, EXCLUDED_PKG_STATUSES]);
 
   /** Same as `packagesBySlCode` but INCLUDES terminal-status packages.
    *  Used only for invoice-item status lookup so the consolidation invoice
@@ -335,18 +482,19 @@ export function useConsolidationData(): UseConsolidationDataResult {
   const allPackagesBySlCode = useMemo(() => {
     const map = new Map<string, ConsolidationPackage[]>();
     for (const pkg of packages) {
-      if (!pkg.slCode || !customerSlCodes.has(pkg.slCode)) continue;
-      if (!map.has(pkg.slCode)) map.set(pkg.slCode, []);
-      map.get(pkg.slCode)!.push(pkg);
+      const code = (pkg.slCode || '').trim().toUpperCase();
+      if (!code) continue;
+      if (!map.has(code)) map.set(code, []);
+      map.get(code)!.push(pkg);
     }
     return map;
-  }, [packages, customerSlCodes]);
+  }, [packages]);
 
   /** Invoices keyed by slCode */
   const invoicesBySlCode = useMemo(() => {
     const map = new Map<string, ConsolidationInvoice[]>();
     for (const inv of invoices) {
-      const key = inv.slCode || '';
+      const key = (inv.slCode || '').trim().toUpperCase();
       if (!key) continue;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(inv);
@@ -357,11 +505,12 @@ export function useConsolidationData(): UseConsolidationDataResult {
 
   // ── Build CustomerSection[] ──────────────────────────────────────────────
   const customerSections = useMemo((): CustomerSection[] => {
-    return customers
+    return allEffectiveCustomers
       .map(customer => {
-        const pkgs   = packagesBySlCode.get(customer.slCode) || [];
-        const allPkgs = allPackagesBySlCode.get(customer.slCode) || [];
-        const allInvs = invoicesBySlCode.get(customer.slCode) || [];
+        const codeKey = (customer.slCode || customer.id || '').trim().toUpperCase();
+        const pkgs   = packagesBySlCode.get(codeKey) || [];
+        const allPkgs = allPackagesBySlCode.get(codeKey) || [];
+        const allInvs = invoicesBySlCode.get(codeKey) || [];
 
         // ── Filter out fully resolved invoices ──────────────────────────────
         // Rules per invoice status:
@@ -630,7 +779,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
         );
       })
       .sort((a, b) => a.customer.fullName.localeCompare(b.customer.fullName));
-  }, [customers, packagesBySlCode, allPackagesBySlCode, invoicesBySlCode]);
+  }, [allEffectiveCustomers, packagesBySlCode, allPackagesBySlCode, invoicesBySlCode]);
 
   /** Flat sorted list of all known manifest numbers (normalized) */
   const allManifestNumbers = useMemo(() => {
@@ -678,7 +827,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
     return sorted;
   }, [packages, invoices]);
 
-  const loading = loadingCustomers || loadingPackages || loadingInvoices;
+  const loading = loadingPackages || loadingInvoices;
 
   return { customerSections, allManifestNumbers, allInvoices: invoices, allPackages: packages, loading, error };
 }

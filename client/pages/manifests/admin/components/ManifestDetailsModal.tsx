@@ -243,7 +243,7 @@ export function ManifestDetailsModal({ manifest, onClose }: ManifestDetailsModal
                           </div>
                         </td>
                         <td className="p-3 border-r border-border text-center font-mono font-bold text-foreground">
-                          {pkg.weight ? `${pkg.weight.toFixed(2)}` : '—'}
+                          {pkg.weight ? `${Number(pkg.weight || 0).toFixed(2)}` : '—'}
                         </td>
                         <td className="p-3 border-r border-border text-center font-semibold text-muted-foreground">
                           {pkg.ruta || pkg.destination || '—'}

@@ -620,9 +620,11 @@ export async function upsertManifestPackageOverrides(
           consolidacion:  row.consolidacion || false,
           requiresPermit: row.permisos || false,
           permisos:       row.permisos || false,
-          // Manifest reassignment support
-          manifestNumber: targetManifestNumber,
-          manifestId:     targetManifestNumber,
+          // Manifest reassignment support — keep all 4 manifest fields atomically in sync
+          manifestNumber:  targetManifestNumber,
+          manifestId:      targetManifestNumber,
+          manifiesto:      targetManifestNumber,
+          updatedManifest: targetManifestNumber,
           // Round-trip fidelity fields (so reloads see the full row shape)
           pesoRedondeo:       effectivePesoRedondeo ?? row.pesoRedondeo ?? null,
           matchSource:        row.matchSource ?? '',
@@ -746,7 +748,7 @@ export async function ingestManifestToPackages(
   for (const chunk of chunks) {
     // Pre-check which trackingIds already exist so we can preserve their
     // status/statusHistory and protect manifestNumber updates (e.g. transitory consolidation).
-    const existingPackagesMap = new Map<string, { manifestNumber?: string; status?: string }>();
+    const existingPackagesMap = new Map<string, { manifestNumber?: string; status?: string; isPaid?: boolean; paymentStatus?: string; invoiceReady?: boolean; invoiceId?: string | null }>();
     await Promise.all(
       chunk
         .filter(({ row }) => Boolean(row.tracking))
@@ -759,6 +761,10 @@ export async function ingestManifestToPackages(
                 existingPackagesMap.set(id, {
                   manifestNumber: data?.manifestNumber || data?.manifestId || data?.updatedManifest || '',
                   status: data?.status || '',
+                  isPaid: data?.isPaid,
+                  paymentStatus: data?.paymentStatus,
+                  invoiceReady: data?.invoiceReady,
+                  invoiceId: data?.invoiceId,
                 });
               }
             })
@@ -895,12 +901,11 @@ export async function ingestManifestToPackages(
         origin:             originCountry,
         destination:        'Costa Rica',
         destinationCountry: 'Costa Rica',
-        // === Manifest / Route ===
-        // rowManifestOverrides allows individual rows to target a different manifest
-        // (e.g. the Nova "Cambiar manifiesto" action). Falls back to the top-level
-        // manifestNumber, which itself falls back to row.manifiesto for safety.
+        // === Manifest / Route — keep all 4 manifest fields in sync ===
         manifestNumber:     targetManifestNumber,
         manifestId:         targetManifestNumber,
+        manifiesto:         targetManifestNumber,
+        updatedManifest:    targetManifestNumber,
         guia:               row.guia,
         ruta:               effectiveRuta,
         currency:           'USD',
@@ -919,6 +924,17 @@ export async function ingestManifestToPackages(
       };
 
       if (isExisting) {
+        // Preserve payment/invoice state for existing packages
+        if (existingPkg?.isPaid === true) {
+          coreFields.isPaid = true;
+          coreFields.paymentStatus = 'paid';
+        } else if (existingPkg?.paymentStatus) {
+          coreFields.paymentStatus = existingPkg.paymentStatus;
+          coreFields.isPaid = existingPkg.isPaid ?? false;
+        }
+        if (existingPkg?.invoiceReady !== undefined) {
+          coreFields.invoiceReady = existingPkg.invoiceReady;
+        }
         if (isManifestChanged) {
           coreFields.pesoRedondeo = deleteField();
           coreFields.cost = deleteField();

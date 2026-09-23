@@ -400,3 +400,51 @@ describe('buildBoletaHTML — smoke', () => {
   });
 });
 
+// ── Defensive Type Coercion (Regression: total.toFixed is not a function) ─────
+
+describe('buildRouteManifestHTML & buildEncomiendaServiceManifestHTML — defensive numeric coercion', () => {
+  it('handles string prices and string invoice amounts without throwing total.toFixed is not a function', () => {
+    const rowsWithStrings = [
+      makeRow({
+        slCode: 'SL888',
+        customerName: 'ANA LOPEZ',
+        tracking: 'TRK-STR-1',
+        price: '24.00' as any,
+        invoiceId: 'inv-str-1',
+        invoiceNumber: '99001',
+        invoiceAmountUSD: '24.00' as any,
+        invoiceAmountCRC: '11280' as any,
+      }),
+      makeRow({
+        slCode: 'SL888',
+        customerName: 'ANA LOPEZ',
+        tracking: 'TRK-STR-2',
+        price: '12.50' as any,
+      }),
+    ];
+
+    expect(() => {
+      const html = buildRouteManifestHTML(rowsWithStrings, 'San Jose Centro', '21-09-2026DAN', 470);
+      expect(html).toContain('$36.50');
+      expect(html).toContain('#99001');
+    }).not.toThrow();
+  });
+
+  it('handles undefined and null prices gracefully without throwing', () => {
+    const rowsWithNulls = [
+      makeRow({
+        slCode: 'SL777',
+        customerName: 'PEDRO',
+        price: undefined as any,
+        peso: null as any,
+      }),
+    ];
+
+    expect(() => {
+      const html = buildRouteManifestHTML(rowsWithNulls, 'Alajuela', '21-09-2026DAN', 0);
+      expect(html).toContain('$0.00');
+    }).not.toThrow();
+  });
+});
+
+

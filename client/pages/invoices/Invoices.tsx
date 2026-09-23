@@ -389,6 +389,45 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
 
 
 
+  const { data: manifestsData } = useQuery({
+    queryKey: ['manifests', 'list'],
+    queryFn: async () => {
+      const result = await firestoreApi.manifests.list({
+        pageSize: 250,
+        orderByField: 'processedAt',
+        orderDirection: 'desc',
+      });
+      return (result.data || []) as Array<{
+        id: string;
+        manifestNumber: string;
+        manifestType?: string;
+        totalPackages?: number;
+        packages?: any[];
+        totalCustomers?: number;
+        processedAt?: string;
+        country?: string;
+        shippingType?: string;
+        mergedInto?: string;
+        fusedManifests?: string[];
+        fusedFrom?: string[];
+      }>;
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const manifestMergedMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (manifestsData || []).forEach((m: any) => {
+      if (m.mergedInto) {
+        const id = (m.id || '').trim();
+        const num = (m.manifestNumber || '').trim();
+        if (id) map.set(id, m.mergedInto);
+        if (num) map.set(num, m.mergedInto);
+      }
+    });
+    return map;
+  }, [manifestsData]);
+
   const [loadingManifest, setLoadingManifest] = useState(false);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
   const isLoading = loadingInvoices || fetchingInvoices || loadingManifest || loadingProfiles;
@@ -414,6 +453,19 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
       if (origVal && !searchTerms.includes(origVal)) {
         searchTerms.push(origVal);
       }
+      if (originalManifest.mergedInto && !searchTerms.includes(originalManifest.mergedInto)) {
+        searchTerms.push(originalManifest.mergedInto);
+      }
+      if (Array.isArray(originalManifest.fusedManifests)) {
+        originalManifest.fusedManifests.forEach((fm: string) => {
+          if (fm && !searchTerms.includes(fm)) searchTerms.push(fm);
+        });
+      }
+      if (Array.isArray(originalManifest.fusedFrom)) {
+        originalManifest.fusedFrom.forEach((fm: string) => {
+          if (fm && !searchTerms.includes(fm)) searchTerms.push(fm);
+        });
+      }
     }
     /**
      * ARCHITECTURAL OPTIMIZATION (Zero Secondary Reads & Zero Write Loops):
@@ -433,13 +485,14 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
         );
         setLoadingManifest(false);
       },
-      () => {
+      (err) => {
+        console.error('[Invoices] Error loading manifest invoices:', err);
         setManifestSearchResults([]);
         setLoadingManifest(false);
       },
     );
     return () => unsub();
-  }, [appliedManifestFilter, hasSearched]);
+  }, [appliedManifestFilter, hasSearched, manifestsData]);
 
   /**
    * Route-filter: real-time onSnapshot to get invoices matching the active route filter.
@@ -905,29 +958,6 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
       (c.slCode ?? "").toLowerCase().includes(customerSearchTerm.toLowerCase()),
   );
 
-  const { data: manifestsData } = useQuery({
-    queryKey: ['manifests', 'list'],
-    queryFn: async () => {
-      const result = await firestoreApi.manifests.list({
-        pageSize: 100,
-        orderByField: 'processedAt',
-        orderDirection: 'desc',
-      });
-      return (result.data || []) as Array<{
-        id: string;
-        manifestNumber: string;
-        manifestType?: string;
-        totalPackages?: number;
-        packages?: any[];
-        totalCustomers?: number;
-        processedAt?: string;
-        country?: string;
-        shippingType?: string;
-      }>;
-    },
-    staleTime: 1000 * 60 * 5,
-  });
-
   const manifestPackageCounts = useMemo(() => {
     const counts = new Map<string, number>();
     // First, populate from manifestsData
@@ -1037,8 +1067,40 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
           (mObj?.id || '').trim().toLowerCase()
         ].filter(Boolean));
 
+        if (mObj?.mergedInto) {
+          allowedNumbers.add(mObj.mergedInto.trim().toLowerCase());
+        }
+        if (Array.isArray(mObj?.fusedManifests)) {
+          mObj.fusedManifests.forEach(fm => {
+            if (fm) allowedNumbers.add(fm.trim().toLowerCase());
+          });
+        }
+        if (Array.isArray(mObj?.fusedFrom)) {
+          mObj.fusedFrom.forEach(fm => {
+            if (fm) allowedNumbers.add(fm.trim().toLowerCase());
+          });
+        }
+
         const invMn = (inv.manifestNumber || '').trim().toLowerCase();
-        if (!allowedNumbers.has(invMn)) return false;
+        const invOrig = ((inv as any).originalManifest || (inv as any).originManifest || '').trim().toLowerCase();
+        const invId = ((inv as any).manifestId || '').trim().toLowerCase();
+        const hasManifestNumbers = Array.isArray((inv as any).manifestNumbers) && (inv as any).manifestNumbers.some((mn: string) => allowedNumbers.has((mn || '').trim().toLowerCase()));
+        const hasItemManifest = (inv.invoiceItems || []).some((item: any) => {
+          const itemMn = (item.manifestNumber || item.originManifest || '').trim().toLowerCase();
+          return allowedNumbers.has(itemMn);
+        });
+
+        let matchesTrackings = false;
+        if (mObj?.mergedInto && Array.isArray(mObj.packages) && mObj.packages.length > 0) {
+          const mTrackings = new Set(mObj.packages.map((p: any) => String(p.tracking || p.trackingNumber || '').toUpperCase().trim()).filter(Boolean));
+          matchesTrackings = (inv.invoiceItems || []).some((item: any) => {
+            const tr = String(item.trackingNumber || (item as any).tracking || '').toUpperCase().trim();
+            return tr && mTrackings.has(tr);
+          });
+        }
+
+        const isMatch = allowedNumbers.has(invMn) || allowedNumbers.has(invOrig) || allowedNumbers.has(invId) || hasManifestNumbers || hasItemManifest || matchesTrackings;
+        if (!isMatch) return false;
       }
       if (routeFilter !== "all") {
         const invRuta = ((inv as any).clientRoute || (inv as any).route?.name || (inv as any).route || inv.customer?.ruta || "").trim();
@@ -1574,8 +1636,8 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
             permisos: false,
             invoiceId: inv.id,
             invoiceNumber: inv.invoiceNumber,
-            invoiceAmountUSD: inv.totalAmount,
-            invoiceAmountCRC: (inv as any).totalAmountCRC,
+            invoiceAmountUSD: inv.totalAmount != null ? (Number(inv.totalAmount) || 0) : undefined,
+            invoiceAmountCRC: (inv as any).totalAmountCRC != null ? (Number((inv as any).totalAmountCRC) || 0) : undefined,
           });
         }
       });
@@ -2222,7 +2284,7 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
         : `${suggestion.occurrences} facturas anteriores`;
       toast({
         title: "Servicio sugerido agregado",
-        description: `${cleanDesc} — $${suggestion.amount.toFixed(2)} (${sourceLabel})`,
+        description: `${cleanDesc} — $${Number(suggestion.amount || 0).toFixed(2)} (${sourceLabel})`,
       });
     } catch (err) {
       toast({ title: "Error al sugerir servicio", description: String(err), variant: "destructive" });
@@ -2294,7 +2356,7 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
         : `${suggestion.occurrences} facturas anteriores`;
       toast({
         title: "Servicio agregado a factura",
-        description: `${cleanDesc} — $${suggestion.amount.toFixed(2)} (${sourceLabel})`,
+        description: `${cleanDesc} — $${Number(suggestion.amount || 0).toFixed(2)} (${sourceLabel})`,
       });
       // Invalidate the cache to show updated UI
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
@@ -4683,7 +4745,7 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
                       {stableStats.totalWeight !== undefined && stableStats.totalWeight > 0 && (
                         <>
                           <span className="text-border select-none">·</span>
-                          <span className="font-semibold text-foreground">{stableStats.totalWeight.toFixed(2)} kg</span>
+                          <span className="font-semibold text-foreground">{Number(stableStats.totalWeight || 0).toFixed(2)} kg</span>
                         </>
                       )}
                       {stableStats.totalAmount !== undefined && stableStats.totalAmount > 0 && (
@@ -4748,6 +4810,7 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
           setManifestFilter={setManifestFilter}
           manifestOptions={manifestOptions}
           manifestPackageCounts={manifestPackageCounts}
+          manifestMergedMap={manifestMergedMap}
           dataLoadLimit={dataLoadLimit}
           setDataLoadLimit={setDataLoadLimit}
           routeFilter={routeFilter}
@@ -4933,7 +4996,7 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
                             : <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                           <span className="text-sm font-semibold text-foreground truncate flex-1">{groupKey}</span>
                           <span className="text-[11px] text-muted-foreground shrink-0">{groupInvoices.length} factura{groupInvoices.length !== 1 ? 's' : ''}</span>
-                          <span className="text-xs font-bold text-foreground shrink-0">${total.toFixed(2)}</span>
+                          <span className="text-xs font-bold text-foreground shrink-0">${Number(total || 0).toFixed(2)}</span>
                         </button>
                         <AnimatePresence initial={false}>
                           {isOpen && (

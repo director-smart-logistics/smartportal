@@ -15,7 +15,7 @@
     ],
     "headers": [
       {
-        "source": "/index.html",
+        "source": "**",
         "headers": [
           {
             "key": "Cache-Control",
@@ -28,12 +28,7 @@
           {
             "key": "Expires",
             "value": "0"
-          }
-        ]
-      },
-      {
-        "source": "**",
-        "headers": [
+          },
           {
             "key": "X-Frame-Options",
             "value": "SAMEORIGIN"
@@ -49,7 +44,7 @@
         ]
       },
       {
-        "source": "**/*.@(js|css)",
+        "source": "**/*.@(js|css|png|jpg|jpeg|gif|svg|webp|woff|woff2|ttf|eot|ico)",
         "headers": [
           {
             "key": "Cache-Control",

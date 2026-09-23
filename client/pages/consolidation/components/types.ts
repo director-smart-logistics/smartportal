@@ -413,7 +413,7 @@ export function diagnoseUninvoiced(
   return {
     reason: 'pending_consolidation',
     label: 'Pendiente de factura',
-    detail: `Tiene precio ($${pkg.price.toFixed(2)}) pero aún no se ha generado factura. Puede estar esperando más paquetes para consolidar.`,
+    detail: `Tiene precio ($${Number(pkg.price || 0).toFixed(2)}) pero aún no se ha generado factura. Puede estar esperando más paquetes para consolidar.`,
     action: 'Genera una factura manualmente o espera a la consolidación automática.',
   };
 }

@@ -114,6 +114,8 @@ interface ConsolidationCustomerCardProps {
    * highlighted with a red pill for quick visual identification.
    */
   searchQuery?: string;
+  /** Sequential display index for customer enumeration (e.g. 1, 2, 3...) */
+  itemIndex?: number;
 }
 
 
@@ -244,6 +246,7 @@ export function ConsolidationCustomerCard({
   hideManifestGroupHeader = false,
   highlightStale = false,
   searchQuery = '',
+  itemIndex,
 }: ConsolidationCustomerCardProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState(defaultOpen);
@@ -336,11 +339,29 @@ export function ConsolidationCustomerCard({
     () => manifestGroups.flatMap(g => g.packages),
     [manifestGroups]
   );
-  const oldest = useMemo(() => oldestPackageDate(allPackages), [allPackages]);
+  const oldest = useMemo(() => {
+    let earliestDate: string | null = null;
+    let earliestMs: number | null = null;
+    for (const pkg of allPackages) {
+      const d = getConsolidationStartDate(pkg) || oldestPackageDate([pkg]);
+      if (d) {
+        const ms = new Date(d).getTime();
+        if (!isNaN(ms) && (earliestMs === null || ms < earliestMs)) {
+          earliestDate = d;
+          earliestMs = ms;
+        }
+      }
+    }
+    return earliestDate;
+  }, [allPackages]);
   const daysInStorage = daysSince(oldest);
   const daysRemaining = gracePeriodDays - daysInStorage;
   const graceExpired = daysInStorage >= 0 && daysRemaining <= 0;
   const graceWarning = daysInStorage >= 0 && daysRemaining > 0 && daysRemaining <= 3;
+  // When customer storage time exceeds 90 days, the header badge displays "Más de 90 días"
+  // (per company custody / loss threshold). Note: this indicator lives strictly at the customer
+  // card header level, avoiding redundant clutter inside the package rows.
+  const isDadoEnPerdida = daysInStorage >= 90;
 
   // ── "Consolida desde" badge ───────────────────────────────────────────────
   /** Format the oldest-package date as a short locale string */
@@ -353,6 +374,8 @@ export function ConsolidationCustomerCard({
 
   const consolidaBadgeClass = useMemo(() => {
     if (daysInStorage < 0) return null; // no date
+    if (daysInStorage >= 90)
+      return 'bg-red-100 border-red-400 text-red-800 dark:bg-red-950/60 dark:border-red-600 dark:text-red-300 font-semibold';
     if (daysInStorage < 7)
       return 'bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-700/50 dark:text-emerald-400';
     if (daysInStorage < 14)
@@ -812,6 +835,12 @@ export function ConsolidationCustomerCard({
             <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
           )}
 
+          {itemIndex !== undefined && (
+            <span className="text-xs font-mono text-muted-foreground shrink-0 min-w-[1.25rem]">
+              {itemIndex}.
+            </span>
+          )}
+
           {/* Route or Courier Service Badge */}
           {customer.courierService ? (() => {
             const rc = getRouteColor('Encomiendas');
@@ -886,15 +915,18 @@ export function ConsolidationCustomerCard({
             <span
               className={cn(
                 'inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border shrink-0',
-                graceExpired
-                  ? 'bg-red-50 text-red-700 border-red-300 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700'
-                  : graceWarning
-                    ? 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700'
-                    : 'bg-background/80 text-muted-foreground border-border/50'
+                isDadoEnPerdida
+                  ? 'bg-red-100 text-red-800 border-red-400 font-semibold dark:bg-red-950/60 dark:text-red-300 dark:border-red-600'
+                  : graceExpired
+                    ? 'bg-red-50 text-red-700 border-red-300 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700'
+                    : graceWarning
+                      ? 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700'
+                      : 'bg-background/80 text-muted-foreground border-border/50'
               )}
+              title={isDadoEnPerdida ? `Paquete con ${daysInStorage} días en custodia (>90 días)` : undefined}
             >
               <Clock className="h-3 w-3" aria-hidden />
-              {graceExpired ? 'Gracia vencida' : `${daysRemaining}d`}
+              {isDadoEnPerdida ? 'Más de 90 días' : graceExpired ? 'Gracia vencida' : `${daysRemaining}d`}
             </span>
           )}
 
@@ -1174,18 +1206,18 @@ export function ConsolidationCustomerCard({
                               )}
 
                               {/* Weight */}
-                              {pkg.weight != null && pkg.weight > 0 && (
+                              {Number(pkg.weight || 0) > 0 && (
                                 <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground shrink-0">
                                   <Scale className="h-2.5 w-2.5" aria-hidden />
-                                  {pkg.weight.toFixed(2)} kg
+                                  {Number(pkg.weight || 0).toFixed(2)} kg
                                 </span>
                               )}
 
                               {/* Price */}
-                              {pkg.price != null && pkg.price > 0 && (
+                              {Number(pkg.price || 0) > 0 && (
                                 <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium shrink-0">
                                   <DollarSign className="h-2.5 w-2.5" aria-hidden />
-                                  {pkg.price.toFixed(2)}
+                                  {Number(pkg.price || 0).toFixed(2)}
                                 </span>
                               )}
 
@@ -1216,7 +1248,7 @@ export function ConsolidationCustomerCard({
                                 </Badge>
                               ) : (
                                 <Badge variant="outline" className="text-[9px] h-4.5 px-1.5 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900/50 shrink-0 font-semibold animate-pulse">
-                                  Bodegaje: +${accumulatedCharge.toFixed(2)} ({Math.abs(daysRemaining)} d vencidos)
+                                  Bodegaje: +${Number(accumulatedCharge || 0).toFixed(2)} ({Math.abs(daysRemaining)} d vencidos)
                                 </Badge>
                               )}
 

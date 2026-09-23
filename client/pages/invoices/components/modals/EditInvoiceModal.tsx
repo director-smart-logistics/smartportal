@@ -441,7 +441,7 @@ export function EditInvoiceModal({
       const cleanDesc = suggestion.description.trim() || "SERVICIO DE TERCERO";
       toast({
         title: "Sugerencia obtenida",
-        description: `${cleanDesc} — $${suggestion.amount.toFixed(2)}`,
+        description: `${cleanDesc} — $${Number(suggestion.amount || 0).toFixed(2)}`,
       });
 
       setEditItems(prev => [
@@ -1557,7 +1557,7 @@ export function EditInvoiceModal({
                                   </div>
                                 )}
                                 <span className="text-[10px] text-muted-foreground block mt-1">
-                                  {log.trackings.length === 1 ? `Peso: ${log.weight?.toFixed(2)} kg` : `Peso Total: ${log.weight?.toFixed(2)} kg`}
+                                  {log.trackings.length === 1 ? `Peso: ${Number(log.weight || 0).toFixed(2)} kg` : `Peso Total: ${Number(log.weight || 0).toFixed(2)} kg`}
                                 </span>
                               </div>
                               <Badge
@@ -1578,14 +1578,19 @@ export function EditInvoiceModal({
                             {log.isMovedToOtherManifest && (
                               <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 rounded-lg p-2.5 text-[10px] text-blue-800 dark:text-blue-300 font-semibold flex items-start gap-1.5 mt-1 select-none">
                                 <ArrowRightLeft className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-                                <span>Paquete re-manifiestado. Fue trasladado del manifiesto original ({log.originalManifest}) al manifiesto actual ({log.currentManifest}).</span>
+                                <div>
+                                  <span className="font-bold">Paquete re-manifiestado:</span> Actualmente en{" "}
+                                  <span className="underline decoration-blue-400 font-mono">{log.currentManifest}</span>.
+                                </div>
                               </div>
                             )}
 
                             {isTransitoria && (
-                              <div className="bg-amber-50 dark:bg-amber-950/10 border border-amber-100 dark:border-amber-900/20 rounded-lg p-2.5 text-[10px] text-amber-800 dark:text-amber-450 font-semibold flex items-start gap-1.5 mt-1 select-none">
-                                <Info className="h-3.5 w-3.5 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
-                                <span>Paquete desvinculado y enviado a Consolidación Transitoria.</span>
+                              <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-lg p-2.5 text-[10px] text-amber-800 dark:text-amber-300 font-semibold flex items-start gap-1.5 mt-1 select-none">
+                                <Info className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-bold">Retenido en Consolidación Transitoria:</span> Requiere asignación a un nuevo manifiesto antes de entrega.
+                                </div>
                               </div>
                             )}
 
@@ -1674,7 +1679,7 @@ export function EditInvoiceModal({
                     )}
                     <div className="flex justify-between items-center text-muted-foreground">
                       <span>Peso Total:</span>
-                      <span className="font-semibold text-foreground">{liveTotals.totalWeight.toFixed(2)} kg</span>
+                      <span className="font-semibold text-foreground">{Number(liveTotals.totalWeight || 0).toFixed(2)} kg</span>
                     </div>
                     <div className="border-t border-border/80 pt-2.5 flex justify-between items-baseline">
                       <span className="font-bold text-foreground text-sm">Total a cobrar:</span>

@@ -287,7 +287,7 @@ export function EncomiendaCustomerCard({
             <div>
               <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Total</div>
               <div className="font-bold text-sm text-emerald-600 dark:text-emerald-400">
-                ${totalAmount.toFixed(2)}
+                ${Number(totalAmount || 0).toFixed(2)}
               </div>
             </div>
           )}

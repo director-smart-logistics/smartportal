@@ -141,7 +141,7 @@ export function SendEmailDialog({
                 </span>
               </div>
               <Badge variant="outline" className="font-mono">
-                {invoice.currency || "USD"} ${invoice.totalAmount.toFixed(2)}
+                {invoice.currency || "USD"} ${Number(invoice.totalAmount || 0).toFixed(2)}
               </Badge>
             </div>
 

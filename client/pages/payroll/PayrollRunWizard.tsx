@@ -989,7 +989,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
                 <td style="text-align: right; color: #a1a1aa;">—</td>
               </tr>
               <tr>
-                <td>Retención Obrero CCSS (${((settings.employeeSocialSecurityRate || 0.1083) * 100).toFixed(2)}%)</td>
+                <td>Retención Obrero CCSS (${((Number(settings?.employeeSocialSecurityRate || 0.1083)) * 100).toFixed(2)}%)</td>
                 <td style="text-align: right; color: #a1a1aa;">—</td>
                 <td style="text-align: right; font-weight: 600; color: #b91c1c;">-${formatCRC(line.ccss)}</td>
               </tr>
@@ -1171,7 +1171,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
                   <td class="concepts-td" style="text-align: right; padding: 10px 12px; color: #a1a1aa; border-top: 1px solid #e4e4e7; border-bottom: 2px double #e4e4e7;">—</td>
                 </tr>
                 <tr>
-                  <td class="concepts-td" style="padding: 10px 12px; border-bottom: 1px solid #f4f4f5; color: #27272a;">Retención Obrero CCSS (${((settings.employeeSocialSecurityRate || 0.1083) * 100).toFixed(2)}%)</td>
+                  <td class="concepts-td" style="padding: 10px 12px; border-bottom: 1px solid #f4f4f5; color: #27272a;">Retención Obrero CCSS (${((Number(settings?.employeeSocialSecurityRate || 0.1083)) * 100).toFixed(2)}%)</td>
                   <td class="concepts-td" style="text-align: right; padding: 10px 12px; border-bottom: 1px solid #f4f4f5; color: #a1a1aa;">—</td>
                   <td class="concepts-td" style="text-align: right; padding: 10px 12px; border-bottom: 1px solid #f4f4f5; color: #b91c1c; font-weight: 600;">-${formatCRC(line.ccss)}</td>
                 </tr>
@@ -1259,7 +1259,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
     ? employees.find(e => e.id === includedLines[0].employeeId)?.countryCode || "CR"
     : "CR";
   const defaultSettings = getCountrySettings(defaultCountry);
-  const defaultRateStr = `${((defaultSettings.employeeSocialSecurityRate || 0.1083) * 100).toFixed(2)}%`;
+  const defaultRateStr = `${((Number(defaultSettings?.employeeSocialSecurityRate || 0.1083)) * 100).toFixed(2)}%`;
 
   return (
     <DashboardLayout>
@@ -2129,7 +2129,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
 
                 <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-3 py-2 rounded-lg">
                   <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                  {t("disclaimer", { rate: ((defaultSettings.employeeSocialSecurityRate || 0.1083) * 100).toFixed(2) })}
+                  {t("disclaimer", { rate: ((Number(defaultSettings?.employeeSocialSecurityRate || 0.1083)) * 100).toFixed(2) })}
                 </div>
               </div>
             )}
@@ -2349,7 +2349,7 @@ const PayrollRunWizard = memo(function PayrollRunWizard() {
                             <td className="py-2.5 px-3 text-right text-zinc-400">—</td>
                           </tr>
                           <tr>
-                            <td className="py-2.5 px-3 text-zinc-600">Retención Obrero CCSS (${((settings?.employeeSocialSecurityRate ?? 0.1083) * 100).toFixed(2)}%)</td>
+                            <td className="py-2.5 px-3 text-zinc-600">Retención Obrero CCSS (${((Number(settings?.employeeSocialSecurityRate ?? 0.1083)) * 100).toFixed(2)}%)</td>
                             <td className="py-2.5 px-3 text-right text-zinc-400">—</td>
                             <td className="py-2.5 px-3 text-right font-semibold text-red-700">-{formatCRC(previewLine.ccss)}</td>
                           </tr>

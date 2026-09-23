@@ -5448,12 +5448,19 @@ export const ResultSummary = memo(function ResultSummary({
             permisos: Boolean(r.permisos || pkg?.requiresPermit || pkg?.permisos),
             invoiceId: pkgInvoice?.id || pkg?.invoiceId,
             invoiceNumber: pkgInvoice?.invoiceNumber || pkg?.invoiceNumber,
-            invoiceAmountUSD:
-              pkgInvoice?.totalAmount ??
-              pkgInvoice?.amount ??
-              pkgInvoice?.subtotal,
-            invoiceAmountCRC:
-              pkgInvoice?.amountCRC ?? pkgInvoice?.totalAmountCRC,
+            invoiceAmountUSD: pkgInvoice
+              ? (Number(
+                  pkgInvoice?.totalAmount ??
+                  pkgInvoice?.amount ??
+                  pkgInvoice?.subtotal ??
+                  0
+                ) || 0)
+              : undefined,
+            invoiceAmountCRC: pkgInvoice
+              ? (pkgInvoice?.amountCRC != null || pkgInvoice?.totalAmountCRC != null
+                  ? Number(pkgInvoice?.amountCRC ?? pkgInvoice?.totalAmountCRC) || 0
+                  : undefined)
+              : undefined,
             isReturned: isReturned,
             isReassigned:
               pkg?.isReassigned === true || (r as any).isReassigned === true,

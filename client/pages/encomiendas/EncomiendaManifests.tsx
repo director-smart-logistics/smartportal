@@ -211,7 +211,7 @@ interface ThirdCostState {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmt$(n: number) {
-  return `$${n.toFixed(2)}`;
+  return `$${Number(n || 0).toFixed(2)}`;
 }
 
 function fmtDate(iso: string) {
@@ -410,7 +410,7 @@ function EncomiendaInvoiceEditorModal({
         
       toast({
         title: "Servicio sugerido cargado",
-        description: `${suggestion.description} — $${suggestion.amount.toFixed(2)} (${sourceLabel}). Haz clic en Guardar.`,
+        description: `${suggestion.description} — $${Number(suggestion.amount || 0).toFixed(2)} (${sourceLabel}). Haz clic en Guardar.`,
       });
     } catch (err) {
       toast({ title: "Error al sugerir servicio", description: String(err), variant: "destructive" });
@@ -1325,7 +1325,7 @@ function CustomerGroup({
         : `${suggestion.occurrences} facturas anteriores`;
       toast({
         title: "Servicio sugerido aplicado",
-        description: `${suggestion.description} — $${suggestion.amount.toFixed(2)} (${sourceLabel})`,
+        description: `${suggestion.description} — $${Number(suggestion.amount || 0).toFixed(2)} (${sourceLabel})`,
       });
       onMutationSuccess();
     } catch (err) {

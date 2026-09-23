@@ -847,6 +847,19 @@ export default function RoutesManagement() {
     return counts;
   }, [manifestsQueryData]);
 
+  const manifestMergedMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (manifestsFullData || []).forEach((m: any) => {
+      if (m.mergedInto) {
+        const id = (m.id || '').trim();
+        const num = (m.manifestNumber || '').trim();
+        if (id) map.set(id, m.mergedInto);
+        if (num) map.set(num, m.mergedInto);
+      }
+    });
+    return map;
+  }, [manifestsFullData]);
+
   const allManifestsList = useMemo(() => {
     const list = (manifestsQueryData || []).map(d => d.id).filter(Boolean);
     return list.sort((a, b) => {
@@ -868,7 +881,7 @@ export default function RoutesManagement() {
     setRefreshTrigger(prev => prev + 1);
   }, []);
 
-  // 2. Suscribirse a los paquetes del manifiesto seleccionado
+  // 2. Suscribirse a los paquetes del manifiesto seleccionado (resolviendo manifiestos fusionados / MEGA-MAN)
   useEffect(() => {
     if (!manifestFilter) {
       setManifestPackages([]);
@@ -885,6 +898,19 @@ export default function RoutesManagement() {
       if (origVal && !searchTerms.includes(origVal)) {
         searchTerms.push(origVal);
       }
+      if (originalManifest.mergedInto && !searchTerms.includes(originalManifest.mergedInto)) {
+        searchTerms.push(originalManifest.mergedInto);
+      }
+      if (Array.isArray(originalManifest.fusedManifests)) {
+        originalManifest.fusedManifests.forEach((fm: string) => {
+          if (fm && !searchTerms.includes(fm)) searchTerms.push(fm);
+        });
+      }
+      if (Array.isArray(originalManifest.fusedFrom)) {
+        originalManifest.fusedFrom.forEach((fm: string) => {
+          if (fm && !searchTerms.includes(fm)) searchTerms.push(fm);
+        });
+      }
     }
     const q = query(
       collection(db, 'packages'),
@@ -893,7 +919,7 @@ export default function RoutesManagement() {
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const list = snap.docs.map(d => {
+        let list = snap.docs.map(d => {
           const data = d.data();
           return {
             id: d.id,
@@ -901,6 +927,21 @@ export default function RoutesManagement() {
             tracking: data.tracking || data.trackingNumber || d.id
           };
         });
+
+        // Si el operador seleccionó un sub-manifiesto específico que fue fusionado en un MEGA-MAN:
+        if (originalManifest?.mergedInto && originalManifest.mergedInto !== manifestFilter) {
+          const subTarget = manifestFilter.trim().toLowerCase();
+          const manifestPkgTrackings = new Set(
+            (originalManifest.packages || []).map((p: any) => String(p.tracking || p.trackingNumber || '').toUpperCase().trim()).filter(Boolean)
+          );
+          list = list.filter((p: any) => {
+            const pOrig = String(p.originalManifest || p.originalManifestID || p.originManifest || p.manifiesto || '').trim().toLowerCase();
+            const pMn = String(p.manifestNumber || '').trim().toLowerCase();
+            const pTrack = String(p.tracking || p.trackingNumber || p.id || '').toUpperCase().trim();
+            return pOrig === subTarget || pMn === subTarget || (manifestPkgTrackings.size > 0 && manifestPkgTrackings.has(pTrack));
+          });
+        }
+
         setManifestPackages(list);
         setPkgsLoading(false);
       },
@@ -912,7 +953,7 @@ export default function RoutesManagement() {
     return unsub;
   }, [manifestFilter, manifestsFullData, refreshTrigger]);
 
-  // 3. Suscribirse a las facturas del manifiesto seleccionado (soportando facturas multi-manifiesto y devueltos)
+  // 3. Suscribirse a las facturas del manifiesto seleccionado (soportando facturas multi-manifiesto, fusionadas y devueltos)
   useEffect(() => {
     if (!manifestFilter) {
       setManifestInvoices([]);
@@ -928,6 +969,19 @@ export default function RoutesManagement() {
       const origVal = originalManifest.manifestNumber || originalManifest.id || '';
       if (origVal && !searchTerms.includes(origVal)) {
         searchTerms.push(origVal);
+      }
+      if (originalManifest.mergedInto && !searchTerms.includes(originalManifest.mergedInto)) {
+        searchTerms.push(originalManifest.mergedInto);
+      }
+      if (Array.isArray(originalManifest.fusedManifests)) {
+        originalManifest.fusedManifests.forEach((fm: string) => {
+          if (fm && !searchTerms.includes(fm)) searchTerms.push(fm);
+        });
+      }
+      if (Array.isArray(originalManifest.fusedFrom)) {
+        originalManifest.fusedFrom.forEach((fm: string) => {
+          if (fm && !searchTerms.includes(fm)) searchTerms.push(fm);
+        });
       }
     }
 
@@ -1355,11 +1409,11 @@ export default function RoutesManagement() {
             valA = a[1].pkgs.length;
             valB = b[1].pkgs.length;
           } else if (sortField === 'weight') {
-            valA = a[1].pkgs.reduce((sum: number, p: any) => sum + (p.weight || 0), 0);
-            valB = b[1].pkgs.reduce((sum: number, p: any) => sum + (p.weight || 0), 0);
+            valA = a[1].pkgs.reduce((sum: number, p: any) => sum + Number(p.weight || p.peso || 0), 0);
+            valB = b[1].pkgs.reduce((sum: number, p: any) => sum + Number(p.weight || p.peso || 0), 0);
           } else if (sortField === 'amount') {
-            valA = a[1].invoice.totalAmount ?? 0;
-            valB = b[1].invoice.totalAmount ?? 0;
+            valA = Number(a[1].invoice?.totalAmount ?? a[1].invoice?.amount ?? 0);
+            valB = Number(b[1].invoice?.totalAmount ?? b[1].invoice?.amount ?? 0);
           } else if (sortField === 'status') {
             valA = a[1].invoice.status || '';
             valB = b[1].invoice.status || '';
@@ -1780,8 +1834,19 @@ export default function RoutesManagement() {
           permisos:      !!(p.requiresPermit || p.permisos),
           invoiceId:     pkgInvoice?.id || p.invoiceId,
           invoiceNumber: pkgInvoice?.invoiceNumber || p.invoiceNumber,
-          invoiceAmountUSD: pkgInvoice?.totalAmount ?? pkgInvoice?.amount ?? pkgInvoice?.subtotal,
-          invoiceAmountCRC: pkgInvoice?.amountCRC ?? pkgInvoice?.totalAmountCRC,
+          invoiceAmountUSD: pkgInvoice
+            ? (Number(
+                pkgInvoice?.totalAmount ??
+                pkgInvoice?.amount ??
+                pkgInvoice?.subtotal ??
+                0
+              ) || 0)
+            : undefined,
+          invoiceAmountCRC: pkgInvoice
+            ? (pkgInvoice?.amountCRC != null || pkgInvoice?.totalAmountCRC != null
+                ? Number(pkgInvoice?.amountCRC ?? pkgInvoice?.totalAmountCRC) || 0
+                : undefined)
+            : undefined,
           isReturned:    isReturned,
           isReassigned:  p.isReassigned === true,
           originManifest: originManifest,
@@ -2580,6 +2645,7 @@ export default function RoutesManagement() {
                       setCurrentPage(1);
                     }}
                     manifestPackageCounts={manifestCounts}
+                    manifestMergedMap={manifestMergedMap}
                     singleSelect
                     triggerClassName={cn(
                       "h-9 px-3 text-xs font-bold rounded-lg border-2 flex items-center justify-between gap-1.5 transition-all shadow-md w-full sm:min-w-[240px]",
@@ -3145,8 +3211,8 @@ export default function RoutesManagement() {
                                     <span className="font-normal text-muted-foreground shrink-0">({item.count} paq.)</span>
                                   </div>
                                   <div className="flex flex-col items-end gap-0">
-                                    <span className="font-bold text-foreground whitespace-nowrap">${item.totalUSD.toFixed(2)}</span>
-                                    {printTc > 0 && <span className="text-[9px] font-semibold text-muted-foreground whitespace-nowrap">₡{item.totalCRC.toLocaleString('es-CR')}</span>}
+                                    <span className="font-bold text-foreground whitespace-nowrap">${Number(item.totalUSD || 0).toFixed(2)}</span>
+                                    {printTc > 0 && <span className="text-[9px] font-semibold text-muted-foreground whitespace-nowrap">₡{Number(item.totalCRC || 0).toLocaleString('es-CR')}</span>}
                                   </div>
                                   <span />
                                   <span />
@@ -3159,13 +3225,17 @@ export default function RoutesManagement() {
                               const pkgIds = item.pkgs.map(p => p.id);
                               const isAllSelected = pkgIds.length > 0 && pkgIds.every(pId => selectedPkgs.has(pId));
                               const isSomeSelected = !isAllSelected && pkgIds.some(pId => selectedPkgs.has(pId));
-                              const totalUSD = item.invoice
-                                ? (item.invoice.totalAmount ?? item.invoice.amount ?? 0)
-                                : item.pkgs.reduce((s, p) => s + Number(p.price ?? p.cost ?? p.value ?? 0), 0);
-                              const totalCRC = item.invoice
-                                ? (item.invoice.amountCRC ?? Math.round(totalUSD * (item.invoice.exchangeRate ?? printTc)))
-                                : Math.round(totalUSD * printTc);
-                              const totalWeight = item.pkgs.reduce((s, p) => s + Number(p.weight ?? p.peso ?? 0), 0);
+                              const totalUSD = Number(
+                                item.invoice
+                                  ? (item.invoice.totalAmount ?? item.invoice.amount ?? 0)
+                                  : item.pkgs.reduce((s, p) => s + Number(p.price ?? p.cost ?? p.value ?? 0), 0)
+                              ) || 0;
+                              const totalCRC = Number(
+                                item.invoice
+                                  ? (item.invoice.amountCRC ?? Math.round(totalUSD * (Number(item.invoice.exchangeRate) || printTc || 0)))
+                                  : Math.round(totalUSD * (printTc || 0))
+                              ) || 0;
+                              const totalWeight = item.pkgs.reduce((s, p) => s + Number(p.weight ?? p.peso ?? 0), 0) || 0;
                               
                               return (
                                 <div
@@ -3221,12 +3291,12 @@ export default function RoutesManagement() {
 
                                   {/* Peso */}
                                   <span className="text-[11px] text-foreground font-bold whitespace-nowrap">
-                                    {isMaritime ? `${Math.round(totalWeight)} FT³` : `${totalWeight.toFixed(2)}`}
+                                    {isMaritime ? `${Math.round(Number(totalWeight || 0))} FT³` : `${Number(totalWeight || 0).toFixed(2)}`}
                                   </span>
 
                                   {/* $/CRC */}
                                   <div className="flex flex-col gap-0.5 items-end">
-                                    <span className="text-[11px] text-foreground font-bold">${totalUSD.toFixed(2)}</span>
+                                    <span className="text-[11px] text-foreground font-bold">${Number(totalUSD || 0).toFixed(2)}</span>
                                     {totalCRC > 0 && (
                                       <span className="text-[9px] text-muted-foreground whitespace-nowrap">
                                         ₡{totalCRC.toLocaleString('es-CR')}
@@ -3296,12 +3366,14 @@ export default function RoutesManagement() {
                             const statusCls = PKG_STATUS_COLORS[canonicalStatus] ?? "bg-muted text-muted-foreground";
                             const pkgInvoice = isChild ? item.invoice : getPackageInvoice(pkg);
                             const invItem = pkgInvoice ? getInvoiceItemForPackage(pkgInvoice, pkg) : null;
-                            const priceUSD = invItem
-                              ? (invItem.unitPrice ?? invItem.totalPrice ?? invItem.amount ?? 0)
-                              : Number(pkg.price ?? pkg.cost ?? pkg.value ?? 0);
+                            const priceUSD = Number(
+                              invItem
+                                ? (invItem.unitPrice ?? invItem.totalPrice ?? invItem.amount ?? 0)
+                                : (pkg.price ?? pkg.cost ?? pkg.value ?? 0)
+                            ) || 0;
                             const effectiveTc = Number(pkg.exchangeRate) > 0 ? Number(pkg.exchangeRate) : printTc;
                             const monto       = effectiveTc > 0 ? Math.round(priceUSD * effectiveTc * 100) / 100 : 0;
-                            const fmtCRC      = (n: number) => '₡' + n.toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            const fmtCRC      = (n: number) => '₡' + Number(n || 0).toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                             const manifestNum = pkg.manifestNumber || pkg.manifiesto;
                             const gtiCount    = gtiCountMap.get(`${pkg.slCode ?? ''}__${manifestNum ?? ''}`) ?? 0;
                             const invStatus   = invoiceStatusMap.get((pkg.tracking ?? '').toUpperCase());
@@ -3404,7 +3476,7 @@ export default function RoutesManagement() {
 
                                 {/* $/CRC column */}
                                 <div className="flex flex-col gap-0.5 items-end">
-                                  <span className="text-[11px] text-foreground whitespace-nowrap font-semibold">${priceUSD.toFixed(2)}</span>
+                                  <span className="text-[11px] text-foreground whitespace-nowrap font-semibold">${Number(priceUSD || 0).toFixed(2)}</span>
                                   {monto > 0 && <span className="text-[9px] text-muted-foreground whitespace-nowrap">{fmtCRC(monto)}</span>}
                                   {(() => {
                                     const pkgTc = Number(pkg.exchangeRate);

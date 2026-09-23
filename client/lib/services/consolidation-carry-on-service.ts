@@ -719,6 +719,20 @@ export function oldestPackageDate(packages: ConsolidationPackage[]): string | nu
     if (pkg.savedAt) candidates.push(pkg.savedAt);
     if (pkg.createdAt) candidates.push(pkg.createdAt);
 
+    // Also scan statusHistory for earliest consolidation or invoice date
+    if (pkg.statusHistory && Array.isArray(pkg.statusHistory)) {
+      for (const h of pkg.statusHistory) {
+        const note = h.note || (h as any).notes || '';
+        const match = note.match(/(?:Factura|invoice)\s+([A-Z0-9-]{6,}\d{6,}(?:-C)?)/i);
+        if (match) {
+          const fromNote = extractDateIsoFromInvoiceNumber(match[1]);
+          if (fromNote) candidates.push(fromNote);
+        }
+        if (h.changedAt) candidates.push(h.changedAt);
+        if ((h as any).timestamp) candidates.push((h as any).timestamp);
+      }
+    }
+
     for (const d of candidates) {
       if (!d) continue;
       const ms = new Date(d).getTime();

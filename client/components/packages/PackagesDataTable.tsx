@@ -3430,9 +3430,12 @@ export function PackagesDataTable({
               <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm">
                 <span className="text-blue-900 font-medium">
                   $
-                  {repriceModal.previews
-                    .reduce((s, p) => s + (p.quoteRequired ? 0 : p.newCost), 0)
-                    .toFixed(2)}
+                  {Number(
+                    repriceModal.previews.reduce(
+                      (s, p) => s + (p.quoteRequired ? 0 : (Number(p.newCost) || 0)),
+                      0,
+                    ) || 0,
+                  ).toFixed(2)}
                 </span>
                 <span className="text-blue-600 text-xs">
                   / ₡
@@ -3517,7 +3520,7 @@ export function PackagesDataTable({
                           )}
                         </td>
                         <td className="px-3 py-2 text-right text-gray-700">
-                          {(pkg.weight ?? 0).toFixed(3)}
+                          {Number(pkg.weight || 0).toFixed(3)}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <span
@@ -3529,7 +3532,7 @@ export function PackagesDataTable({
                             )}
                           >
                             {currentCost != null
-                              ? `$${currentCost.toFixed(2)}`
+                              ? `$${Number(currentCost || 0).toFixed(2)}`
                               : "—"}
                           </span>
                         </td>
@@ -3550,7 +3553,7 @@ export function PackagesDataTable({
                                 changed ? "text-amber-700" : "text-gray-700",
                               )}
                             >
-                              ${newCost.toFixed(2)}
+                              ${Number(newCost || 0).toFixed(2)}
                             </span>
                           )}
                         </td>
@@ -3764,7 +3767,7 @@ export function PackagesDataTable({
                             {pkg.trackingNumber}
                           </span>
                           <span className="text-gray-400 shrink-0 ml-2">
-                            {(pkg.weight ?? 0).toFixed(2)} kg
+                            {Number(pkg.weight || 0).toFixed(2)} kg
                           </span>
                         </div>
                       ))}
@@ -3974,12 +3977,12 @@ export function PackagesDataTable({
                     </div>
                     <span className="text-sm font-bold text-green-700">
                       Total: $
-                      {facturarModal.validationResults.valid
-                        .reduce(
+                      {Number(
+                        facturarModal.validationResults.valid.reduce(
                           (sum, pkg) => sum + (Number(pkg.calculatedCost) || 0),
                           0,
-                        )
-                        .toFixed(2)}{" "}
+                        ) || 0,
+                      ).toFixed(2)}{" "}
                       USD
                     </span>
                   </div>
@@ -4053,7 +4056,7 @@ export function PackagesDataTable({
                               )}
                             </td>
                             <td className="px-3 py-2 text-right text-gray-700 font-mono">
-                              {(pkg.weight ?? 0).toFixed(3)} kg
+                              {Number(pkg.weight || 0).toFixed(3)} kg
                             </td>
                             <td className="px-3 py-2 text-right font-semibold text-green-700">
                               ${(Number(pkg.calculatedCost) || 0).toFixed(2)}
@@ -4342,9 +4345,12 @@ export function PackagesDataTable({
                   <div className="text-right">
                     <div className="text-sm font-medium text-gray-900">
                       Total: $
-                      {facturarModal.results.invoices
-                        .reduce((sum, inv) => sum + inv.total, 0)
-                        .toFixed(2)}
+                      {Number(
+                        facturarModal.results.invoices.reduce(
+                          (sum, inv) => sum + (Number(inv.total) || 0),
+                          0,
+                        ) || 0,
+                      ).toFixed(2)}
                     </div>
                     {facturarModal.results.invoices.some(
                       (inv) => inv.firebaseSynced,

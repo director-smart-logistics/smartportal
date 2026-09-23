@@ -2633,7 +2633,7 @@ function PackageList({
       setExpanded(null);
       const methodLabel = paymentMethod === 'efectivo' ? 'efectivo' : paymentMethod === 'transferencia' ? 'transferencia' : 'SINPE';
       const cashNote = cashPaid && cashPaid > 0
-        ? ` · ${cashPaidCurrency === 'USD' ? `$${cashPaid.toFixed(2)}` : `₡${Math.round(cashPaid).toLocaleString('es-CR')}`} (${methodLabel})`
+        ? ` · ${cashPaidCurrency === 'USD' ? `$${Number(cashPaid || 0).toFixed(2)}` : `₡${Math.round(Number(cashPaid || 0)).toLocaleString('es-CR')}`} (${methodLabel})`
         : '';
       toast({ title: 'Entrega registrada', description: `${pkg.tracking} — ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${cashNote}` });
 
@@ -2926,7 +2926,7 @@ function PackageList({
       }
       const methodLabel = paymentMethod === 'efectivo' ? 'efectivo' : paymentMethod === 'transferencia' ? 'transferencia' : 'SINPE';
       const cashNote = cashPaid && cashPaid > 0
-        ? ` · ${cashPaidCurrency === 'USD' ? `$${cashPaid.toFixed(2)}` : `₡${Math.round(cashPaid).toLocaleString('es-CR')}`} (${methodLabel})`
+        ? ` · ${cashPaidCurrency === 'USD' ? `$${Number(cashPaid || 0).toFixed(2)}` : `₡${Math.round(Number(cashPaid || 0)).toLocaleString('es-CR')}`} (${methodLabel})`
         : '';
       toast({ title: `${pkgs.length} entrega(s) registradas`, description: `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${cashNote}` });
       // GAP 4 fix: pass real count so deliveriesRef accumulates correctly
@@ -3111,7 +3111,7 @@ function PackageList({
                 <span className="text-sm font-mono font-semibold text-emerald-600">₡{customerBanner.totalCRC.toLocaleString()}</span>
               )}
               {customerBanner.totalUSD > 0 && (
-                <span className="text-sm font-mono font-semibold text-blue-600">${customerBanner.totalUSD.toFixed(2)}</span>
+                <span className="text-sm font-mono font-semibold text-blue-600">${Number(customerBanner.totalUSD || 0).toFixed(2)}</span>
               )}
             </div>
           )}

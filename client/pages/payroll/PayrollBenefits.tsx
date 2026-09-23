@@ -5532,7 +5532,7 @@ const PayrollBenefits = memo(function PayrollBenefits() {
                     <div>
                       <span className="text-[10px] text-muted-foreground block uppercase font-semibold">Antigüedad Estimada</span>
                       <span className="text-sm font-bold text-foreground">
-                        {selectedCalculationToPrint.years.toFixed(2)} {selectedCalculationToPrint.years === 1 ? "año" : "años"}
+                        {Number(selectedCalculationToPrint.years || 0).toFixed(2)} {selectedCalculationToPrint.years === 1 ? "año" : "años"}
                       </span>
                     </div>
                     <div>
@@ -5554,12 +5554,12 @@ const PayrollBenefits = memo(function PayrollBenefits() {
                     <TableBody>
                       <TableRow>
                         <TableCell className="font-semibold text-indigo-600">Aguinaldo Acumulado</TableCell>
-                        <TableCell className="text-center">{selectedCalculationToPrint.monthsWorked.toFixed(2)} meses trabajados en período fiscal</TableCell>
+                        <TableCell className="text-center">{Number(selectedCalculationToPrint.monthsWorked || 0).toFixed(2)} meses trabajados en período fiscal</TableCell>
                         <TableCell className="text-right font-bold text-indigo-600">{formatCRC(selectedCalculationToPrint.aguinaldo)}</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-semibold text-rose-600">Cesantía Proyectada (Art. 29)</TableCell>
-                        <TableCell className="text-center">{selectedCalculationToPrint.cesantíaDays.toFixed(1)} días de cesantía legal</TableCell>
+                        <TableCell className="text-center">{Number(selectedCalculationToPrint.cesantíaDays || 0).toFixed(1)} días de cesantía legal</TableCell>
                         <TableCell className="text-right font-bold text-rose-600">{formatCRC(selectedCalculationToPrint.cesantiaAmount)}</TableCell>
                       </TableRow>
                       <TableRow className="bg-muted/10 border-t font-extrabold text-foreground">

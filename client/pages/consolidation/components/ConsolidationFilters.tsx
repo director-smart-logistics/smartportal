@@ -33,14 +33,6 @@ export interface ConsolidationFiltersProps {
   onGroupByChange: (v: GroupByMode) => void;
 }
 
-/** Classify a manifest number using the consolidation-specific rules */
-function classifyManifest(m: string): ManifestCategory {
-  const upper = m.toUpperCase().trim();
-  if (upper.includes('MEGA-MAN') || upper.includes('MEGA_MAN') || upper.startsWith('SL-MEGA-MAN')) return 'mega';
-  if (isPermitManifest(m)) return 'permit';
-  return 'regular';
-}
-
 export function ConsolidationFilters({
   search,
   onSearchChange,
@@ -84,7 +76,6 @@ export function ConsolidationFilters({
             selectedManifests={selectedManifests}
             onManifestsChange={onManifestsChange}
             manifestPackageCounts={manifestPackageCounts}
-            classifyManifest={classifyManifest}
           />
         </div>
       </div>

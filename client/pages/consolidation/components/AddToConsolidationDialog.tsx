@@ -256,19 +256,19 @@ export function AddToConsolidationDialog({
                     <dd>{found.ruta}</dd>
                   </>
                 )}
-                {found.weight > 0 && (
+                {Number(found.weight || 0) > 0 && (
                   <>
                     <dt className="font-medium text-foreground/70 flex items-center gap-1">
                       <Weight className="h-2.5 w-2.5" aria-hidden />Peso
                     </dt>
-                    <dd>{found.weight.toFixed(2)} kg</dd>
+                    <dd>{Number(found.weight || 0).toFixed(2)} kg</dd>
                   </>
                 )}
-                {found.price > 0 && (
+                {Number(found.price || 0) > 0 && (
                   <>
                     <dt className="font-medium text-foreground/70">Precio</dt>
                     <dd className="font-semibold text-foreground">
-                      {found.currency} {found.price.toFixed(2)}
+                      {found.currency} {Number(found.price || 0).toFixed(2)}
                     </dd>
                   </>
                 )}
@@ -309,9 +309,9 @@ export function AddToConsolidationDialog({
                     <span className="text-xs text-muted-foreground truncate max-w-[130px] hidden sm:block">
                       {p.customerName?.toUpperCase()}
                     </span>
-                    {p.price > 0 && (
+                    {Number(p.price || 0) > 0 && (
                       <span className="text-xs tabular-nums font-medium text-foreground shrink-0">
-                        ${p.price.toFixed(2)}
+                        ${Number(p.price || 0).toFixed(2)}
                       </span>
                     )}
                     <button

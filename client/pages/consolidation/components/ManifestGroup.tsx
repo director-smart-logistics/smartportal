@@ -28,7 +28,7 @@ function InvoiceChip({ invoice }: InvoiceChipProps) {
       <FileText className="h-3 w-3" aria-hidden />
       <span className="font-mono">{invoice.invoiceNumber}</span>
       <span className="opacity-60">·</span>
-      <span className="tabular-nums">${invoice.totalAmount.toFixed(2)}</span>
+      <span className="tabular-nums">${Number(invoice.totalAmount || 0).toFixed(2)}</span>
     </span>
   );
 }

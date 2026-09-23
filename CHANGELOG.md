@@ -2,6 +2,86 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1627] - 2026-09-22
+
+### Feat & Hardening (Contador de Auditoría en Vivo, Numeración Secuencial de Paneles y Blindaje de Consolidación Transitoria)
+- **Barra de Auditoría y Contador en Vivo (`ConsolidationManifests.tsx`):**
+  - Implementada barra compacta alineada al margen izquierdo en tipografía monoespaciada pequeña (`text-[11px] font-mono`) para capturas fotográficas y auditorías de pantalla: `{X} clientes • {Y} paquetes | Corte: DD/MM/AAAA HH:MM:SS`.
+  - Se eliminaron métricas y etiquetas redundantes para maximizar claridad en fotos tomadas desde móviles.
+- **Numeración Secuencial de Clientes en Paneles Colapsables (`ConsolidationCustomerCard.tsx`):**
+  - Cada cliente colapsable ahora incluye un número correlativo ordenado después del chevron (`> 1.`, `> 2.`, ...) en color `muted` no negrita (`text-muted-foreground`), permitiendo cotejo visual inmediato entre el número total del contador y las filas desplegadas.
+- **Suscripción Multi-Query Concurrente en Firestore (`useConsolidationData.ts`):**
+  - Se unificaron 3 queries reactivas en paralelo deduplicadas por `id` en memoria:
+    1. Paquetes con `consolidacion == true` (no terminales).
+    2. Paquetes con `updatedManifest == 'consolidacion_transitoria'`.
+    3. Paquetes con `manifestNumber == 'consolidacion_transitoria'`.
+  - Garantiza que los paquetes movidos a transitoria se muestren inmediatamente incluso si carecen del flag booleano `consolidacion: true` en el documento físico.
+  - Eliminado todo filtro por `customers.consolidationEnabled` en la vista de manifiestos: la presencia física del paquete en el manifiesto transitorio rige al 100% la visibilidad.
+- **Resolución Histórica de Día 0 y Regla de Custodia de 90+ Días (`ConsolidationCustomerCard.tsx`, `consolidation-carry-on-service.ts`):**
+  - Se integró la extracción de fechas originales desde notas de auditoría en `statusHistory` al calcular `oldestPackageDate` y `daysInStorage`, resolviendo que casos con facturas anuladas (ej. Caso Johanna con 91 días acumulados) muestren su fecha correcta (`23 jun 26`) y su indicador de vencimiento.
+  - Para clientes con más de 90 días en custodia, el badge en la cabecera indica explícitamente `Más de 90 días` (con estilo de alerta visual roja), manteniéndose exclusivamente a nivel de panel sin duplicidad en las filas internas.
+- **Suite de Pruebas de Regresión e Invariantes:**
+  - Creado `consolidation-transitoria-live-invariants.spec.ts` validando la invariabilidad de Día 0, exclusión de estados terminales, multi-query de captura y trazabilidad de auditoría.
+  - 8 suites y 48 pruebas de consolidación pasando al 100% con `tsc --noEmit` completado en 0 errores.
+
+## [0.0.1626] - 2026-09-22
+
+### Fixed (Invalidación Instantánea de Caché y Entrega de Versiones en Navegadores)
+- **Configuración de Encabezados `Cache-Control` en Firebase Hosting (`firebase.json`):**
+  - Se configuró `Cache-Control: no-cache, no-store, must-revalidate` para todas las rutas de documentos HTML (`**`), garantizando que cualquier navegador solicite y reciba de inmediato el `index.html` con la versión más reciente en cada recarga.
+  - Se configuró `Cache-Control: public, max-age=31536000, immutable` para todos los assets estáticos con hash (`.js`, `.css`, imágenes, fuentes), optimizando velocidad de carga sin riesgo de servir código desactualizado.
+
+## [0.0.1625] - 2026-09-22
+
+### Fixed (Blindaje Defensivo en Generación e Impresión de Manifiestos de Ruta y Encomiendas)
+- **Corrección de Runtime TypeError en `total.toFixed()` (`nova-print.ts`):**
+  - Se blindó la función constructora del HTML para impresión de Manifiestos de Ruta (`buildRouteManifestHTML`) y Manifiesto de Encomiendas (`buildEncomiendaServiceManifestHTML`) asegurando que todos los montos de facturas, subtotales, precios unitarios, pesos y tipos de cambio sean convertidos a número (`Number(...) || 0`) antes de ejecutar `.reduce()` y `.toFixed(2)`.
+  - Se corrigió el mapeo en `NovaTableModal.tsx`, `Invoices.tsx` y `RoutesManagement.tsx` al enlazar facturas de paquetes existentes (`pkgInvoice.totalAmount` / `pkgInvoice.amountCRC`).
+- **Verificación y Cobertura de Pruebas:**
+  - Nuevos tests unitarios añadidos en `nova-print.spec.ts` para cubrir casos borde con strings (`"24.00"`), valores no definidos y nullish.
+  - 189 suites de pruebas pasando al 100% (2,469 tests) y `tsc --noEmit` completado con 0 errores.
+- **Cero Impacto en DB / Otros Formatos:**
+  - Operación 100% en el cliente sin mutaciones en Firestore. Formatos de Shipping Labels y Boletas de Verificación permanecen intactos.
+
+## [0.0.1624] - 2026-09-22
+
+### Refactor (Auditoría Profunda y Blindaje Numérico Integral en Componentes, Páginas y Módulos)
+- **Blindaje Defensivo contra `NaN` y TypeErrors en `.toFixed()`:**
+  - Auditoría exhaustiva componente por componente a lo largo de toda la aplicación (`EditInvoiceModal`, `Invoices`, `InvoiceStatsBar`, `FilterBar`, `RoutesManagement`, `DriverRouteWizard`, `PackagesDataTable`, `Packages`, `CreatePackageModal`, `PackageInvoicesModal`, `PackageDetailsModal`, `ConsolidationManifests`, `ReturnedPackages`, `AddToConsolidationDialog`, `ConsolidationCustomerCard`, `KanbanPackageItem`, `EncomiendaManifests`, `EncomiendaCustomerCard`, `Nova`, `Scanner`, `EntregasAdminComponents`, `ManifestRow`, `ManifestDetailsModal`, `MovePackagesModal`).
+  - Cada operación de formateo numérico y cálculo fue envuelta en conversiones defensivas `Number(... || 0)`.
+- **Verificación Estricta en TypeScript y Node 22:**
+  - Typecheck estricto `tsc --noEmit` completado con 0 errores.
+  - Suite completa de pruebas ejecutada con éxito (186 suites / 2,459 pruebas pasando al 100% en Node 22 `v22.22.2`).
+- **Cero Regresiones Garantizadas:**
+  - Garantizada la estabilidad del ciclo de vida de trackings, consolidación transitoria, cálculo de impuestos/descuentos y renderizado de métricas financieras.
+
+## [0.0.1623] - 2026-09-22
+
+### Fixed (Soporte Unificado y Blindaje de Manifiestos Fusionados en ManifestPicker, Invoices, Rutas y Consolidación)
+- **ManifestPicker Unificado y Estado Deshabilitado (`ManifestPicker.tsx`):**
+  - Todos los sub-manifiestos fusionados en un MEGA-MAN ahora se muestran visualmente con el badge "Fusionado", texto tachado y estado deshabilitado (`aria-disabled`, `cursor-not-allowed`, checkbox disabled) impidiendo su selección individual errónea y guiando al operador a elegir el MEGA-MAN activo.
+- **Resolución Automática y Blindaje contra Falsos Positivos:**
+  - `ManifestPicker` resuelve de forma estricta los manifiestos fusionados validando que el target sea un string diferente al manifiesto mismo, evitando tachaduras indebidas en MEGA-MAN y manifiestos activos. Se alineó la vista de Consolidación (`ConsolidationManifests.tsx`, `ConsolidationFilters.tsx`) con el estándar visual de la aplicación.
+- **Soporte de Búsqueda y Suscripciones en Invoices y Rutas:**
+  - `Invoices.tsx` y `RoutesManagement.tsx` resuelven automáticamente `mergedInto`, `fusedManifests` y `fusedFrom` al consultar paquetes y facturas en Firestore, permitiendo que tanto filtros individuales como consolidados devuelvan la totalidad de datos correspondientes.
+- **Suite Completa de Pruebas Funcionales:**
+  - Creados tests funcionales dedicados en `ManifestPickerMergedFlows.spec.tsx`, `InvoicesMergedManifestFlows.spec.tsx` y `RoutesMergedManifestFlows.spec.tsx`.
+  - 186 suites de prueba pasando al 100% en Node 22 (2,459 tests) y `tsc --noEmit` sin errores.
+
+## [0.0.1622] - 2026-09-22
+
+### Fixed (Blindaje de Cálculo de Rutas y Jerarquía Estricta de Manifiesto para Consolidación Transitoria)
+- **Blindaje Defensivo en Gestión de Rutas (`RoutesManagement.tsx`):**
+  - Se envolvieron de forma segura todos los cálculos y conversiones numéricas en USD y CRC con `Number(...) || 0`, protegiendo la interfaz contra `NaN` y valores no definidos en montos, pesos y tipos de cambio.
+  - Se normalizó el ordenamiento por peso (`weight` / `peso`) y monto (`totalAmount` / `amount`).
+- **Jerarquía Estricta de Manifiesto en `isTransitoria` (`ingestion.ts`, `triggers.ts`, `useConsolidationData.ts`):**
+  - Implementada resolución jerárquica estricta (`manifestId` > `manifestNumber` > `manifiesto` > `updatedManifest`).
+  - Cuando un paquete tiene un manifiesto real asignado (ej. `18-09-2026DAN`), ya no es tratado como transitorio independientemente de valores históricos en `updatedManifest`, previniendo que paquetes pagados o despachados reaparezcan indebidamente en la vista de consolidación.
+- **Protección Numérica en Componentes de Consolidación y Modales:**
+  - Normalización defensiva con `Number(invoice.totalAmount || 0).toFixed(2)` en `ConsolidationInvoiceRow.tsx`, `KanbanCustomerCard.tsx`, `ManifestGroup.tsx`, `ManifestSectionCard.tsx`, `BulkMoveDialog.tsx` y `SendEmailDialog.tsx`.
+- **Suite de Pruebas de Integridad:**
+  - Cobertura con 6 pruebas exhaustivas en `is-transitoria-hierarchy.spec.ts` validando la jerarquía de manifiestos y la exclusión de paquetes reasignados.
+
 ## [0.0.1618] - 2026-09-21
 
 ### Fixed (Blindaje Numérico Defensivo en Previsualización de Facturas Nova)

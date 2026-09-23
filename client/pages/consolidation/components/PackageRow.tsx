@@ -142,11 +142,11 @@ export function PackageRow({ pkg, allManifestNumbers, onMoved, selected = false,
 
           {/* Bottom row: Description + Weight */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground mt-0.5">
-            {pkg.weight != null && pkg.weight > 0 && (
+            {Number(pkg.weight || 0) > 0 && (
               <span className="flex items-center gap-1.5 shrink-0" title="Peso (kg)">
                 <Weight className="h-3 w-3" aria-hidden />
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                  {pkg.weight.toFixed(2)} kg
+                  {Number(pkg.weight || 0).toFixed(2)} kg
                 </span>
               </span>
             )}
@@ -159,10 +159,10 @@ export function PackageRow({ pkg, allManifestNumbers, onMoved, selected = false,
 
         {/* Right side: Price & Actions */}
         <div className="flex items-center shrink-0 gap-2">
-          {pkg.price != null && pkg.price > 0 && (
+          {Number(pkg.price || 0) > 0 && (
             <div className="w-[60px] text-right">
               <span className="font-semibold text-sm text-foreground tabular-nums">
-                ${pkg.price.toFixed(2)}
+                ${Number(pkg.price || 0).toFixed(2)}
               </span>
             </div>
           )}
