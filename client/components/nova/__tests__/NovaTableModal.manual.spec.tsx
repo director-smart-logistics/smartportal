@@ -734,6 +734,58 @@ describe("NovaTableModal - Manual Validation and Interactive UI Specs", () => {
     expect(ingestedTrackings).not.toContain("TRK-CARTAGO");
   });
 
+  // Incident 26-09-2026DANP (BUG-TWIN-GROUP-NOT-PERSISTED): TBA334656337839
+  // (no SL code) is shown inside its same-name sibling's group (SL26519 Jose
+  // Brenes). Saving — with a route filter or a text filter — must persist it
+  // under SL26519 with the group's route, never as "sin cliente / sin ruta".
+  const joseBrenesRows = () => [
+    makeRow({ tracking: "1Z2357X30225317353", nombre: "JOSE BRENES", nombreCliente: "Jose Brenes", slCode: "SL26519", ruta: "San Jose Escazu" }),
+    makeRow({ tracking: "TBA334656337839", nombre: "JOSE BRENES", nombreCliente: "JOSE BRENES", slCode: "", ruta: "", matchScore: 0 }),
+    makeRow({ tracking: "TRK-CARTAGO", nombre: "OTRO CLIENTE", nombreCliente: "Otro Cliente", slCode: "SL200", ruta: "Cartago 1" }),
+  ];
+  const saveOnly = async () => {
+    fireEvent.click(screen.getByRole("button", { name: /Actualizar BD|Guardar en BD/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("confirm-save-only-btn"));
+    });
+    expect(ingestManifestToPackages).toHaveBeenCalled();
+    return (ingestManifestToPackages as any).mock.calls[0][0] as ManifestRow[];
+  };
+
+  it("twin row + route filter: the route batch includes the twin, saved under the group's SL and route", async () => {
+    (ingestManifestToPackages as any).mockClear();
+    render(<ResultSummary resultData={{ ...defaultResultData, loadedFromFirestore: true, rows: joseBrenesRows() }} embedMode={false} />);
+
+    const routeFilterTrigger = screen.getByLabelText("Filtrar por ruta");
+    fireEvent.click(routeFilterTrigger);
+    fireEvent.click(await within(routeFilterTrigger.parentElement as HTMLElement).findByText("San Jose Escazu"));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    const ingested = await saveOnly();
+    expect(ingested.map((r) => r.tracking).sort()).toEqual(["1Z2357X30225317353", "TBA334656337839"]);
+    const tba = ingested.find((r) => r.tracking === "TBA334656337839")!;
+    expect(tba.slCode).toBe("SL26519");
+    expect(tba.ruta).toBe("San Jose Escazu");
+  });
+
+  it("twin row + text filter: save persists the twin under the group's SL and route (text filter does not scope the save)", async () => {
+    (ingestManifestToPackages as any).mockClear();
+    render(<ResultSummary resultData={{ ...defaultResultData, loadedFromFirestore: true, rows: joseBrenesRows() }} embedMode={false} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Filtrar por tracking, nombre, cliente, ruta..."), { target: { value: "JOSE B" } });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    const ingested = await saveOnly();
+    expect(ingested.map((r) => r.tracking)).toContain("TRK-CARTAGO");
+    const tba = ingested.find((r) => r.tracking === "TBA334656337839")!;
+    expect(tba.slCode).toBe("SL26519");
+    expect(tba.ruta).toBe("San Jose Escazu");
+  });
+
   // 4. Skeleton Loader
   it("renders 5 skeleton rows in tbody when isFiltering is active, then replaces them with normal rows once debounced", async () => {
     const firestoreResultData = {

@@ -2463,6 +2463,71 @@ export const ResultSummary = memo(function ResultSummary({
     [slCodeOverrides, matchOverrides, unlinkedRows],
   );
 
+  // ── Row → group resolution (single source of truth) ──────────────────────
+  // AI GUARD: BUG-TWIN-GROUP-NOT-PERSISTED (2026-09-24). Which group a row
+  // belongs to must be decided ONCE, identically for: the grouped table
+  // (sortedGroups), the route filter, the batch save/invoice scope
+  // (routeScopedIngestRows) and persistence (buildResolvedRows — same twin
+  // rule in use-nova-resolved-rows.ts). Incident 26-09-2026DANP: a row with
+  // no SL code (TBA334656337839) was shown inside its same-name sibling's
+  // group (SL26519 Jose Brenes) but saved/billed as "sin cliente".
+  //   - real SL code (SL + digits), not unlinked → that SL
+  //   - no real SL, not unlinked, same-name sibling with a real SL → twin
+  //     (first such sibling in manifest order, over ALL non-deleted rows,
+  //     never the filtered view)
+  //   - otherwise → `__unmatched__${nameOverrides[idx] ?? row.nombre}`
+  const rowGroupInfo = useMemo(() => {
+    const REAL_SL = /^SL\d+$/i;
+    const directSl = (row: (typeof resultData.rows)[number], idx: number): string => {
+      if (unlinkedRows.has(idx)) return "";
+      const raw = (slCodeOverrides[idx]?.slCode || matchOverrides[idx]?.slCode || row.slCode || "").trim();
+      return REAL_SL.test(raw) ? raw.toUpperCase() : "";
+    };
+    const nameOf = (row: (typeof resultData.rows)[number], idx: number) => nameOverrides[idx] ?? row.nombre;
+    const firstSibling = new Map<string, number>();
+    resultData.rows.forEach((row, idx) => {
+      if (deletedIndices.has(idx)) return;
+      const key = (nameOf(row, idx) || "").trim().toUpperCase();
+      if (key && directSl(row, idx) && !firstSibling.has(key)) firstSibling.set(key, idx);
+    });
+    return resultData.rows.map((row, idx) => {
+      const sl = directSl(row, idx);
+      if (sl) return { groupKey: sl, slCode: sl, twinOf: undefined as number | undefined };
+      if (!unlinkedRows.has(idx)) {
+        const sIdx = firstSibling.get((nameOf(row, idx) || "").trim().toUpperCase());
+        if (sIdx !== undefined) {
+          const tsl = directSl(resultData.rows[sIdx], sIdx);
+          return { groupKey: tsl, slCode: tsl, twinOf: sIdx as number | undefined };
+        }
+      }
+      return { groupKey: `__unmatched__${nameOf(row, idx)}`, slCode: "", twinOf: undefined as number | undefined };
+    });
+  }, [resultData.rows, slCodeOverrides, matchOverrides, nameOverrides, unlinkedRows, deletedIndices]);
+
+  // Effective route of a row as the table shows it. Twin rows take their
+  // sibling's (group's) route. Used by the route filter AND the batch scope.
+  const effectiveRutaOf = useCallback(
+    (idx: number): string => {
+      const j = rowGroupInfo[idx]?.twinOf ?? idx;
+      const row = resultData.rows[j];
+      if (!row) return "";
+      const override = slCodeOverrides[j];
+      const effectiveSlCode = unlinkedRows.has(j)
+        ? ""
+        : override?.slCode || matchOverrides[j]?.slCode || row.slCode;
+      const effNombre = nameOverrides[j] ?? row.nombre;
+      const rk = effectiveSlCode || `__unmatched__${effNombre}`;
+      return (
+        rutaOverrides[rk] ??
+        rutaOverrides[`__unmatched__${row.nombre}`] ??
+        rutaOverrides[row.slCode] ??
+        (override?.ruta || row.ruta) ??
+        ""
+      );
+    },
+    [rowGroupInfo, resultData.rows, slCodeOverrides, matchOverrides, nameOverrides, rutaOverrides, unlinkedRows],
+  );
+
   const filteredIdxs = useMemo(
     () =>
       resultData.rows
@@ -2502,22 +2567,7 @@ export const ResultSummary = memo(function ResultSummary({
             if (!info || !info.found) return false;
           }
           if (debouncedRouteFilter) {
-            const override = slCodeOverrides[originalIdx];
-            // Mirror the same effectiveSlCode logic used in rendering (line ~1894)
-            const effectiveSlCode = unlinkedRows.has(originalIdx)
-              ? ""
-              : override?.slCode ||
-              matchOverrides[originalIdx]?.slCode ||
-              row.slCode;
-            const effNombre = nameOverrides[originalIdx] ?? row.nombre;
-            const rk = effectiveSlCode || `__unmatched__${effNombre}`;
-            const effectiveRuta =
-              rutaOverrides[rk] ??
-              rutaOverrides[`__unmatched__${row.nombre}`] ??
-              rutaOverrides[`__unmatched__${row.nombre}`] ??
-              rutaOverrides[row.slCode] ??
-              (override?.ruta || row.ruta) ??
-              "";
+            const effectiveRuta = effectiveRutaOf(originalIdx);
             if (debouncedRouteFilter === "__sin_ruta__") {
               if (effectiveRuta) return false;
             } else {
@@ -2563,6 +2613,7 @@ export const ResultSummary = memo(function ResultSummary({
       deletedIndices,
       manifestReassignedIndices,
       unlinkedRows,
+      effectiveRutaOf,
     ],
   );
 
@@ -2684,27 +2735,14 @@ export const ResultSummary = memo(function ResultSummary({
       // Reassigned rows are an explicit per-row admin action — always
       // honored regardless of the route filter currently on screen.
       if (manifestReassignedIndices.has(originalIdx)) return true;
-      const override = slCodeOverrides[originalIdx];
-      const effectiveSlCode = unlinkedRows.has(originalIdx)
-        ? ""
-        : override?.slCode ||
-          matchOverrides[originalIdx]?.slCode ||
-          row.slCode;
-      const effNombre = nameOverrides[originalIdx] ?? row.nombre;
-      const rk = effectiveSlCode || `__unmatched__${effNombre}`;
-      const effectiveRuta =
-        rutaOverrides[rk] ??
-        rutaOverrides[`__unmatched__${row.nombre}`] ??
-        rutaOverrides[row.slCode] ??
-        (override?.ruta || row.ruta) ??
-        "";
+      // Same effective route the table/filter shows (twin rows → group route).
+      const effectiveRuta = effectiveRutaOf(originalIdx);
       if (debouncedRouteFilter === "__sin_ruta__") return !effectiveRuta;
       return effectiveRuta === debouncedRouteFilter;
     });
   }, [
     debouncedRouteFilter, resultData.rows, deletedIndices,
-    manifestReassignedIndices, slCodeOverrides, matchOverrides,
-    nameOverrides, rutaOverrides, unlinkedRows,
+    manifestReassignedIndices, effectiveRutaOf,
   ]);
 
   // ── Partial-selection UI summary (BUG-PARTIAL-SELECTION 2026-04-28) ─────
@@ -3331,6 +3369,7 @@ export const ResultSummary = memo(function ResultSummary({
     priceAdjustments,
     loadedFromFirestore: resultData.loadedFromFirestore,
     preAlertsMap,
+    deletedIndices,
   });
 
   const resolvedRows = useMemo(
@@ -5626,44 +5665,12 @@ export const ResultSummary = memo(function ResultSummary({
       })
       : filtered
     ).forEach(({ row, originalIdx }) => {
-      const override = slCodeOverrides[originalIdx];
-      const matchOverride = matchOverrides[originalIdx];
-      const effNombreForKey = nameOverrides[originalIdx] ?? row.nombre;
-      // BUG-UNMATCHED-GROUP-KEY-RESOLVER 2026-08-18: Ensure ONLY real numeric SL codes (SL followed by digits, e.g. SL262073)
-      // are treated as global client identifiers for grouping. Generic pseudo-codes like 'SL-NAN', 'SL-TEMP', or 'sin registro'
-      // must NEVER merge different individuals together. Unregistered packages must be grouped by individual client name.
-      const directSlCodeRaw = unlinkedRows.has(originalIdx)
-        ? ""
-        : override?.slCode || matchOverride?.slCode || row.slCode || "";
-      const directSlCode = (directSlCodeRaw && /^SL\d+$/i.test(directSlCodeRaw.trim()))
-        ? directSlCodeRaw.trim().toUpperCase()
-        : "";
-
-      let twinSlCode = directSlCode;
-      if (!twinSlCode && !unlinkedRows.has(originalIdx)) {
-        const normName = effNombreForKey.trim().toUpperCase();
-        if (normName) {
-          const siblingObj = filtered.find(({ row: r, originalIdx: oIdx }) => {
-            if (unlinkedRows.has(oIdx)) return false;
-            const siblingName = (nameOverrides[oIdx] ?? r.nombre).trim().toUpperCase();
-            if (siblingName !== normName) return false;
-            const sSlCodeRaw = slCodeOverrides[oIdx]?.slCode || matchOverrides[oIdx]?.slCode || r.slCode;
-            const sSlCode = (sSlCodeRaw && /^SL\d+$/i.test(sSlCodeRaw.trim())) ? sSlCodeRaw.trim().toUpperCase() : "";
-            return !!sSlCode;
-          });
-          if (siblingObj) {
-            const sIdx = siblingObj.originalIdx;
-            const twinSlCodeRaw = slCodeOverrides[sIdx]?.slCode || matchOverrides[sIdx]?.slCode || resultData.rows[sIdx].slCode || "";
-            twinSlCode = (twinSlCodeRaw && /^SL\d+$/i.test(twinSlCodeRaw.trim())) ? twinSlCodeRaw.trim().toUpperCase() : "";
-          }
-        }
-      }
-
+      // BUG-UNMATCHED-GROUP-KEY-RESOLVER 2026-08-18 / BUG-TWIN-GROUP-NOT-PERSISTED
+      // 2026-09-24: group membership comes from rowGroupInfo (shared with the
+      // route filter, batch scope and persistence) — do not re-derive it here.
       const key = flatPesoSort
         ? `__flat_${originalIdx}`
-        : unlinkedRows.has(originalIdx)
-          ? `__unmatched__${effNombreForKey}`
-          : twinSlCode || `__unmatched__${effNombreForKey}`;
+        : rowGroupInfo[originalIdx].groupKey;
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push({ row, originalIdx });
     });
@@ -5876,6 +5883,8 @@ export const ResultSummary = memo(function ResultSummary({
     priceOverrides,
     computedPrices,
     tc,
+    deletedIndices,
+    rowGroupInfo,
   ]);
 
   // ── Available groups for "Move to existing group" feature ──────────────────

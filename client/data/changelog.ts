@@ -26,6 +26,33 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1636',
+    date: '2026-09-24',
+    layer: 'fe',
+    type: 'fix',
+    title: 'Nova: paquetes agrupados por nombre ahora se guardan con el cliente y la ruta del grupo',
+    description:
+      '1. **Incidente 26-09-2026DANP**: el paquete `TBA334656337839` (JOSE BRENES, sin código SL) aparecía dentro del grupo "Jose Brenes – SL26519" por tener el mismo nombre, pero al "Guardar en BD" quedaba *sin cliente / sin ruta* y se facturaba aparte.\\n' +
+      '2. **Guardado = pantalla (`use-nova-resolved-rows.ts`)**: un paquete sin código SL, no desvinculado, con un gemelo del mismo nombre con SL, se guarda y factura con el SL y la ruta de ese grupo. Los desvinculados explícitamente ("sin registro") no cambian.\\n' +
+      '3. **Una sola regla de agrupación (`NovaTableModal.tsx`)**: tabla, filtro por ruta y alcance del guardado/facturación por lote usan `rowGroupInfo`; el gemelo se busca en todas las filas no eliminadas (nunca en la vista filtrada), así que el lote de una ruta incluye al gemelo.\\n' +
+      '4. **Ruta de grupos sin cliente**: el guardado usa la misma clave de grupo que la tabla (`nameOverrides`), evitando perder la ruta cuando el nombre difiere en mayúsculas/espacios.\\n' +
+      '5. **Sin efectos colaterales**: los gemelos no alimentan el aprendizaje de rutas sin cliente; búsqueda de texto, precios, facturas protegidas y selección de filas sin cambios.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(nova): persist twin-grouped rows under the group SL and route (v0.0.1636)',
+  },
+  {
+    version: '0.0.1634',
+    date: '2026-09-23',
+    layer: 'fe',
+    type: 'fix',
+    title: 'Limpieza del Filtro de Manifiestos en Consolidación y Contador de Paquetes por Cliente',
+    description:
+      '1. **Filtro de Manifiestos Removido (`ConsolidationManifests.tsx`)**: Eliminado el selector "Todos los manifiestos" — era no funcional porque esta vista solo muestra paquetes en `consolidacion_transitoria` (un único bucket virtual), por lo que filtrar por manifiesto real nunca cambiaba el resultado. Se eliminó también el estado y los cálculos derivados que solo alimentaban ese filtro.\\n' +
+      '2. **Contador de Paquetes por Cliente (`ConsolidationCustomerCard.tsx`)**: Se agregó un badge con la cantidad de paquetes justo al lado del nombre de cada cliente en el encabezado del panel, agrupado dentro de un contenedor flex compartido para que quede pegado al nombre (con truncado) en vez de desplazarse al extremo derecho del renglón.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(consolidation): remove dead manifest filter, show package count per client (v0.0.1634)',
+  },
+  {
     version: '0.0.1633',
     date: '2026-09-23',
     layer: 'fe',

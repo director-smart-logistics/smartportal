@@ -2,6 +2,21 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1636] - 2026-09-24
+
+### Fixed (Nova: paquetes agrupados por nombre no se guardaban con el cliente del grupo)
+- **Incidente 26-09-2026DANP:** el paquete `TBA334656337839` (JOSE BRENES, sin código SL) se mostraba dentro del grupo "Jose Brenes – SL26519" por tener el mismo nombre, pero al "Guardar en BD" se persistía como *sin cliente / sin ruta* y se facturaba aparte (`SR-20260924162755248`).
+- **Guardado = pantalla (`use-nova-resolved-rows.ts`):** un paquete sin código SL, no desvinculado, con un gemelo del mismo nombre que sí tiene SL, se guarda y factura con el SL y la ruta de ese grupo. Los paquetes desvinculados explícitamente ("sin registro") no cambian.
+- **Una sola regla de agrupación (`NovaTableModal.tsx`):** tabla, filtro por ruta y alcance del guardado/facturación por lote usan `rowGroupInfo`. El gemelo se busca en todas las filas no eliminadas, nunca en la vista filtrada, así que el lote de una ruta incluye al paquete gemelo de ese grupo.
+- **Ruta de grupos sin cliente:** el guardado busca la ruta con la misma clave de grupo que usa la tabla (`nameOverrides`), evitando que se pierda cuando el nombre difiere en mayúsculas/espacios.
+- **Sin efectos colaterales:** los gemelos no alimentan el aprendizaje de rutas de paquetes sin cliente; búsqueda de texto, precios, facturas protegidas y selección de filas sin cambios. Tests de componente reproducen el incidente (filtro por ruta y por texto).
+
+## [0.0.1634] - 2026-09-23
+
+### Fixed (Limpieza del Filtro de Manifiestos en Consolidación y Contador de Paquetes por Cliente)
+- **Filtro de Manifiestos Removido (`ConsolidationManifests.tsx`):** Eliminado el selector "Todos los manifiestos", que era no funcional — esta vista solo muestra paquetes en `consolidacion_transitoria` (un único bucket virtual), por lo que filtrar por manifiesto real nunca cambiaba el resultado. Se eliminó el estado `selectedManifests`, el cálculo `manifestPackageCounts` y la rama de filtrado asociada.
+- **Contador de Paquetes por Cliente (`ConsolidationCustomerCard.tsx`):** Añadido un badge con la cantidad de paquetes justo al lado del nombre de cada cliente en el encabezado del panel, agrupado en un contenedor flex compartido para que quede pegado al nombre en vez de desplazarse al extremo derecho del renglón.
+
 ## [0.0.1633] - 2026-09-23
 
 ### Feat & Hardening (Traslado Directo a Consolidación Transitoria, Ingesta Acotada por Ruta y Protección de Rutas)

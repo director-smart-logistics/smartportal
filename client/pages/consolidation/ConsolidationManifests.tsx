@@ -41,7 +41,6 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { ManifestPicker, type ManifestCategory } from '@/components/manifest/ManifestPicker';
 
 // ── Data & services ────────────────────────────────────────────────────────────
 import { useConsolidationData } from './components/useConsolidationData';
@@ -83,7 +82,6 @@ export default function ConsolidationManifests() {
 
   // ── Filters ──────────────────────────────────────────────────────────────────
   const [search, setSearch]                         = useState('');
-  const [selectedManifests, setSelectedManifests]   = useState<Set<string>>(new Set());
 
   const [groupBy, setGroupBy]                       = useState<GroupByMode>('customer');
   const [showAuditDialog, setShowAuditDialog]       = useState(false);
@@ -409,14 +407,10 @@ export default function ConsolidationManifests() {
 
   const filteredSections = useMemo(() => {
     const q  = search.trim().toLowerCase();
-    const mf = selectedManifests;
 
     return customerSections
       .map(section => {
         let groups = section.manifestGroups;
-
-        // Manifest filter
-        if (mf.size > 0) groups = groups.filter(g => mf.has(g.manifestNumber));
 
         // ── Exclude fully-resolved customers ───────────────────────────
         // A customer is "resolved" when they have nothing actionable:
@@ -507,7 +501,7 @@ export default function ConsolidationManifests() {
         };
       })
       .filter((s): s is NonNullable<typeof s> => s !== null);
-  }, [customerSections, search, selectedManifests, TERMINAL_STATUSES]);
+  }, [customerSections, search, TERMINAL_STATUSES]);
 
   // ── Derived stats ────────────────────────────────────────────────────────────
   const totalPackages = useMemo(
@@ -519,17 +513,6 @@ export default function ConsolidationManifests() {
       s + cs.manifestGroups.reduce((gs, g) => gs + g.invoices.length, 0), 0),
     [filteredSections]
   );
-
-  /** Package count per manifest — used in the typeahead filter */
-  const manifestPackageCounts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const section of customerSections) {
-      for (const group of section.manifestGroups) {
-        map.set(group.manifestNumber, (map.get(group.manifestNumber) || 0) + group.packages.length);
-      }
-    }
-    return map;
-  }, [customerSections]);
 
   // ── Manifest-grouped view ─────────────────────────────────────────────────────
   const manifestViewSections = useMemo((): ManifestViewSection[] => {
@@ -930,17 +913,6 @@ export default function ConsolidationManifests() {
                 )}
 
                 <div className="shrink-0">
-                  <ManifestPicker
-                    id="consolidation-manifest-filter"
-                    allManifestNumbers={allManifestNumbers}
-                    selectedManifests={selectedManifests}
-                    onManifestsChange={setSelectedManifests}
-                    manifestPackageCounts={manifestPackageCounts}
-                    triggerClassName="h-10 px-3.5 text-xs font-semibold rounded-lg shadow-sm w-full sm:w-auto sm:min-w-[220px]"
-                  />
-                </div>
-
-                <div className="shrink-0">
                   <Button
                     variant="outline"
                     size="sm"
@@ -1021,7 +993,7 @@ export default function ConsolidationManifests() {
               <Package className="h-10 w-10 opacity-30" aria-hidden />
               <div className="text-center space-y-2 max-w-md px-4">
                 <p className="text-sm font-medium text-foreground">
-                  {search || selectedManifests.size > 0
+                  {search
                     ? 'Sin resultados para los filtros aplicados.'
                     : 'No hay facturas de consolidación activas.'}
                 </p>

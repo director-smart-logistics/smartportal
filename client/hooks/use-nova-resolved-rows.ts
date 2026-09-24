@@ -51,6 +51,8 @@ interface UseNovaResolvedRowsParams {
   priceAdjustments?: Record<string, AjustePrecio>;
   loadedFromFirestore?: boolean;
   preAlertsMap?: Map<string, any>;
+  /** Rows removed from the table — never used as a twin sibling. */
+  deletedIndices?: Set<number>;
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
@@ -72,6 +74,7 @@ export function useNovaResolvedRows({
   priceAdjustments = {},
   loadedFromFirestore = false,
   preAlertsMap,
+  deletedIndices,
 }: UseNovaResolvedRowsParams) {
 
   /**
@@ -85,7 +88,7 @@ export function useNovaResolvedRows({
     );
 
     // ── Helper: resolve effective slCode for any row index ────────────────────
-    const getEffSlCode = (row: ManifestRow, idx: number): string => {
+    const getBaseSlCode = (row: ManifestRow, idx: number): string => {
       // BUG-RESOLVED-ROWS-SLCODE-FILTER: Only accept valid slCodes starting with 'SL'
       // to prevent route fallbacks from leaking into client identifier slots.
       const baseRaw = unlinkedRows.has(idx) ? '' : (slCodeOverrides[idx]?.slCode
@@ -93,6 +96,40 @@ export function useNovaResolvedRows({
         ?? (row.slCode || ''));
       return (baseRaw && baseRaw.toUpperCase().startsWith('SL')) ? baseRaw : '';
     };
+
+    // ── Twin resolution (BUG-TWIN-GROUP-NOT-PERSISTED 2026-09-24) ─────────────
+    // NovaTableModal's sortedGroups shows a row with no real SL code (and not
+    // unlinked) INSIDE the group of a same-name sibling that has one ("twin").
+    // The operator sees it as part of that customer — same header, same route,
+    // "2 paq." — but persistence used to keep slCode '' so the save wrote
+    // "sin cliente / sin ruta" (incident 26-09-2026DANP: TBA334656337839 shown
+    // under SL26519 Jose Brenes, saved unlinked). Mirror the exact display rule
+    // here so what is saved is what is on screen. Keep in sync with the
+    // `twinSlCode` block in NovaTableModal.tsx sortedGroups. Both sides look
+    // at ALL non-deleted rows — never the filtered view — so a text/route
+    // filter can't change which customer a row is saved under.
+    const REAL_SL = /^SL\d+$/i;
+    const nameKey = (row: ManifestRow, idx: number) =>
+      (nameOverrides[idx] ?? row.nombre ?? '').trim().toUpperCase();
+    const twinByName = new Map<string, { slCode: string; ruta: string }>();
+    resultDataRows.forEach((r, i) => {
+      if (unlinkedRows.has(i) || deletedIndices?.has(i)) return;
+      const sl = getBaseSlCode(r, i).trim();
+      const key = nameKey(r, i);
+      if (!key || !REAL_SL.test(sl) || twinByName.has(key)) return;
+      twinByName.set(key, {
+        slCode: sl.toUpperCase(),
+        ruta: slCodeOverrides[i]?.ruta || matchOverrides[i]?.ruta || r.ruta || '',
+      });
+    });
+    const getTwin = (row: ManifestRow, idx: number) => {
+      if (idx < 0 || unlinkedRows.has(idx)) return undefined;
+      if (REAL_SL.test(getBaseSlCode(row, idx).trim())) return undefined;
+      return twinByName.get(nameKey(row, idx));
+    };
+
+    const getEffSlCode = (row: ManifestRow, idx: number): string =>
+      getTwin(row, idx)?.slCode ?? getBaseSlCode(row, idx);
 
     // ── Pass 1: pre-compute consolidated group totals ─────────────────────────
     // Group by effective slCode for all non-permit rows where consolidation is active
@@ -177,7 +214,19 @@ export function useNovaResolvedRows({
         ? undefined
         : (effSlCode ? customerContactMap?.get(effSlCode.toUpperCase())?.ruta : undefined);
 
-      const effRuta   = rutaOverrides[effSlCode]
+      // BUG-UNMATCHED-ROUTE-KEY (2026-09-24): the table's route picker writes
+      // unmatched-group routes under the GROUP key, which is built from
+      // `nameOverrides[idx] ?? row.nombre` (reloaded manifests seed
+      // nameOverrides with the uppercased saved name). Looking up only the
+      // raw `row.nombre` missed the override whenever the two differed, so
+      // the UI showed the route but "Guardar en BD" persisted ruta: ''.
+      // Twin rows (see getTwin) live under the sibling's group on screen, so
+      // they take that group's route — never an __unmatched__ key.
+      const twin = getTwin(row, idx);
+      const effRuta   = twin
+        ? (rutaOverrides[effSlCode] ?? dbDefaultRoute ?? twin.ruta)
+        : rutaOverrides[effSlCode]
+        ?? rutaOverrides[`__unmatched__${nameOverrides[idx] ?? row.nombre}`]
         ?? rutaOverrides[`__unmatched__${row.nombre}`]
         ?? rutaOverrides[row.slCode ?? '']
         ?? dbDefaultRoute
@@ -269,7 +318,7 @@ export function useNovaResolvedRows({
         originalIndex: idx
       };
     });
-  }, [resultDataRows, slCodeOverrides, matchOverrides, rutaOverrides, nameOverrides, priceOverrides, pesoOverrides, computedPrices, unlinkedRows, manifestCountry, manifestShipping, separateInvoices, priceAdjustments, customerContactMap, loadedFromFirestore, preAlertsMap]);
+  }, [resultDataRows, slCodeOverrides, matchOverrides, rutaOverrides, nameOverrides, priceOverrides, pesoOverrides, computedPrices, unlinkedRows, manifestCountry, manifestShipping, separateInvoices, priceAdjustments, customerContactMap, loadedFromFirestore, preAlertsMap, deletedIndices]);
 
   /**
    * Persist unmatched-row route choices so Nova can pre-fill them on future
@@ -281,7 +330,9 @@ export function useNovaResolvedRows({
       const idx = resultDataRows.indexOf(origRow);
       const hasManualSlCode = !!slCodeOverrides[idx]?.slCode || !!matchOverrides[idx]?.slCode;
       const wasUnmatched = !origRow.slCode && !hasManualSlCode;
-      if (wasUnmatched && resolvedRow.ruta) {
+      // Twin rows resolve to their group's SL (BUG-TWIN-GROUP-NOT-PERSISTED) —
+      // they are no longer unmatched, so don't teach the unmatched-name cache.
+      if (wasUnmatched && !resolvedRow.slCode && resolvedRow.ruta) {
         saveUnmatchedRouteLearning(origRow.nombre, resolvedRow.ruta).catch(() => {});
       }
     });

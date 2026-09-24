@@ -892,8 +892,17 @@ export function ConsolidationCustomerCard({
           <span className="text-[10px] font-mono text-muted-foreground bg-background border border-border/60 px-1.5 py-0.5 rounded shrink-0">
             {customer.slCode || "\u2014"}
           </span>
-          <span className="text-sm font-semibold text-foreground truncate flex-1">
-            {customer.fullName?.toUpperCase()}
+          <span className="flex items-center gap-1.5 min-w-0 flex-1">
+            <span className="text-sm font-semibold text-foreground truncate">
+              {customer.fullName?.toUpperCase()}
+            </span>
+            <span
+              className="inline-flex items-center gap-1 text-[10px] font-mono font-semibold text-muted-foreground bg-background border border-border/60 px-1.5 py-0.5 rounded shrink-0"
+              title={`${totalPackages} ${totalPackages === 1 ? 'paquete' : 'paquetes'}`}
+            >
+              <Package className="h-2.5 w-2.5 shrink-0" aria-hidden />
+              {totalPackages}
+            </span>
           </span>
         </button>
 
