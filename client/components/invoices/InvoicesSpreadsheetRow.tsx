@@ -345,6 +345,7 @@ export const InvoicesSpreadsheetRow = React.memo(function InvoicesSpreadsheetRow
             description={""}
             permisos={hasPermits}
             manifests={manifests}
+            invoiceId={invoice.id}
             triggerClassName="w-full h-full px-3 py-2 text-xs font-mono text-gray-700 bg-transparent hover:bg-gray-100/60 focus:z-10 focus:ring-1 focus:ring-blue-500 rounded-none shadow-none text-left truncate cursor-pointer flex items-center justify-start transition-colors"
           />
         </div>

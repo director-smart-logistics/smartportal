@@ -95,6 +95,7 @@ function buildResolved(
     priceAdjustments?: Record<string, AjustePrecio>;
     customerContactMap?: Map<string, any>;
     preAlertsMap?: Map<string, any>;
+    loadedFromFirestore?: boolean;
   } = {},
 ) {
   const { result } = renderHook(() =>
@@ -114,6 +115,7 @@ function buildResolved(
       priceAdjustments:  params.priceAdjustments  ?? {},
       customerContactMap: params.customerContactMap,
       preAlertsMap:       params.preAlertsMap,
+      loadedFromFirestore: params.loadedFromFirestore,
     })
   );
   return result.current.buildResolvedRows(rows);
@@ -258,6 +260,45 @@ describe('useNovaResolvedRows — route resolution', () => {
     });
     expect(out[0].ruta).toBe('Heredia');
   });
+
+  // ── loadedFromFirestore immunity (incident 2026-09-23 / BUG-ROUTE-AUTOCORRECT) ──
+  //
+  // Regression note: an unrelated ingest-scope fix stripped the guard below
+  // without a test catching it, because no test in this repo actually
+  // exercised `buildResolvedRows` with `loadedFromFirestore: true` and a
+  // diverging `customerContactMap` — the closest coverage
+  // (manifest-reopen-immunity.spec.ts) only asserted static policy
+  // constants and self-referential literals, never real hook output. These
+  // three tests close that gap: they MUST fail if the guard in
+  // use-nova-resolved-rows.ts (search "BUG-ROUTE-AUTOCORRECT") is ever
+  // removed or weakened again.
+  it('loadedFromFirestore=true + no session override: keeps the SAVED row.ruta even when the customer profile route has since changed (mandatory — reopening a saved manifest must never auto-correct)', () => {
+    const rows = [makeRow({ tracking: 'T1', slCode: 'SL1', ruta: 'Cartago 1' })];
+    const out = buildResolved(rows, {
+      loadedFromFirestore: true,
+      customerContactMap: new Map([['SL1', { ruta: 'Heredia Centro', fullName: 'Cliente X' }]]),
+    });
+    expect(out[0].ruta).toBe('Cartago 1');
+  });
+
+  it('loadedFromFirestore=false (fresh parse): customer profile route DOES apply as the default when the row has no ruta yet', () => {
+    const rows = [makeRow({ tracking: 'T1', slCode: 'SL1', ruta: '' })];
+    const out = buildResolved(rows, {
+      loadedFromFirestore: false,
+      customerContactMap: new Map([['SL1', { ruta: 'Heredia Centro', fullName: 'Cliente X' }]]),
+    });
+    expect(out[0].ruta).toBe('Heredia Centro');
+  });
+
+  it('loadedFromFirestore=true BUT the operator explicitly reassigned the SL code this session: the new customer\'s live route is a sane default again (isSlCodeOverridden bypasses the freeze)', () => {
+    const rows = [makeRow({ tracking: 'T1', slCode: 'SL-OLD', ruta: 'Cartago 1' })];
+    const out = buildResolved(rows, {
+      loadedFromFirestore: true,
+      slCodeOverrides: { 0: { slCode: 'SL1', ruta: '' } },
+      customerContactMap: new Map([['SL1', { ruta: 'Heredia Centro', fullName: 'Cliente X' }]]),
+    });
+    expect(out[0].ruta).toBe('Heredia Centro');
+  });
 });
 
 describe('useNovaResolvedRows — price/peso baked overrides', () => {
@@ -370,6 +411,71 @@ describe('useNovaResolvedRows — round-trip stability', () => {
     expect(passTwo[0].slCode).toBe('SL3521');
     expect(passTwo[0].nombreCliente).toBe('ANA PAULA FONSECA QUADROS');
     expect(passTwo[0].ruta).toBe('San Jose Centro');
+  });
+
+  // ── DATA INTEGRITY GUARANTEE (2026-09-23) ──────────────────────────────
+  // Direct test of the invariant: "lo que el admin guardó no se altera al
+  // reabrir el modal con datos de Firestore" — even when the customer's
+  // live profile has since drifted to a DIFFERENT route/name than what was
+  // saved. This is the adversarial case the "round-trip preserves all
+  // fields" test above does NOT cover (it never sets loadedFromFirestore or
+  // a diverging customerContactMap) — this test closes that gap explicitly.
+  it('SAVE → REOPEN integrity: a saved manifest reloaded from Firestore shows EXACTLY what was saved, even when the customer\'s live profile route/name have since changed', () => {
+    // Pass 1 — fresh parse, operator links the row to a customer and saves.
+    const raw = [makeRow({ tracking: 'T1', nombre: 'PAULA UMANA', slCode: '' })];
+    const saved = buildResolved(raw, {
+      matchOverrides: { 0: { slCode: 'SL3521', fullName: 'ANA PAULA FONSECA QUADROS', ruta: 'San Jose Centro' } },
+    })[0];
+
+    expect(saved.ruta).toBe('San Jose Centro');
+    expect(saved.slCode).toBe('SL3521');
+
+    // Simulate what's now sitting in Firestore: exactly the saved row, no
+    // more, no less. This is what loadMegaManFromFirestore would return.
+    const reloadedRow = makeRow({
+      tracking: saved.tracking,
+      slCode: saved.slCode,
+      nombreCliente: saved.nombreCliente,
+      ruta: saved.ruta,
+      nombre: saved.nombre,
+    });
+
+    // Pass 2 — REOPEN. loadedFromFirestore=true, zero overrides this
+    // session (fresh mount), and — the adversarial part — the customer's
+    // LIVE profile now says a DIFFERENT route AND a different name than
+    // what was saved (e.g. admin edited the customer in Customer
+    // Collection after this manifest was saved).
+    const reopened = buildResolved([reloadedRow], {
+      loadedFromFirestore: true,
+      customerContactMap: new Map([
+        ['SL3521', { ruta: 'Heredia Centro', fullName: 'OTRO NOMBRE DISTINTO' }],
+      ]),
+    })[0];
+
+    // ROUTE and slCode: the saved values win — live profile drift must NOT leak in.
+    expect(reopened.ruta).toBe('San Jose Centro');
+    expect(reopened.slCode).toBe('SL3521');
+    // NAME is the ONE field that intentionally does NOT freeze on reopen —
+    // this is a pre-existing, deliberate contract (customer-name.ts, predates
+    // this session), NOT a gap in this session's route-preservation fix.
+    // resolveEffectiveCustomerName's documented priority is explicit:
+    // "2. Official registered customer profile" outranks
+    // "4. Saved customer name on row/document" by design, specifically to
+    // stop stale/incorrect names (typos, pre-alert placeholders) from
+    // persisting forever on invoices once the customer's real record is
+    // corrected. Route has the opposite contract because it's tied to
+    // billing/logistics decisions already made at save time, not a display
+    // string — see client/lib/utils/customer-name.ts's file-level doc.
+    expect(reopened.nombreCliente).toBe('OTRO NOMBRE DISTINTO');
+  });
+
+  it('SAVE → REOPEN integrity: the SAME drifted-profile scenario, but WITHOUT loadedFromFirestore (fresh parse) — the live profile route DOES apply, proving the guard is scoped correctly, not just "always ignore customerContactMap"', () => {
+    const row = makeRow({ tracking: 'T1', slCode: 'SL3521', ruta: '', nombreCliente: '' });
+    const out = buildResolved([row], {
+      loadedFromFirestore: false,
+      customerContactMap: new Map([['SL3521', { ruta: 'Heredia Centro', fullName: 'Cliente Real' }]]),
+    })[0];
+    expect(out.ruta).toBe('Heredia Centro');
   });
 });
 

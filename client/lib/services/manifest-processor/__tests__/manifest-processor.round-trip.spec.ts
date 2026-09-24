@@ -738,7 +738,28 @@ describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection
     expect(trackings).not.toContain('TRK-MOVED');
   });
 
-  it('ingestManifestToPackages RESTORES packages from consolidacion_transitoria back to active manifest', async () => {
+  // ── TRANSITORIA PROTECTION GUARD (Gap #3 / Gap #4, incident 2026-09-23) ─────
+  //
+  // AUDIT NOTE: the three tests below originally asserted that reclaiming a
+  // package from consolidacion_transitoria succeeds merely because
+  // `row.manifiesto === manifestNumber` — with NO `rowManifestOverrides`.
+  // That contract was never actually enforceable: the guard in both
+  // ingestManifestToPackages and upsertManifestPackageOverrides only reads
+  // `options.rowManifestOverrides`, never `row.manifiesto` — so these three
+  // tests were FAILING before this fix (verified: 2 were already broken
+  // from Gap #3 alone, a 3rd broke identically the moment the mirrored
+  // guard was added to upsertManifestPackageOverrides for Gap #4). Nobody
+  // had run this file since the guard was introduced.
+  //
+  // Worse, the contract itself was wrong: if `row.manifiesto === manifestNumber`
+  // were enough to reclaim, the guard would be a no-op for the exact case it
+  // exists to prevent — auto-save calls both functions with the operator's
+  // current resultData.rows, whose `row.manifiesto` is essentially ALWAYS
+  // equal to the manifest being saved. Fixed here to require the explicit
+  // `rowManifestOverrides` entry that only the "Cambiar manifiesto" picker
+  // action populates — matching every other reclamation path in this file
+  // (see "ALLOWS write when rowManifestOverrides is explicitly provided").
+  it('ingestManifestToPackages RESTORES packages from consolidacion_transitoria back to active manifest — ONLY with an explicit rowManifestOverrides entry', async () => {
     firestoreState.packagesDocsMap.set('TRK-TRANSITORIA', {
       manifestNumber: 'consolidacion_transitoria',
       isConsolidated: true,
@@ -754,7 +775,9 @@ describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection
       consolidacion: false,
     });
 
-    const result = await ingestManifestToPackages([row], '18-09-2026DAN');
+    const result = await ingestManifestToPackages([row], '18-09-2026DAN', {
+      rowManifestOverrides: { 'TRK-TRANSITORIA': '18-09-2026DAN' },
+    });
     expect(result.updated).toBe(1);
     expect(firestoreState.batchSetCalls.length).toBe(1);
     const savedData = firestoreState.batchSetCalls[0].data;
@@ -764,7 +787,27 @@ describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection
     expect(savedData.consolidacion).toBe(false);
   });
 
-  it('upsertManifestPackageOverrides RESTORES packages from consolidacion_transitoria back to active manifest', async () => {
+  it('ingestManifestToPackages SKIPS a consolidacion_transitoria package with NO explicit override — even when row.manifiesto matches the target (the exact auto-save race Gap #4 protects against)', async () => {
+    firestoreState.packagesDocsMap.set('TRK-TRANSITORIA-NOOVERRIDE', {
+      manifestNumber: 'consolidacion_transitoria',
+      isConsolidated: true,
+      consolidacion: true,
+      slCode: 'SL338',
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-TRANSITORIA-NOOVERRIDE',
+      manifiesto: '18-09-2026DAN', // matches the target — must NOT be enough on its own
+      slCode: 'SL338',
+    });
+
+    const result = await ingestManifestToPackages([row], '18-09-2026DAN');
+    expect(result.skipped).toBe(1);
+    expect(result.updated).toBe(0);
+    expect(firestoreState.batchSetCalls.length).toBe(0);
+  });
+
+  it('upsertManifestPackageOverrides RESTORES packages from consolidacion_transitoria back to active manifest — ONLY with an explicit rowManifestOverrides entry', async () => {
     firestoreState.packagesDocsMap.set('TRK-TRANSITORIA-2', {
       manifestNumber: 'consolidacion_transitoria',
       isConsolidated: true,
@@ -779,7 +822,9 @@ describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection
       consolidacion: false,
     });
 
-    const result = await upsertManifestPackageOverrides([row], '18-09-2026DAN');
+    const result = await upsertManifestPackageOverrides([row], '18-09-2026DAN', {
+      rowManifestOverrides: { 'TRK-TRANSITORIA-2': '18-09-2026DAN' },
+    });
     expect(result.updated).toBe(1);
     expect(firestoreState.batchSetCalls.length).toBe(1);
     const savedData = firestoreState.batchSetCalls[0].data;
@@ -789,7 +834,30 @@ describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection
     expect(savedData.consolidacion).toBe(false);
   });
 
-  it('ingestManifestToPackages PRESERVES consolidacion=true if explicitly marked consolidated when moving from consolidacion_transitoria', async () => {
+  it('upsertManifestPackageOverrides SKIPS a consolidacion_transitoria package with NO explicit override — this is the exact auto-save call shape (no rowManifestOverrides is ever passed)', async () => {
+    firestoreState.packagesDocsMap.set('TRK-TRANSITORIA-2-NOOVERRIDE', {
+      manifestNumber: 'consolidacion_transitoria',
+      isConsolidated: true,
+      consolidacion: true,
+      slCode: 'SL338',
+    });
+
+    const row = makeRow({
+      tracking: 'TRK-TRANSITORIA-2-NOOVERRIDE',
+      manifiesto: '18-09-2026DAN',
+      slCode: 'SL338',
+    });
+
+    // Mirrors use-nova-auto-save.ts's actual call shape: no rowManifestOverrides.
+    const result = await upsertManifestPackageOverrides([row], '18-09-2026DAN', {
+      customerContacts: new Map(),
+    });
+    expect(result.updated).toBe(0);
+    expect(result.skippedNew).toBe(1);
+    expect(firestoreState.batchSetCalls.length).toBe(0);
+  });
+
+  it('ingestManifestToPackages PRESERVES consolidacion=true if explicitly marked consolidated when moving from consolidacion_transitoria (with explicit override)', async () => {
     firestoreState.packagesDocsMap.set('TRK-TRANSITORIA-CONS', {
       manifestNumber: 'consolidacion_transitoria',
       isConsolidated: true,
@@ -805,7 +873,9 @@ describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection
       consolidacion: true,
     });
 
-    const result = await ingestManifestToPackages([row], '18-09-2026DAN');
+    const result = await ingestManifestToPackages([row], '18-09-2026DAN', {
+      rowManifestOverrides: { 'TRK-TRANSITORIA-CONS': '18-09-2026DAN' },
+    });
     expect(result.updated).toBe(1);
     expect(firestoreState.batchSetCalls.length).toBe(1);
     const savedData = firestoreState.batchSetCalls[0].data;

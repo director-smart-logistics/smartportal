@@ -4,6 +4,23 @@
  * Automated regression test suite to guarantee that opening or re-opening a saved manifest
  * NEVER triggers automatic route overwrites on customer master profiles (`customers/{slCode}`),
  * and NEVER triggers automatic background auto-save.
+ *
+ * ─── AUDIT NOTE (2026-09-23, incident BUG-ROUTE-AUTOCORRECT) ───────────────────
+ * Most of the tests below only assert static `FIRESTORE_POLICY` constants or
+ * self-referential local literals (e.g. `expect(row.ruta).toBe('Cartago 1')`
+ * where `row.ruta` was hardcoded to `'Cartago 1'` two lines above, in the
+ * SAME test) — they never render/call the real hook or component. That is
+ * exactly why a regression that stripped the `loadedFromFirestore` route
+ * guard from `use-nova-resolved-rows.ts` and `NovaTableModal.tsx` shipped
+ * uncaught: this file was green throughout.
+ *
+ * The REAL regression coverage for the route-preservation invariant lives
+ * in `client/hooks/__tests__/use-nova-resolved-rows.spec.ts` — describe
+ * block "route resolution", tests tagged "loadedFromFirestore immunity" —
+ * which actually calls `buildResolvedRows` with `loadedFromFirestore: true`
+ * and a diverging `customerContactMap` and asserts the resolved output.
+ * Do not treat a passing run of THIS file as proof the invariant holds;
+ * treat it as a (necessary but insufficient) contract-shape check.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -15,6 +32,7 @@ describe('Manifest Re-Open Immunity & Auto-Save Disabling Test Suite', () => {
     expect(FIRESTORE_POLICY.allowAutoDivergentRematch).toBe(false);
     expect(FIRESTORE_POLICY.allowAutoPreAlertAssign).toBe(false);
     expect(FIRESTORE_POLICY.allowAutoLearnedRoute).toBe(false);
+    expect(FIRESTORE_POLICY.allowAutoCustomerRouteFill).toBe(false);
   });
 
   it('guarantees updateCustomerRuta is NEVER called automatically when loading a saved manifest', async () => {

@@ -26,6 +26,61 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   // ── ADD NEW ENTRIES AT THE TOP ──────────────────────────────────────────────
   {
+    version: '0.0.1633',
+    date: '2026-09-23',
+    layer: 'fe',
+    type: 'feature',
+    title: 'Traslado Directo a Consolidación Transitoria, Ingesta Acotada por Ruta y Protección de Rutas Reabiertas',
+    description:
+      '1. **Traslado a Consolidación Transitoria (`PackageManifestEditor.tsx`)**: Opción directa en celda de manifiesto para enviar paquetes a consolidación transitoria. Si el paquete posee factura, un diálogo de confirmación enumera los paquetes hermanos y anula la factura reubicando todos en una sola mutación atómica.\\n' +
+      '2. **Cascada a Nova Learning (`match-learning.ts`, `customer-sync.ts`)**: Sincronización inmediata de cambios de ruta de clientes hacia `match_feedback.ruta` y depuración de cachés en memoria.\\n' +
+      '3. **Preservación de Rutas en Manifiestos Reabiertos (`NovaTableModal.tsx`, `types.ts`)**: Centralización de `allowAutoCustomerRouteFill` en `DataOriginPolicy` y badge de drift para prevenir sobreescrituras automáticas.\\n' +
+      '4. **Ingesta Acotada por Filtro de Ruta (`NovaTableModal.tsx`, `ingestion.ts`)**: La facturación por filtros de ruta ahora solo ingesta los paquetes filtrados evitando re-facturaciones accidentales.\\n' +
+      '5. **Estabilidad y Mutaciones en Consolidación (`consolidation-carry-on-service.ts`, `useConsolidationData.ts`)**: Límite de 200 paquetes por lote de carry-on, eliminación de facturas duplicadas y debounce de 50ms para coalescencia de eventos Firestore.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'feat(packages): move package to Consolidación Transitoria from manifest cell and route protection hardening (v0.0.1633)',
+  },
+  {
+    version: '0.0.1632',
+    date: '2026-09-23',
+    layer: 'fe',
+    type: 'fix',
+    title: 'Resolución de Día 1 en Manifiesto de Consolidación ante Multi-Anulación de Facturas',
+    description:
+      '1. **Corrección Math.min -> Math.max (`ConsolidationCustomerCard.tsx`)**: En clientes con múltiples ciclos de facturación y anulaciones sucesivas, la fecha base toma la última factura emitida/anulada, evitando acumular días erróneamente desde ciclos antiguos.\\n' +
+      '2. **Alineación de latestCycleStart**: Conteo de gracia consistente entre cabecera de cliente y listado de paquetes.\\n' +
+      '3. **Servicio Auxiliar de Carry-on (`consolidation-carry-on-service.ts`)**: Filtrado de statusHistory para considerar únicamente fechas de factura activas.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(consolidation): use latest invoice date in multi-annul scenarios (v0.0.1632)',
+  },
+  {
+    version: '0.0.1631',
+    date: '2026-09-22',
+    layer: 'be',
+    type: 'fix',
+    title: 'Blindaje Numérico de totalAmount y Sanitizador de NaN en slGetMonthlyAnalytics',
+    description:
+      '1. **Conversión Numérica Estricta (`monthly-aggregation.ts`)**: Se envolvieron todas las 7 lecturas de `totalAmount` con `(Number(i.totalAmount) || 0)`. Resuelve la causa raíz de concatenación de strings en Firestore (`0 + "14.50"` -> montos de quintillones) que provocaba desbordamientos numéricos.\\n' +
+      '2. **Sanitizador Recursivo Antidesbordamiento (`monthly-aggregation.ts`)**: Implementado helper `sanitizeNaN<T>()` en la frontera de salida de `aggregateMonthlyData()` para convertir recursivamente valores `NaN`/`Infinity` a `0`, blindando la serialización JSON de Firebase HTTPS Callable (`onCall`) contra errores HTTP 500 INTERNAL.\\n' +
+      '3. **Guardas de Finitud en Ratios**: Agregadas comprobaciones `Number.isFinite()` en cálculos de porcentaje de revenue.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(analytics): strict Number() casting on totalAmount and recursive NaN sanitizer for slGetMonthlyAnalytics (v0.0.1631)',
+  },
+  {
+    version: '0.0.1630',
+    date: '2026-09-22',
+    layer: 'be',
+    type: 'perf',
+    title: 'Optimización de Memoria, Timeout y Dead Code en slGetMonthlyAnalytics',
+    description:
+      '1. **Timeout Ampliado a 300s (`callable.ts`)**: Se configuró `timeoutSeconds: 300` en la Cloud Function `slGetMonthlyAnalytics` evitando el timeout por defecto de 60s en consultas con alto volumen o cálculo de tendencias multi-mes.\\n' +
+      '2. **Eliminación de Dead Code / Full Table Scan (`monthly-aggregation.ts`)**: Eliminado el escaneo completo innecesario de la colección `packages` (`allPackagesWithCustSnap`) y el Set `customersWithPackages` que no se utilizaba en el backend, reduciendo drásticamente lecturas Firestore y uso de memoria.\\n' +
+      '3. **Cálculo de Tendencia Secuencial (`monthly-aggregation.ts`)**: Refactorizado el loop de meses históricos de `Promise.all` concurrente a iteración secuencial `for...of`, limitando la memoria pico a ~1x en lugar de ~6x cuando múltiples meses no están cacheados.\\n' +
+      '4. **Documentación JSDoc**: Documentados los parámetros, tipos y notas de rendimiento de `aggregateMonthlyData()`.',
+    author: 'Joshua Briceno <joshua@fuseflows.io>',
+    commitMessage: 'fix(analytics): resolve slGetMonthlyAnalytics 500 error via timeout, dead code elimination and sequential trend resolution (v0.0.1630)',
+  },
+  {
     version: '0.0.1627',
     date: '2026-09-22',
     layer: 'both',

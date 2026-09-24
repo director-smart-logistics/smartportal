@@ -1538,6 +1538,381 @@ export async function annulInvoicesByTrackingsAndManifest(
   }
 }
 
+// ── Consolidación Transitoria Movements ────────────────────────────────────────
+
+export interface TransitoriaMoveResult {
+  success: boolean;
+  invoiceId: string;
+  invoiceNumber: string;
+  movedTrackings: string[];
+  skipped?: 'not_found' | 'paid';
+  /**
+   * True when the invoice was already `annulled`/`cancelled`/`void` BEFORE this call.
+   * The invoice-annul write (and its SP2 deletion) is skipped as a no-op in that case,
+   * but any packages still linked to it (a known drift scenario: an invoice gets
+   * annulled but a package's `invoiceId`/`invoiceNumber` link is never cleaned up,
+   * so it never actually reaches consolidacion_transitoria) are STILL found and moved.
+   * Without this, re-running the move on an already-annulled invoice would silently
+   * do nothing and leave the orphaned package stuck — defeating the entire purpose
+   * of this function for exactly the drift scenario it exists to fix.
+   */
+  invoiceAlreadyAnnulled?: boolean;
+}
+
+/**
+ * Finds every package linked to an invoice, matching by BOTH `invoiceId` AND
+ * `invoiceNumber` (deduped by doc id). A single-field query is not sufficient in
+ * this codebase: packages can have one field set without the other after legacy
+ * data drift (see annulInvoicesByTrackingsAndManifest above, which needs the same
+ * dual query for the same reason).
+ *
+ * Shared by `moveInvoiceToTransitoria` (the actual mover) and by the Packages-page
+ * manifest-cell UI's confirmation preview (`previewPackagesLinkedToInvoice` below)
+ * so the two can never disagree about how many packages will actually move — a
+ * preview built from a different, narrower query could silently under-report
+ * packages that the mover would still move.
+ */
+export async function findPackagesLinkedToInvoice(
+  invoiceId: string,
+  invoiceNumber?: string,
+): Promise<any[]> {
+  if (!invoiceId) return [];
+
+  const [snapId, snapNum] = await Promise.all([
+    getDocs(query(collection(db, 'packages'), where('invoiceId', '==', invoiceId))),
+    invoiceNumber
+      ? getDocs(query(collection(db, 'packages'), where('invoiceNumber', '==', invoiceNumber)))
+      : Promise.resolve({ docs: [], forEach: () => {} } as any),
+  ]);
+
+  const seenPkgIds = new Set<string>();
+  const validPkgDocs: any[] = [];
+  snapId.forEach((d: any) => {
+    seenPkgIds.add(d.id);
+    validPkgDocs.push(d);
+  });
+  snapNum.forEach((d: any) => {
+    if (!seenPkgIds.has(d.id)) {
+      seenPkgIds.add(d.id);
+      validPkgDocs.push(d);
+    }
+  });
+  return validPkgDocs;
+}
+
+export interface InvoiceLinkedPackagesPreview {
+  invoiceExists: boolean;
+  invoiceNumber: string;
+  status: string;
+  /** True when the invoice is already annulled/cancelled/void. */
+  invoiceAlreadyAnnulled: boolean;
+  /** True when the invoice is paid — moveInvoiceToTransitoria will refuse to touch it. */
+  invoicePaid: boolean;
+  packages: { id: string; trackingNumber: string }[];
+}
+
+/**
+ * Read-only preview of what `moveInvoiceToTransitoria(invoiceId)` would move, used
+ * by the Packages-page manifest-cell confirmation UI. Calls the EXACT SAME
+ * `findPackagesLinkedToInvoice` helper the real mover uses, so the preview can
+ * never under- or over-count relative to what actually gets moved.
+ */
+export async function previewPackagesLinkedToInvoice(
+  invoiceId: string,
+): Promise<InvoiceLinkedPackagesPreview> {
+  if (!invoiceId) {
+    return { invoiceExists: false, invoiceNumber: '', status: '', invoiceAlreadyAnnulled: false, invoicePaid: false, packages: [] };
+  }
+  const invSnap = await getDoc(doc(db, 'invoices', invoiceId));
+  if (!invSnap.exists()) {
+    return { invoiceExists: false, invoiceNumber: '', status: '', invoiceAlreadyAnnulled: false, invoicePaid: false, packages: [] };
+  }
+  const data = invSnap.data() || {};
+  const status = ((data.status as string | undefined) || 'draft').toLowerCase();
+  const invoiceNumber = ((data.invoiceNumber as string | undefined) || invoiceId).toString();
+
+  const linkedDocs = await findPackagesLinkedToInvoice(invoiceId, invoiceNumber);
+  const packages = linkedDocs.map((d: any) => {
+    const pData = d.data();
+    return { id: d.id, trackingNumber: (pData.trackingNumber || pData.tracking || d.id || '').toString() };
+  });
+
+  return {
+    invoiceExists: true,
+    invoiceNumber,
+    status,
+    invoiceAlreadyAnnulled: status === 'annulled' || status === 'cancelled' || status === 'void',
+    invoicePaid: status === 'paid',
+    packages,
+  };
+}
+
+/**
+ * Move all packages linked to an invoice into `consolidacion_transitoria` and annul
+ * the invoice. Safe and idempotent.
+ *
+ * Rules:
+ *  - If invoice is `paid`, never touches anything (returns skipped: 'paid').
+ *  - If invoice is already `annulled`/`cancelled`/`void`, the annul write is skipped
+ *    (no-op) but linked packages are still found and moved — see
+ *    `invoiceAlreadyAnnulled` on TransitoriaMoveResult for why this matters.
+ *  - Uses exact stamping conventions, dual-query package lookup, SP2 invoice deletion,
+ *    atomic batch update, and best-effort SP2 package sync & consolidation sync.
+ */
+export async function moveInvoiceToTransitoria(
+  invoiceId: string,
+  options: { annulledBy?: string; reason?: string } = {},
+): Promise<TransitoriaMoveResult> {
+  if (!invoiceId) {
+    return {
+      success: false,
+      invoiceId: invoiceId || '',
+      invoiceNumber: '',
+      movedTrackings: [],
+      skipped: 'not_found',
+    };
+  }
+
+  const invSnap = await getDoc(doc(db, 'invoices', invoiceId));
+  if (!invSnap.exists()) {
+    return {
+      success: false,
+      invoiceId,
+      invoiceNumber: '',
+      movedTrackings: [],
+      skipped: 'not_found',
+    };
+  }
+
+  const data = invSnap.data() || {};
+  const status = ((data.status as string | undefined) || 'draft').toLowerCase();
+  const invoiceNumber = ((data.invoiceNumber as string | undefined) || invoiceId).toString();
+  const invoiceAlreadyAnnulled = status === 'annulled' || status === 'cancelled' || status === 'void';
+
+  // Paid invoices are NEVER touched from this flow. Real money was received.
+  if (status === 'paid') {
+    return {
+      success: false,
+      invoiceId,
+      invoiceNumber,
+      movedTrackings: [],
+      skipped: 'paid',
+    };
+  }
+
+  const nowISO = new Date().toISOString();
+  const reason = options.reason ?? 'Movido a Consolidación Transitoria desde Paquetes';
+  const actor = options.annulledBy ?? 'admin';
+
+  if (!invoiceAlreadyAnnulled) {
+    // 1. Annul the invoice doc
+    await updateDoc(doc(db, 'invoices', invoiceId), {
+      status: 'annulled',
+      annulledAt: nowISO,
+      annulledBy: actor,
+      annulledReason: reason,
+      updatedAt: nowISO,
+      statusHistory: arrayUnion({
+        status: 'annulled',
+        changedAt: nowISO,
+        changedBy: actor,
+        note: reason,
+      }),
+    });
+
+    // 2. Physical delete from SP2 portal (fire-and-forget)
+    deleteInvoiceFromSp2(invoiceId, invoiceNumber).catch(err =>
+      console.warn('[moveInvoiceToTransitoria] SP2 deletion failed:', err),
+    );
+  }
+
+  // 3. Find linked packages by BOTH invoiceId and invoiceNumber (deduped by doc id) —
+  //    runs regardless of invoiceAlreadyAnnulled, so a package orphaned by a PRIOR
+  //    annulment that never completed the move still gets swept into transitoria now.
+  const validPkgDocs = await findPackagesLinkedToInvoice(invoiceId, invoiceNumber);
+
+  const movedTrackings: string[] = [];
+  const pkgsToSync: any[] = [];
+  const consolidationItems: any[] = [];
+
+  if (validPkgDocs.length > 0) {
+    const invoiceEmissionDate = extractInvoiceEmissionDate({
+      ...data,
+      id: invoiceId,
+      invoiceNumber,
+    }) || nowISO;
+
+    const pkgBatch = writeBatch(db);
+
+    validPkgDocs.forEach(pkgDoc => {
+      const pData = pkgDoc.data() || {};
+      const tr = (pData.trackingNumber || pData.tracking || pkgDoc.id || '').toString();
+      const currentManifestNumber = (pData.manifestNumber || pData.manifiesto || '') as string;
+      const alreadyTransitoria = currentManifestNumber === 'consolidacion_transitoria';
+
+      pkgBatch.update(doc(db, 'packages', pkgDoc.id), {
+        invoiceId: deleteField(),
+        invoiceNumber: deleteField(),
+        invoiceStatus: deleteField(),
+        annulledInvoiceId: invoiceId,
+        annulledInvoiceNumber: invoiceNumber,
+        annulledInvoiceDate: invoiceEmissionDate,
+        annulledAt: nowISO,
+        invoicedAt: invoiceEmissionDate,
+        firstConsolidatedAt: pData.firstConsolidatedAt
+          ? (new Date(pData.firstConsolidatedAt).getTime() < new Date(invoiceEmissionDate).getTime()
+              ? pData.firstConsolidatedAt
+              : invoiceEmissionDate)
+          : invoiceEmissionDate,
+        status: 'consolidated',
+        consolidacion: true,
+        manifestId: 'consolidacion_transitoria',
+        manifestNumber: 'consolidacion_transitoria',
+        encomiendaManifestNumber: 'none',
+        smartwebSynced: false,
+        smartwebSyncSource: 'transitoria',
+        // guarda idempotente — nunca sobrescribir si ya existe
+        ...(!alreadyTransitoria && currentManifestNumber && !pData.originalManifestID
+          ? { originalManifestID: currentManifestNumber }
+          : {}),
+        statusHistory: arrayUnion({
+          status: 'consolidated',
+          changedAt: nowISO,
+          changedBy: actor,
+          note: `Factura ${invoiceNumber} anulada — paquete a transitoria.`,
+        }),
+      });
+
+      if (tr) {
+        movedTrackings.push(tr);
+      }
+
+      pkgsToSync.push({
+        id: pkgDoc.id,
+        trackingNumber: tr,
+        slCode: pData.slCode || data.slCode || '',
+        customerName: pData.customerName || data.clientName || '',
+        status: 'consolidated',
+        manifestNumber: 'consolidacion_transitoria',
+        forceSync: true,
+      });
+
+      if (tr) {
+        consolidationItems.push({
+          tracking: tr.toUpperCase(),
+          slCode: pData.slCode || data.slCode || data.clientSlCode || '',
+          customerName: pData.customerName || data.clientName || '',
+          ruta: pData.ruta || data.ruta || '',
+          weight: pData.weight || pData.peso || 0,
+          price: pData.price || pData.precio || 0,
+          currency: pData.currency || 'USD',
+          description: pData.description || pData.descripcion || '',
+          permisos: !!(pData.requiresPermit || pData.permisos),
+          origin: pData.origin || 'Miami, FL',
+          manifestNumber: currentManifestNumber || pData.manifestNumber || '',
+          invoiceId,
+          invoiceNumber,
+          invoiceDate: invoiceEmissionDate,
+          invoiceStatus: 'annulled',
+          status: 'consolidated',
+          movedAt: invoiceEmissionDate,
+        });
+      }
+    });
+
+    await pkgBatch.commit();
+
+    if (consolidationItems.length > 0) {
+      try {
+        const { addItemsToConsolidation } = await import('./manifest-consolidation-service');
+        await addItemsToConsolidation(consolidationItems);
+      } catch (mcErr) {
+        console.warn('[moveInvoiceToTransitoria] Failed to add items to manifest_consolidation:', mcErr);
+      }
+    }
+
+    if (pkgsToSync.length > 0) {
+      syncPackagesToSmartWeb(pkgsToSync).catch(err =>
+        console.warn('[moveInvoiceToTransitoria] SP2 packages sync failed:', err),
+      );
+    }
+  }
+
+  return {
+    success: true,
+    invoiceId,
+    invoiceNumber,
+    movedTrackings,
+    ...(invoiceAlreadyAnnulled ? { invoiceAlreadyAnnulled: true } : {}),
+  };
+}
+
+/**
+ * Move a single unlinked package (no invoiceId) into `consolidacion_transitoria`.
+ * Mirrors `handleMoveToConsolidacionTransitoria` from `PackagesDataTable.tsx`.
+ */
+export async function moveUnlinkedPackageToTransitoria(packageId: string): Promise<void> {
+  if (!packageId) return;
+  const pkgRef = doc(db, 'packages', packageId);
+  const pkgSnap = await getDoc(pkgRef);
+  if (!pkgSnap.exists()) return;
+
+  const data = pkgSnap.data() || {};
+  const currentMf = ((data.manifestNumber || data.manifiesto || '') as string).trim();
+  const alreadyTransitoria = currentMf === 'consolidacion_transitoria';
+  const syncedAt = new Date().toISOString();
+
+  await updateDoc(pkgRef, {
+    manifestId: 'consolidacion_transitoria',
+    manifestNumber: 'consolidacion_transitoria',
+    consolidacion: true,
+    status: 'consolidated',
+    invoiceId: null,
+    invoiceNumber: null,
+    smartwebSynced: false,
+    smartwebSyncSource: 'transitoria',
+    ...(!alreadyTransitoria && currentMf && !data.originalManifestID
+      ? { originalManifestID: currentMf }
+      : {}),
+  });
+
+  const trk = (data.trackingNumber || data.tracking || packageId || '').toString();
+  if (trk) {
+    const slCode = data.slCode || data.customer?.slCode || '';
+    const customerName = data.customerName || data.customer?.name || '';
+    const pkgsToSync = [{
+      id: packageId,
+      trackingNumber: trk,
+      slCode,
+      customerName,
+      status: 'consolidated',
+      weight: data.weight,
+      description: data.description,
+      ruta: data.ruta || '',
+      manifestNumber: 'consolidacion_transitoria',
+      forceSync: true,
+      allowCreate: true,
+    }];
+
+    syncPackagesToSmartWeb(pkgsToSync)
+      .then(async (syncResult) => {
+        const actualSynced = (syncResult?.created || 0) + (syncResult?.updated || 0);
+        if (actualSynced > 0) {
+          await updateDoc(pkgRef, {
+            smartwebSynced: true,
+            smartwebSyncedAt: syncedAt,
+            smartwebSyncSource: 'transitoria',
+          }).catch(err =>
+            console.warn('[moveUnlinkedPackageToTransitoria] Firestore sync stamp failed:', err),
+          );
+        }
+      })
+      .catch(err => {
+        console.warn('[moveUnlinkedPackageToTransitoria] SP2 sync failed:', err);
+      });
+  }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 export function generateInvoiceNumber(

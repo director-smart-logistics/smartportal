@@ -1,6 +1,6 @@
 {
   "name": "smart-portal",
-  "version": "0.0.1630",
+  "version": "0.0.1633",
   "description": "SmartLogistics - Complete logistics management platform",
   "author": "Joshua Briceno <joshua@fuseflows.io>",
   "organization": "FuseFlows.IO",
@@ -24,7 +24,8 @@
     "db": "node scripts/firestore-query.mjs",
     "backfill:costcrc": "node scripts/backfill-costcrc.mjs",
     "deploy": "npm run build && firebase deploy --only hosting",
-    "sync:smartportal": "node scripts/deploy/sync-to-smartportal.mjs"
+    "sync:smartportal": "node scripts/deploy/sync-to-smartportal.mjs",
+    "prepare": "husky"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.18.0",
@@ -117,6 +118,7 @@
     "firebase-admin": "^13.7.0",
     "framer-motion": "^12.23.12",
     "globals": "^16.3.0",
+    "husky": "^9.1.7",
     "input-otp": "^1.4.2",
     "jsdom": "^29.0.1",
     "lucide-react": "^0.539.0",

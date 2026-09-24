@@ -180,7 +180,7 @@ export const slGetRecentActivity = onCall(
 import { aggregateMonthlyData } from "./monthly-aggregation";
 
 export const slGetMonthlyAnalytics = onCall(
-  { cors: true, invoker: "public", memory: "1GiB" },
+  { cors: true, invoker: "public", memory: "1GiB", timeoutSeconds: 300 },
   async (request: CallableRequest<{ month: string }>) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "User must be authenticated");

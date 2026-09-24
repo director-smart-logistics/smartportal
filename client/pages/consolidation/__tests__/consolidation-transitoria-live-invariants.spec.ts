@@ -24,6 +24,7 @@ describe('Consolidación Transitoria — Regression Invariants', () => {
   describe('Invariant 1: Day 0 / Consolidation Start Date from statusHistory (Caso Johanna)', () => {
     it('correctly extracts original Day 0 from statusHistory invoice note even when top-level date fields are null', () => {
       // Simulates package SPXMIA013672606090008292 from Johanna Patricia Alvarez Garro
+      // Single annul cycle: only one invoice in history → that date is both earliest AND latest
       const pkgJohanna = {
         id: 'pkg-johanna-1',
         trackingNumber: 'SPXMIA013672606090008292',
@@ -57,7 +58,12 @@ describe('Consolidación Transitoria — Regression Invariants', () => {
       expect(oldest).toContain('2026-06-23');
     });
 
-    it('preserves earliest date when package was already consolidating before an invoice was created', () => {
+    it('uses latest invoice date when package has both firstConsolidatedAt AND a later invoice in history', () => {
+      // POST-FIX (2026-09-23): The latest invoice date from statusHistory (Priority 1)
+      // now takes precedence over firstConsolidatedAt (Priority 3).
+      // Rationale: when a package was already consolidating (May 10) and then got
+      // invoiced (Jul 1) and that invoice was annulled, the billing cycle restarted
+      // at Jul 1. The original May 10 date belongs to a closed cycle.
       const pkgPreConsolidated = {
         id: 'pkg-pre-1',
         trackingNumber: 'TRACK-PRE-1',
@@ -74,8 +80,51 @@ describe('Consolidación Transitoria — Regression Invariants', () => {
       } as unknown as ConsolidationPackage;
 
       const startDate = getConsolidationStartDate(pkgPreConsolidated);
-      // Earliest (2026-05-10) must prevail over the invoice date (2026-07-01)
-      expect(startDate).toBe('2026-05-10T10:00:00.000Z');
+      // Invoice date (2026-07-01) now wins over firstConsolidatedAt (2026-05-10)
+      expect(startDate).toContain('2026-07-01');
+    });
+
+    it('uses the LATEST invoice date when multiple annul events exist (Caso Esteban multi-annul)', () => {
+      // Simulates the Esteban Chacón Murillo (SL261393) scenario:
+      // - First invoice created Jul 2 → annulled → packages return to transitoria
+      // - Second invoice created Sep 18 → annulled → packages return to transitoria
+      // The counter MUST show ~5 days (from Sep 18), NOT ~83 days (from Jul 2)
+      const pkgMultiAnnul = {
+        id: 'pkg-esteban-1',
+        trackingNumber: 'SPXMIA015242609020008898',
+        status: 'consolidated',
+        manifestNumber: 'consolidacion_transitoria',
+        updatedManifest: 'consolidacion_transitoria',
+        consolidacion: true,
+        firstConsolidatedAt: '2026-07-02T10:00:00.000Z',
+        invoicedAt: null,
+        savedAt: null,
+        createdAt: null,
+        statusHistory: [
+          {
+            status: 'consolidated',
+            changedAt: '2026-07-05T14:00:00.000Z',
+            changedBy: 'invoice-unlocked-annulled',
+            note: 'Factura SL261393-20260702120000000-C anulada vía desbloqueo',
+          },
+          {
+            status: 'consolidated',
+            changedAt: '2026-09-22T10:00:00.000Z',
+            changedBy: 'invoice-unlocked-annulled',
+            note: 'Factura SL261393-20260918143000000-C anulada vía desbloqueo',
+          },
+        ],
+      } as unknown as ConsolidationPackage;
+
+      const startDate = getConsolidationStartDate(pkgMultiAnnul);
+      expect(startDate).not.toBeNull();
+      // Must extract 2026-09-18 (LATEST invoice), NOT 2026-07-02 (earliest)
+      expect(startDate).toContain('2026-09-18');
+
+      // Verify the day count is reasonable (not 80+ days)
+      const days = daysSince(startDate!);
+      expect(days).toBeLessThan(30); // Sep 18 → today should be < 30 days
+      expect(days).toBeGreaterThanOrEqual(0);
     });
   });
 

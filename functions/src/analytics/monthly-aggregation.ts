@@ -1,5 +1,28 @@
 import { db } from "../config/firebase";
 
+/**
+ * Recursively walk an object/array and replace any NaN or Infinity numeric
+ * values with 0.  Firebase onCall cannot serialize NaN — it throws
+ * "Data cannot be encoded in JSON: NaN" which surfaces as HTTP 500 INTERNAL.
+ */
+function sanitizeNaN<T>(value: T): T {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'number') {
+    return (Number.isFinite(value) ? value : 0) as unknown as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map(sanitizeNaN) as unknown as T;
+  }
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeNaN(v);
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
 export interface AgeGroupRow {
   group: string;
   count: number;
@@ -128,6 +151,20 @@ async function fetchHybridCollection(
   return Array.from(map.values());
 }
 
+/**
+ * Aggregates monthly analytics data from packages, invoices, customers, and pre-alerts.
+ *
+ * Performance notes:
+ * - Uses field-level selects to minimize Firestore read bandwidth.
+ * - Trend months are resolved sequentially (not concurrently) to cap peak memory at ~1×
+ *   instead of ~6× when multiple months lack cache.
+ * - The full-collection packages scan (formerly used to build a "customersWithPackages" Set)
+ *   was removed as dead code — the Set was never consumed downstream.
+ *
+ * @param month  - Target month in "YYYY-MM" format.
+ * @param includeTrend - When true, resolves 6-month trend (current + 5 prior months).
+ *                       Set to false for recursive trend sub-calls to avoid infinite recursion.
+ */
 export async function aggregateMonthlyData(month: string, includeTrend = true): Promise<MonthlyAnalyticsData> {
   const parts = month.split("-");
   const year = parseInt(parts[0], 10);
@@ -159,13 +196,14 @@ export async function aggregateMonthlyData(month: string, includeTrend = true): 
     'migratedFromWordPress', 'migratedFromLegacy', 'wpUserId'
   ];
 
+  // Fetch time-bounded collections in parallel (all date-filtered, no full-table scans).
+  // Note: allCustomersSnap is a full-collection read but uses .select() to limit fields.
   const [
     packagesRaw,
     invoices,
     newCustomers,
     preAlertsRaw,
     allCustomersSnap,
-    allPackagesWithCustSnap
   ] = await Promise.all([
     fetchHybridCollection("packages", start, end, packageFields),
     fetchHybridCollection("invoices", start, end, invoiceFields),
@@ -176,7 +214,6 @@ export async function aggregateMonthlyData(month: string, includeTrend = true): 
       "sp2CreatedAt", "memberSince", "createdAt",
       "migratedFromWordPress", "migratedFromLegacy", "wpUserId"
     ).get(),
-    db.collection("packages").select("customerId", "slCode").get(),
   ]);
 
   const packages = packagesRaw.filter(p => {
@@ -239,17 +276,6 @@ export async function aggregateMonthlyData(month: string, includeTrend = true): 
   const preAlertsCount = preAlertsRaw.length;
   console.log(`[aggregateMonthlyData] Fetched packages raw: ${packagesRaw.length}, filtered: ${packages.length}, total weight: ${roundedWeight} kg, invoices: ${invoices.length}, preAlertsCount: ${preAlertsCount}, newCustomers: ${newCustomers.length}`);
 
-  const customersWithPackages = new Set<string>();
-  allPackagesWithCustSnap.docs.forEach(doc => {
-    const data = doc.data();
-    if (data.customerId) {
-      customersWithPackages.add(String(data.customerId).trim());
-    }
-    if (data.slCode) {
-      customersWithPackages.add(String(data.slCode).trim().toUpperCase());
-    }
-  });
-
   const customerServiceMap = new Map<string, string>();
   const customerRouteMap = new Map<string, string>();
   const activeCustomersList: Array<{ id: string; slCode: string; status: string; isVerified: boolean }> = [];
@@ -303,7 +329,7 @@ export async function aggregateMonthlyData(month: string, includeTrend = true): 
 
   // Revenue computations
   const paidInvList = invoices.filter(isPaid);
-  const paidRevenue = paidInvList.reduce((s, i) => s + (i.totalAmount || 0), 0);
+  const paidRevenue = paidInvList.reduce((s, i) => s + (Number(i.totalAmount) || 0), 0);
   const paidInvoices = paidInvList.length;
 
   let regularPaidRevenue = 0;
@@ -332,10 +358,10 @@ export async function aggregateMonthlyData(month: string, includeTrend = true): 
     }
 
     const totalAmount = Number(inv.totalAmount || 0);
-    if (classifiedAmount > 0) {
+    if (classifiedAmount > 0 && Number.isFinite(totalAmount)) {
       const ratio = totalAmount / classifiedAmount;
-      permitPaidRevenue += invoicePermitRevenue * ratio;
-      regularPaidRevenue += invoiceRegularRevenue * ratio;
+      permitPaidRevenue += invoicePermitRevenue * (Number.isFinite(ratio) ? ratio : 0);
+      regularPaidRevenue += invoiceRegularRevenue * (Number.isFinite(ratio) ? ratio : 0);
     } else {
       regularPaidRevenue += totalAmount;
     }
@@ -345,11 +371,11 @@ export async function aggregateMonthlyData(month: string, includeTrend = true): 
   const roundedPermitPaidRevenue = Math.round(permitPaidRevenue * 100) / 100;
 
   const pendingInvList = invoices.filter(isPending);
-  const pendingRevenue = pendingInvList.reduce((s, i) => s + (i.totalAmount || 0), 0);
+  const pendingRevenue = pendingInvList.reduce((s, i) => s + (Number(i.totalAmount) || 0), 0);
   const pendingInvoices = pendingInvList.length;
 
   const overdueInvList = invoices.filter(isOverdue);
-  const overdueRevenue = overdueInvList.reduce((s, i) => s + (i.totalAmount || 0), 0);
+  const overdueRevenue = overdueInvList.reduce((s, i) => s + (Number(i.totalAmount) || 0), 0);
   const overdueInvoices = overdueInvList.length;
 
   const totalInvoices = invoices.length;
@@ -439,7 +465,7 @@ function resolveCustomerEarliestRegDate(d: any): Date {
   invoices.forEach(i => {
     const s = i.status || 'unknown';
     const cur = invStatusMap.get(s) || { count: 0, amount: 0 };
-    invStatusMap.set(s, { count: cur.count + 1, amount: cur.amount + (i.totalAmount || 0) });
+    invStatusMap.set(s, { count: cur.count + 1, amount: cur.amount + (Number(i.totalAmount) || 0) });
   });
   const invoicesByStatus = Array.from(invStatusMap.entries())
     .map(([status, d]) => ({ status, count: d.count, amount: Math.round(d.amount) }))
@@ -529,10 +555,10 @@ function resolveCustomerEarliestRegDate(d: any): Date {
     
     const cur = invoicesByRouteMap.get(route) || { totalAmount: 0, paidAmount: 0, count: 0, paidCount: 0 };
     cur.count++;
-    cur.totalAmount += (inv.totalAmount || 0);
+    cur.totalAmount += (Number(inv.totalAmount) || 0);
     if (isPaid(inv)) {
       cur.paidCount++;
-      cur.paidAmount += (inv.totalAmount || 0);
+      cur.paidAmount += (Number(inv.totalAmount) || 0);
     }
     invoicesByRouteMap.set(route, cur);
   });
@@ -649,7 +675,7 @@ function resolveCustomerEarliestRegDate(d: any): Date {
     const code = i.clientSlCode || i.slCode || i.customerId || 'Unknown';
     const name = i.clientName || i.customer?.fullName || '';
     const cur = custRevMap.get(code) || { name, revenue: 0, count: 0 };
-    custRevMap.set(code, { name: cur.name || name, revenue: cur.revenue + (i.totalAmount || 0), count: cur.count + 1 });
+    custRevMap.set(code, { name: cur.name || name, revenue: cur.revenue + (Number(i.totalAmount) || 0), count: cur.count + 1 });
   });
   const topByRevenue = Array.from(custRevMap.entries())
     .map(([slCode, d]) => ({ slCode, name: d.name, revenue: d.revenue, count: d.count }))
@@ -774,10 +800,14 @@ function resolveCustomerEarliestRegDate(d: any): Date {
       months.push(mStr);
     }
 
-    // Resolve each month (either from cache or by dynamically computing it)
-    const trendResults = await Promise.all(months.map(async (mStr) => {
+    // Resolve each month sequentially (not Promise.all) to avoid multiplying
+    // memory pressure when multiple months lack a cache entry — each uncached month
+    // triggers a full aggregateMonthlyData(mStr, false) sub-call with its own
+    // Firestore reads. Sequential processing caps peak memory at ~1× vs ~6×.
+    const trendResults: typeof revenueTrend = [];
+    for (const mStr of months) {
       if (mStr === month) {
-        return {
+        trendResults.push({
           period: mStr,
           revenue: paidRevenue,
           regularPaidRevenue: roundedRegularPaidRevenue,
@@ -794,14 +824,15 @@ function resolveCustomerEarliestRegDate(d: any): Date {
           packagesByRoute: packagesByRoute,
           packagesByShipper: packagesByShipper,
           packagesByEncomienda: packagesByEncomienda,
-        };
+        });
+        continue;
       }
 
       try {
         const docSnap = await db.collection("monthly_analytics").doc(mStr).get();
         if (docSnap.exists) {
           const data = docSnap.data();
-          return {
+          trendResults.push({
             period: mStr,
             revenue: data?.paidRevenue ?? 0,
             regularPaidRevenue: data?.regularPaidRevenue ?? 0,
@@ -818,7 +849,8 @@ function resolveCustomerEarliestRegDate(d: any): Date {
             packagesByRoute: data?.packagesByRoute ?? [],
             packagesByShipper: data?.packagesByShipper ?? [],
             packagesByEncomienda: data?.packagesByEncomienda ?? [],
-          };
+          });
+          continue;
         }
       } catch (err) {
         console.warn(`Failed reading cache for ${mStr}, computing on the fly:`, err);
@@ -829,7 +861,7 @@ function resolveCustomerEarliestRegDate(d: any): Date {
         const computed = await aggregateMonthlyData(mStr, false);
         // Cache the computed analytics document for future requests
         await db.collection("monthly_analytics").doc(mStr).set(computed).catch(() => {});
-        return {
+        trendResults.push({
           period: mStr,
           revenue: computed.paidRevenue ?? 0,
           regularPaidRevenue: computed.regularPaidRevenue ?? 0,
@@ -846,10 +878,10 @@ function resolveCustomerEarliestRegDate(d: any): Date {
           packagesByRoute: computed.packagesByRoute ?? [],
           packagesByShipper: computed.packagesByShipper ?? [],
           packagesByEncomienda: computed.packagesByEncomienda ?? [],
-        };
+        });
       } catch (e) {
         console.error(`Failed to dynamically compute trend for ${mStr}:`, e);
-        return {
+        trendResults.push({
           period: mStr,
           revenue: 0,
           regularPaidRevenue: 0,
@@ -866,13 +898,13 @@ function resolveCustomerEarliestRegDate(d: any): Date {
           packagesByRoute: [],
           packagesByShipper: [],
           packagesByEncomienda: [],
-        };
+        });
       }
-    }));
+    }
     revenueTrend = trendResults;
   }
 
-  return {
+  return sanitizeNaN({
     month,
     generatedAt: now.toISOString(),
     updatedAt: now.toISOString(),
@@ -926,5 +958,5 @@ function resolveCustomerEarliestRegDate(d: any): Date {
       topNationality: nationalities[0]?.name ?? null,
       topTier: tiers[0]?.label ?? null,
     }
-  };
+  });
 }

@@ -97,7 +97,7 @@ vi.mock('.././sync-smartweb-service', () => ({
   syncPackagesToSmartWeb: vi.fn().mockResolvedValue({ success: true }),
 }));
 
-import { addDoc, getDocs, deleteDoc, updateDoc } from 'firebase/firestore';
+import { addDoc, getDocs, getDoc, writeBatch, deleteDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { syncInvoicesToSp2 } from '.././sync-invoices-service';
 
@@ -142,6 +142,10 @@ import {
   sendInvoiceEmails,
   getCustomersBySlCodes,
   annulInvoicesByTrackingsAndManifest,
+  moveInvoiceToTransitoria,
+  moveUnlinkedPackageToTransitoria,
+  findPackagesLinkedToInvoice,
+  previewPackagesLinkedToInvoice,
   isDuplicateManualItem,
   type InvoiceRecord,
 } from '.././invoice-service';
@@ -1678,13 +1682,63 @@ describe('annulInvoicesByTrackingsAndManifest', () => {
         trackingNumber: 'TRK-MATCH',
       }),
     };
-    
+
     vi.mocked(getDocs).mockResolvedValueOnce({ docs: [mockInvoiceDoc] } as any);
 
     const result = await annulInvoicesByTrackingsAndManifest(['TRK-MATCH'], 'M-001');
     expect(result.annulledIds).toHaveLength(0);
     expect(result.skippedPaid).toBe(1);
     expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  // ── forceAnnulPaid escape hatch (2026-09-23) ──────────────────────────────
+  // The ONLY code path that can ever annul a paid invoice. NovaTableModal.tsx
+  // has a single, explicit "Forzar anulación de factura pagada" admin action
+  // that passes this flag — the default ingest/recreate flow never does.
+  // No test exercised this flag before (in either direction), despite it
+  // being the one deliberate bypass of the "paid is never touched" rule.
+  it('forceAnnulPaid:false (default) — paid invoice is NEVER annulled, regardless of any other option', async () => {
+    const mockInvoiceDoc = {
+      id: 'inv-paid-default',
+      data: () => ({ status: 'paid', invoiceNumber: 'SL-002-INV-PAID', trackingNumber: 'TRK-MATCH' }),
+    };
+    vi.mocked(getDocs).mockResolvedValueOnce({ docs: [mockInvoiceDoc] } as any);
+
+    const result = await annulInvoicesByTrackingsAndManifest(['TRK-MATCH'], 'M-001', {
+      reason: 'test',
+      annulledBy: 'test-admin',
+    });
+    expect(result.annulledIds).toHaveLength(0);
+    expect(result.skippedPaid).toBe(1);
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('forceAnnulPaid:true — annuls the paid invoice via the explicit escape hatch, still preserving the audit trail', async () => {
+    const mockInvoiceDoc = {
+      id: 'inv-paid-forced',
+      data: () => ({ status: 'paid', invoiceNumber: 'SL-003-INV-PAID', trackingNumber: 'TRK-MATCH' }),
+    };
+
+    let callCount = 0;
+    vi.mocked(getDocs).mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) return { docs: [mockInvoiceDoc] } as any;
+      // Package-unlink lookups that run after a successful annul — none linked here.
+      return { docs: [], forEach: () => {} } as any;
+    });
+
+    const result = await annulInvoicesByTrackingsAndManifest(['TRK-MATCH'], 'M-001', {
+      forceAnnulPaid: true,
+    });
+
+    expect(result.annulledIds).toContain('inv-paid-forced');
+    expect(result.skippedPaid).toBe(0);
+    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(1);
+    // Even force-annulled, the write must still be a tombstone (status +
+    // audit fields), never a delete — same contract as the normal path.
+    expect(vi.mocked(updateDoc).mock.calls[0][1]).toMatchObject({
+      status: 'annulled',
+    });
   });
 
   it('excludes invoices passed in excludeInvoiceIds', async () => {
@@ -1805,4 +1859,575 @@ describe('BUG-I19: Eradication of "Cliente Pre-alertado" placeholder names in in
     expect(res.created[0].customer.fullName).not.toContain('Cliente Pre-alertado');
   });
 });
+
+// ── moveInvoiceToTransitoria ───────────────────────────────────────────────────
+
+describe('moveInvoiceToTransitoria', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('early returns skipped: not_found when invoiceId is empty without calling Firestore', async () => {
+    const result = await moveInvoiceToTransitoria('');
+    expect(result).toEqual({
+      success: false,
+      invoiceId: '',
+      invoiceNumber: '',
+      movedTrackings: [],
+      skipped: 'not_found',
+    });
+    expect(getDoc).not.toHaveBeenCalled();
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('early returns skipped: not_found when invoice doc does not exist', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => false,
+      data: () => undefined,
+    } as any);
+
+    const result = await moveInvoiceToTransitoria('non-existent-inv');
+    expect(result).toEqual({
+      success: false,
+      invoiceId: 'non-existent-inv',
+      invoiceNumber: '',
+      movedTrackings: [],
+      skipped: 'not_found',
+    });
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('skips paid invoices without any writes (skipped: paid)', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({
+        status: 'paid',
+        invoiceNumber: 'FAC-PAID-001',
+      }),
+    } as any);
+
+    const result = await moveInvoiceToTransitoria('inv-paid');
+    expect(result).toEqual({
+      success: false,
+      invoiceId: 'inv-paid',
+      invoiceNumber: 'FAC-PAID-001',
+      movedTrackings: [],
+      skipped: 'paid',
+    });
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('skips the invoice-annul write for already annulled/cancelled/void invoices, but still succeeds (no packages to move)', async () => {
+    for (const st of ['annulled', 'cancelled', 'void']) {
+      vi.clearAllMocks();
+      vi.mocked(getDoc).mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          status: st,
+          invoiceNumber: `FAC-${st.toUpperCase()}-001`,
+        }),
+      } as any);
+      // Default getDocs mock resolves to an empty snapshot — no packages linked.
+
+      const result = await moveInvoiceToTransitoria(`inv-${st}`);
+      expect(result).toEqual({
+        success: true,
+        invoiceId: `inv-${st}`,
+        invoiceNumber: `FAC-${st.toUpperCase()}-001`,
+        movedTrackings: [],
+        invoiceAlreadyAnnulled: true,
+      });
+      // The invoice doc itself must NEVER be re-annulled/re-written — it already is.
+      expect(updateDoc).not.toHaveBeenCalled();
+    }
+  });
+
+  it('BUG-FIX (orphaned package recovery): an ALREADY-annulled invoice with a package still' +
+    ' linked (invoiceId never cleaned up on a prior, incomplete annulment) still gets that' +
+    ' package moved to transitoria — this is the exact production incident (SL3506) this' +
+    ' function exists to fix; silently no-op-ing here would leave the package stuck forever', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({
+        status: 'annulled',
+        invoiceNumber: 'FAC-ORPHAN-001',
+      }),
+    } as any);
+
+    const mockBatchUpdate = vi.fn();
+    const mockBatchCommit = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(writeBatch).mockReturnValue({
+      update: mockBatchUpdate,
+      set: vi.fn(),
+      commit: mockBatchCommit,
+    } as any);
+
+    const orphanedPkgData = {
+      trackingNumber: 'TRK-ORPHAN-1',
+      manifestNumber: 'MAN-OLD',
+    };
+    let getDocsCount = 0;
+    vi.mocked(getDocs).mockImplementation(async () => {
+      getDocsCount++;
+      if (getDocsCount === 1) {
+        return {
+          docs: [{ id: 'pkg-orphan', data: () => orphanedPkgData }],
+          forEach: (cb: any) => cb({ id: 'pkg-orphan', data: () => orphanedPkgData }),
+        } as any;
+      }
+      return { docs: [], forEach: () => {} } as any;
+    });
+
+    const result = await moveInvoiceToTransitoria('inv-orphan');
+
+    expect(result).toEqual({
+      success: true,
+      invoiceId: 'inv-orphan',
+      invoiceNumber: 'FAC-ORPHAN-001',
+      movedTrackings: ['TRK-ORPHAN-1'],
+      invoiceAlreadyAnnulled: true,
+    });
+
+    // The invoice itself is untouched (already annulled — no redundant re-annul write).
+    expect(updateDoc).not.toHaveBeenCalled();
+
+    // But the orphaned PACKAGE still gets moved to transitoria.
+    expect(mockBatchUpdate).toHaveBeenCalledTimes(1);
+    expect(mockBatchUpdate.mock.calls[0][1]).toMatchObject({
+      manifestId: 'consolidacion_transitoria',
+      manifestNumber: 'consolidacion_transitoria',
+      status: 'consolidated',
+      consolidacion: true,
+    });
+    expect(mockBatchCommit).toHaveBeenCalled();
+  });
+
+  it('annuls invoice and moves single linked package with exact transitoria stamping convention', async () => {
+    const mockInvoiceData = {
+      status: 'pending',
+      invoiceNumber: 'FAC-2026-001',
+      slCode: 'SL-100',
+      clientName: 'Maria Rodriguez',
+      invoiceDate: '2026-09-01T12:00:00.000Z',
+    };
+
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => mockInvoiceData,
+    } as any);
+
+    const mockPkgData = {
+      trackingNumber: 'TRK-SINGLE-1',
+      slCode: 'SL-100',
+      customerName: 'Maria Rodriguez',
+      manifestNumber: 'MAN-2026-SEP',
+      weight: 3.5,
+      price: 25,
+      firstConsolidatedAt: '2026-08-20T10:00:00.000Z',
+    };
+
+    const mockBatchUpdate = vi.fn();
+    const mockBatchCommit = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(writeBatch).mockReturnValue({
+      update: mockBatchUpdate,
+      set: vi.fn(),
+      commit: mockBatchCommit,
+    } as any);
+
+    let getDocsCount = 0;
+    vi.mocked(getDocs).mockImplementation(async () => {
+      getDocsCount++;
+      if (getDocsCount === 1) {
+        // query by invoiceId
+        return {
+          docs: [{ id: 'pkg-1', data: () => mockPkgData }],
+          forEach: (cb: any) => cb({ id: 'pkg-1', data: () => mockPkgData }),
+        } as any;
+      }
+      // query by invoiceNumber
+      return { docs: [], forEach: () => {} } as any;
+    });
+
+    const result = await moveInvoiceToTransitoria('inv-single', {
+      annulledBy: 'operator@smartlogistics.com',
+      reason: 'Prueba de anulación a transitoria',
+    });
+
+    expect(result).toEqual({
+      success: true,
+      invoiceId: 'inv-single',
+      invoiceNumber: 'FAC-2026-001',
+      movedTrackings: ['TRK-SINGLE-1'],
+    });
+
+    // Verify invoice annulment write
+    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(updateDoc).mock.calls[0][1]).toMatchObject({
+      status: 'annulled',
+      annulledBy: 'operator@smartlogistics.com',
+      annulledReason: 'Prueba de anulación a transitoria',
+    });
+
+    // Verify SP2 invoice deletion
+    const { deleteInvoiceFromSp2 } = await import('.././sync-invoices-service');
+    expect(deleteInvoiceFromSp2).toHaveBeenCalledWith('inv-single', 'FAC-2026-001');
+
+    // Verify batch update on package with exact stamping
+    expect(mockBatchUpdate).toHaveBeenCalledTimes(1);
+    const pkgUpdateArgs = mockBatchUpdate.mock.calls[0][1];
+    expect(pkgUpdateArgs).toMatchObject({
+      status: 'consolidated',
+      consolidacion: true,
+      manifestId: 'consolidacion_transitoria',
+      manifestNumber: 'consolidacion_transitoria',
+      encomiendaManifestNumber: 'none',
+      annulledInvoiceId: 'inv-single',
+      annulledInvoiceNumber: 'FAC-2026-001',
+      originalManifestID: 'MAN-2026-SEP',
+      smartwebSynced: false,
+      smartwebSyncSource: 'transitoria',
+      firstConsolidatedAt: '2026-08-20T10:00:00.000Z',
+    });
+    expect(mockBatchCommit).toHaveBeenCalled();
+
+    // Verify SP2 package sync
+    const { syncPackagesToSmartWeb } = await import('.././sync-smartweb-service');
+    expect(syncPackagesToSmartWeb).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'pkg-1',
+        trackingNumber: 'TRK-SINGLE-1',
+        status: 'consolidated',
+        manifestNumber: 'consolidacion_transitoria',
+        forceSync: true,
+      }),
+    ]);
+  });
+
+  it('moves all linked packages on multi-package invoice, deduplicating packages matching by invoiceNumber', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({
+        status: 'draft',
+        invoiceNumber: 'FAC-MULTI-002',
+      }),
+    } as any);
+
+    const mockBatchUpdate = vi.fn();
+    const mockBatchCommit = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(writeBatch).mockReturnValue({
+      update: mockBatchUpdate,
+      set: vi.fn(),
+      commit: mockBatchCommit,
+    } as any);
+
+    let getDocsCount = 0;
+    vi.mocked(getDocs).mockImplementation(async () => {
+      getDocsCount++;
+      if (getDocsCount === 1) {
+        // Matched by invoiceId
+        return {
+          docs: [
+            { id: 'pkg-1', data: () => ({ trackingNumber: 'TRK-1', manifestNumber: 'MF-A' }) },
+            { id: 'pkg-2', data: () => ({ trackingNumber: 'TRK-2', manifestNumber: 'MF-A' }) },
+          ],
+          forEach: (cb: any) => {
+            cb({ id: 'pkg-1', data: () => ({ trackingNumber: 'TRK-1', manifestNumber: 'MF-A' }) });
+            cb({ id: 'pkg-2', data: () => ({ trackingNumber: 'TRK-2', manifestNumber: 'MF-A' }) });
+          },
+        } as any;
+      }
+      // Matched by invoiceNumber (contains pkg-2 duplicate + pkg-3 only matching by number)
+      return {
+        docs: [
+          { id: 'pkg-2', data: () => ({ trackingNumber: 'TRK-2', manifestNumber: 'MF-A' }) },
+          { id: 'pkg-3', data: () => ({ trackingNumber: 'TRK-3', manifestNumber: 'MF-A' }) },
+        ],
+        forEach: (cb: any) => {
+          cb({ id: 'pkg-2', data: () => ({ trackingNumber: 'TRK-2', manifestNumber: 'MF-A' }) });
+          cb({ id: 'pkg-3', data: () => ({ trackingNumber: 'TRK-3', manifestNumber: 'MF-A' }) });
+        },
+      } as any;
+    });
+
+    const result = await moveInvoiceToTransitoria('inv-multi');
+    expect(result.success).toBe(true);
+    expect(result.movedTrackings).toEqual(['TRK-1', 'TRK-2', 'TRK-3']);
+    expect(mockBatchUpdate).toHaveBeenCalledTimes(3);
+    expect(mockBatchCommit).toHaveBeenCalled();
+  });
+
+  it('preserves existing originalManifestID on packages (idempotent guard)', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({
+        status: 'draft',
+        invoiceNumber: 'FAC-IDEM-003',
+      }),
+    } as any);
+
+    const mockBatchUpdate = vi.fn();
+    vi.mocked(writeBatch).mockReturnValue({
+      update: mockBatchUpdate,
+      set: vi.fn(),
+      commit: vi.fn().mockResolvedValue(undefined),
+    } as any);
+
+    let getDocsCount = 0;
+    vi.mocked(getDocs).mockImplementation(async () => {
+      getDocsCount++;
+      if (getDocsCount === 1) {
+        return {
+          docs: [{
+            id: 'pkg-already-stamped',
+            data: () => ({
+              trackingNumber: 'TRK-EXISTING-ORIGIN',
+              manifestNumber: 'INTERMEDIATE_MF',
+              originalManifestID: 'TRUE_ORIGIN_MF',
+            }),
+          }],
+          forEach: (cb: any) => cb({
+            id: 'pkg-already-stamped',
+            data: () => ({
+              trackingNumber: 'TRK-EXISTING-ORIGIN',
+              manifestNumber: 'INTERMEDIATE_MF',
+              originalManifestID: 'TRUE_ORIGIN_MF',
+            }),
+          }),
+        } as any;
+      }
+      return { docs: [], forEach: () => {} } as any;
+    });
+
+    const result = await moveInvoiceToTransitoria('inv-idem');
+    expect(result.success).toBe(true);
+    expect(mockBatchUpdate).toHaveBeenCalledTimes(1);
+
+    const updateFields = mockBatchUpdate.mock.calls[0][1];
+    // originalManifestID should NOT be overwritten with INTERMEDIATE_MF
+    expect(updateFields.originalManifestID).toBeUndefined();
+  });
+});
+
+// ── findPackagesLinkedToInvoice ─────────────────────────────────────────────────
+
+describe('findPackagesLinkedToInvoice', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns [] immediately without calling Firestore when invoiceId is empty', async () => {
+    const result = await findPackagesLinkedToInvoice('');
+    expect(result).toEqual([]);
+    expect(getDocs).not.toHaveBeenCalled();
+  });
+
+  it('dedupes packages found by both invoiceId and invoiceNumber queries', async () => {
+    let getDocsCount = 0;
+    vi.mocked(getDocs).mockImplementation(async () => {
+      getDocsCount++;
+      if (getDocsCount === 1) {
+        return {
+          docs: [{ id: 'pkg-a', data: () => ({ trackingNumber: 'TRK-A' }) }],
+          forEach: (cb: any) => cb({ id: 'pkg-a', data: () => ({ trackingNumber: 'TRK-A' }) }),
+        } as any;
+      }
+      return {
+        docs: [
+          { id: 'pkg-a', data: () => ({ trackingNumber: 'TRK-A' }) },
+          { id: 'pkg-b', data: () => ({ trackingNumber: 'TRK-B' }) },
+        ],
+        forEach: (cb: any) => {
+          cb({ id: 'pkg-a', data: () => ({ trackingNumber: 'TRK-A' }) });
+          cb({ id: 'pkg-b', data: () => ({ trackingNumber: 'TRK-B' }) });
+        },
+      } as any;
+    });
+
+    const result = await findPackagesLinkedToInvoice('inv-1', 'FAC-1');
+    expect(result.map((d: any) => d.id)).toEqual(['pkg-a', 'pkg-b']);
+  });
+
+  it('does not query by invoiceNumber when it is omitted (only invoiceId query runs)', async () => {
+    vi.mocked(getDocs).mockResolvedValue({ docs: [], forEach: () => {} } as any);
+    await findPackagesLinkedToInvoice('inv-1');
+    expect(getDocs).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── previewPackagesLinkedToInvoice ──────────────────────────────────────────────
+
+describe('previewPackagesLinkedToInvoice', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns invoiceExists:false without calling getDocs when invoiceId is empty', async () => {
+    const result = await previewPackagesLinkedToInvoice('');
+    expect(result).toEqual({
+      invoiceExists: false,
+      invoiceNumber: '',
+      status: '',
+      invoiceAlreadyAnnulled: false,
+      invoicePaid: false,
+      packages: [],
+    });
+    expect(getDocs).not.toHaveBeenCalled();
+  });
+
+  it('returns invoiceExists:false when the invoice doc does not exist', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({ exists: () => false, data: () => undefined } as any);
+    const result = await previewPackagesLinkedToInvoice('inv-missing');
+    expect(result.invoiceExists).toBe(false);
+    expect(getDocs).not.toHaveBeenCalled();
+  });
+
+  it('flags invoiceAlreadyAnnulled and invoicePaid correctly, and lists linked packages', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ status: 'annulled', invoiceNumber: 'FAC-PREVIEW-1' }),
+    } as any);
+    vi.mocked(getDocs).mockImplementation(async () => ({
+      docs: [{ id: 'pkg-x', data: () => ({ trackingNumber: 'TRK-X' }) }],
+      forEach: (cb: any) => cb({ id: 'pkg-x', data: () => ({ trackingNumber: 'TRK-X' }) }),
+    } as any));
+
+    const result = await previewPackagesLinkedToInvoice('inv-annulled-preview');
+    expect(result).toEqual({
+      invoiceExists: true,
+      invoiceNumber: 'FAC-PREVIEW-1',
+      status: 'annulled',
+      invoiceAlreadyAnnulled: true,
+      invoicePaid: false,
+      packages: [{ id: 'pkg-x', trackingNumber: 'TRK-X' }],
+    });
+  });
+
+  it('flags invoicePaid:true for a paid invoice and invoiceAlreadyAnnulled:false', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ status: 'paid', invoiceNumber: 'FAC-PAID-PREVIEW' }),
+    } as any);
+    vi.mocked(getDocs).mockResolvedValue({ docs: [], forEach: () => {} } as any);
+
+    const result = await previewPackagesLinkedToInvoice('inv-paid-preview');
+    expect(result.invoicePaid).toBe(true);
+    expect(result.invoiceAlreadyAnnulled).toBe(false);
+  });
+});
+
+// ── moveUnlinkedPackageToTransitoria ───────────────────────────────────────────
+
+describe('moveUnlinkedPackageToTransitoria', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('early returns safely when packageId is empty or package doc does not exist', async () => {
+    await moveUnlinkedPackageToTransitoria('');
+    expect(getDoc).not.toHaveBeenCalled();
+    expect(updateDoc).not.toHaveBeenCalled();
+
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => false,
+      data: () => undefined,
+    } as any);
+
+    await moveUnlinkedPackageToTransitoria('non-existent-pkg');
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('updates unlinked package with transitoria stamping (status: consolidated, manifestId/manifestNumber, invoiceId: null) and stamps originalManifestID', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({
+        trackingNumber: 'TRK-UNLINKED-1',
+        manifestNumber: 'MAN-ORIG-100',
+        slCode: 'SL-200',
+        customerName: 'Carlos Soto',
+      }),
+    } as any);
+
+    await moveUnlinkedPackageToTransitoria('pkg-unlinked-1');
+
+    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(updateDoc).mock.calls[0][1]).toMatchObject({
+      manifestId: 'consolidacion_transitoria',
+      manifestNumber: 'consolidacion_transitoria',
+      consolidacion: true,
+      status: 'consolidated',
+      invoiceId: null,
+      invoiceNumber: null,
+      smartwebSynced: false,
+      smartwebSyncSource: 'transitoria',
+      originalManifestID: 'MAN-ORIG-100',
+    });
+
+    const { syncPackagesToSmartWeb } = await import('.././sync-smartweb-service');
+    expect(syncPackagesToSmartWeb).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'pkg-unlinked-1',
+        trackingNumber: 'TRK-UNLINKED-1',
+        status: 'consolidated',
+        manifestNumber: 'consolidacion_transitoria',
+        forceSync: true,
+        allowCreate: true,
+      }),
+    ]);
+  });
+
+  it('preserves existing originalManifestID if package was already stamped', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({
+        trackingNumber: 'TRK-UNLINKED-2',
+        manifestNumber: 'SECOND_MF',
+        originalManifestID: 'INITIAL_MF',
+      }),
+    } as any);
+
+    await moveUnlinkedPackageToTransitoria('pkg-unlinked-2');
+
+    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(1);
+    const updateFields = vi.mocked(updateDoc).mock.calls[0][1] as any;
+    expect(updateFields.originalManifestID).toBeUndefined();
+  });
+
+  it('stamps smartwebSynced:true with a timestamp after a successful SP2 sync (created/updated > 0)', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ trackingNumber: 'TRK-SYNCED-1', manifestNumber: 'MAN-X' }),
+    } as any);
+
+    const { syncPackagesToSmartWeb } = await import('.././sync-smartweb-service');
+    vi.mocked(syncPackagesToSmartWeb).mockResolvedValueOnce({ created: 1, updated: 0, skipped: 0, errors: 0 } as any);
+
+    await moveUnlinkedPackageToTransitoria('pkg-synced-1');
+    // The SP2-sync success stamp is a fire-and-forget .then() chain — flush it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(updateDoc).mock.calls[1][1]).toMatchObject({
+      smartwebSynced: true,
+      smartwebSyncSource: 'transitoria',
+    });
+    expect(vi.mocked(updateDoc).mock.calls[1][1]).toHaveProperty('smartwebSyncedAt');
+  });
+
+  it('does NOT stamp smartwebSynced:true when SP2 sync creates/updates nothing', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ trackingNumber: 'TRK-SKIPPED-1', manifestNumber: 'MAN-X' }),
+    } as any);
+
+    const { syncPackagesToSmartWeb } = await import('.././sync-smartweb-service');
+    vi.mocked(syncPackagesToSmartWeb).mockResolvedValueOnce({ created: 0, updated: 0, skipped: 1, errors: 0 } as any);
+
+    await moveUnlinkedPackageToTransitoria('pkg-skipped-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Only the primary field stamp — no follow-up smartwebSynced:true stamp.
+    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(1);
+  });
+});
+
 

@@ -745,6 +745,13 @@ export async function updateCustomerRuta(
     patchCustomerRutaInCache(slCode, ruta);
     window.dispatchEvent(new CustomEvent('customer-ruta-updated', { detail: { slCode, ruta } }));
 
+    // Fire-and-forget: keep Nova Learning's match_feedback.ruta in sync so a
+    // stale learned route is never re-used for future matches (see
+    // cascadeCustomerRouteUpdateToLearning in match-learning.ts for rationale).
+    import('./match-learning')
+      .then(({ cascadeCustomerRouteUpdateToLearning }) => cascadeCustomerRouteUpdateToLearning(slCode, ruta))
+      .catch(err => console.warn(`[CustomerSync] Nova Learning route cascade failed for ${slCode}:`, err));
+
     // Write enriched audit log entry
     logAction({
       userId: changedByUid,

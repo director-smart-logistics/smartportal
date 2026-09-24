@@ -40,6 +40,11 @@ describe('FRESH_POLICY', () => {
     expect(FRESH_POLICY.allowAutoDivergentRematch).toBe(true);
     expect(FRESH_POLICY.allowAutoPreAlertAssign).toBe(true);
     expect(FRESH_POLICY.allowAutoLearnedRoute).toBe(true);
+    expect(FRESH_POLICY.allowAutoCustomerRouteFill).toBe(true);
+  });
+
+  it('hides the route-drift badge (nothing saved yet to diverge from)', () => {
+    expect(FRESH_POLICY.showRouteDriftBadge).toBe(false);
   });
 
   it('shows divergent UI nags (badges + filter) so the operator can drill into matches', () => {
@@ -75,6 +80,15 @@ describe('FIRESTORE_POLICY', () => {
     expect(FIRESTORE_POLICY.allowAutoDivergentRematch).toBe(false);
     expect(FIRESTORE_POLICY.allowAutoPreAlertAssign).toBe(false);
     expect(FIRESTORE_POLICY.allowAutoLearnedRoute).toBe(false);
+    // INCIDENT 2026-09-23 (BUG-ROUTE-AUTOCORRECT): re-opening a saved
+    // manifest must NEVER let the customer's live profile route silently
+    // replace the route that was actually saved. See types.ts doc comment
+    // on `allowAutoCustomerRouteFill` for the full incident writeup.
+    expect(FIRESTORE_POLICY.allowAutoCustomerRouteFill).toBe(false);
+  });
+
+  it('shows the route-drift badge (a saved value exists to compare the live profile against)', () => {
+    expect(FIRESTORE_POLICY.showRouteDriftBadge).toBe(true);
   });
 
   it('hides divergent UI nags (badges + filter would invite operator to undo their own work)', () => {
@@ -102,9 +116,11 @@ describe('FIRESTORE_POLICY', () => {
       'allowAutoDivergentRematch',
       'allowAutoPreAlertAssign',
       'allowAutoLearnedRoute',
+      'allowAutoCustomerRouteFill',
       'showDivergentBadges',
       'showDivergentFilter',
       'showFrozenBanner',
+      'showRouteDriftBadge',
     ];
     invertedFlags.forEach(flag => {
       expect(FRESH_POLICY[flag]).not.toBe(FIRESTORE_POLICY[flag]);

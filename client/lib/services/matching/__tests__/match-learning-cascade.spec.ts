@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { 
-  cascadeCustomerNameUpdateToLearning, 
+import {
+  cascadeCustomerNameUpdateToLearning,
+  cascadeCustomerRouteUpdateToLearning,
 } from '../../match-learning';
 import * as firestore from 'firebase/firestore';
 
@@ -165,6 +166,106 @@ describe('cascadeCustomerNameUpdateToLearning', () => {
     const result = await cascadeCustomerNameUpdateToLearning('SL100', 'Exact Name');
     expect(result.updatedFeedback).toBe(0);
     expect(result.updatedPatterns).toBe(0);
+  });
+});
+
+describe('cascadeCustomerRouteUpdateToLearning', () => {
+  beforeEach(() => {
+    mockDb.match_feedback.clear();
+    mockDb.manifest_learning_patterns.clear();
+    vi.clearAllMocks();
+  });
+
+  it('updates ruta in match_feedback documents for the given slCode, leaving unrelated fields untouched', async () => {
+    mockDb.match_feedback.set('fb_1', {
+      slCode: 'SL3470',
+      manifestName: 'BEVERLY SIBAJA',
+      normalizedName: 'BEVERLY SIBAJA',
+      fullName: 'Beverly Valeria Sibaja Badilla',
+      ruta: 'Alajuela',
+      hitCount: 74,
+      source: 'admin_pick',
+      consolidationEnabled: true,
+    });
+
+    mockDb.match_feedback.set('fb_other', {
+      slCode: 'SL9999',
+      manifestName: 'OTHER USER',
+      normalizedName: 'OTHER USER',
+      fullName: 'Other User',
+      ruta: 'Alajuela',
+      hitCount: 2,
+    });
+
+    const result = await cascadeCustomerRouteUpdateToLearning('SL3470', 'SJ Centro');
+
+    expect(result.updatedFeedback).toBe(1);
+    expect(mockDb.match_feedback.get('fb_1').ruta).toBe('SJ Centro');
+    // Everything else must remain completely untouched — surgical, single-field cascade
+    expect(mockDb.match_feedback.get('fb_1').slCode).toBe('SL3470');
+    expect(mockDb.match_feedback.get('fb_1').manifestName).toBe('BEVERLY SIBAJA');
+    expect(mockDb.match_feedback.get('fb_1').normalizedName).toBe('BEVERLY SIBAJA');
+    expect(mockDb.match_feedback.get('fb_1').fullName).toBe('Beverly Valeria Sibaja Badilla');
+    expect(mockDb.match_feedback.get('fb_1').hitCount).toBe(74);
+    expect(mockDb.match_feedback.get('fb_1').consolidationEnabled).toBe(true);
+    // Unrelated customer's route must be completely preserved
+    expect(mockDb.match_feedback.get('fb_other').ruta).toBe('Alajuela');
+  });
+
+  it('never touches manifest_learning_patterns (no ruta field exists there)', async () => {
+    mockDb.manifest_learning_patterns.set('pat_1', {
+      type: 'name_association',
+      slCode: 'SL3470',
+      rawName: 'BEVERLY SIBAJA',
+      normalizedName: 'BEVERLY SIBAJA',
+      matchedName: 'Beverly Valeria Sibaja Badilla',
+      approvalCount: 3,
+    });
+
+    await cascadeCustomerRouteUpdateToLearning('SL3470', 'SJ Centro');
+
+    // Patterns collection must be byte-for-byte identical — this cascade never writes to it
+    expect(mockDb.manifest_learning_patterns.get('pat_1')).toEqual({
+      type: 'name_association',
+      slCode: 'SL3470',
+      rawName: 'BEVERLY SIBAJA',
+      normalizedName: 'BEVERLY SIBAJA',
+      matchedName: 'Beverly Valeria Sibaja Badilla',
+      approvalCount: 3,
+    });
+  });
+
+  it('handles lowercase or unformatted slCode safely', async () => {
+    mockDb.match_feedback.set('fb_1', {
+      slCode: 'SL3470',
+      ruta: 'Alajuela',
+    });
+
+    const result = await cascadeCustomerRouteUpdateToLearning('  sl3470  ', 'SJ Centro');
+
+    expect(result.updatedFeedback).toBe(1);
+    expect(mockDb.match_feedback.get('fb_1').ruta).toBe('SJ Centro');
+  });
+
+  it('returns 0 updates safely when slCode or newRuta is empty without throwing', async () => {
+    const res1 = await cascadeCustomerRouteUpdateToLearning('', 'SJ Centro');
+    expect(res1).toEqual({ updatedFeedback: 0 });
+
+    const res2 = await cascadeCustomerRouteUpdateToLearning('SL3470', '');
+    expect(res2).toEqual({ updatedFeedback: 0 });
+
+    const res3 = await cascadeCustomerRouteUpdateToLearning('SL3470', '   ');
+    expect(res3).toEqual({ updatedFeedback: 0 });
+  });
+
+  it('does not trigger batch writes when documents already have the exact target ruta', async () => {
+    mockDb.match_feedback.set('fb_1', {
+      slCode: 'SL100',
+      ruta: 'SJ Centro',
+    });
+
+    const result = await cascadeCustomerRouteUpdateToLearning('SL100', 'SJ Centro');
+    expect(result.updatedFeedback).toBe(0);
   });
 });
 

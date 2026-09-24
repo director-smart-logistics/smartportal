@@ -137,7 +137,7 @@ exports.slGetRecentActivity = (0, https_1.onCall)({ cors: true }, async (request
     return { success: true, data: activity };
 });
 const monthly_aggregation_1 = require("./monthly-aggregation");
-exports.slGetMonthlyAnalytics = (0, https_1.onCall)({ cors: true, invoker: "public", memory: "1GiB" }, async (request) => {
+exports.slGetMonthlyAnalytics = (0, https_1.onCall)({ cors: true, invoker: "public", memory: "1GiB", timeoutSeconds: 300 }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "User must be authenticated");
     }

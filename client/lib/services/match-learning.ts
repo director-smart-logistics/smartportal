@@ -1223,3 +1223,96 @@ export async function cascadeCustomerNameUpdateToLearning(
   return { updatedFeedback, updatedPatterns };
 }
 
+/**
+ * ─── CASCADE CUSTOMER ROUTE UPDATE TO LEARNING COLLECTIONS ──────────────────────
+ *
+ * INCIDENT (2026-09-23): admin confirmed SL3470 (Beverly Valeria Sibaja Badilla)
+ * via the matcher back in May 2026 with ruta="Alajuela" — 74 hits since. The
+ * customer's actual route was later corrected to "SJ Centro" via the app (Nova
+ * route picker / Customer Collection), but nothing ever told match_feedback,
+ * so the learned record kept accumulating hits with a ~4-month-stale route.
+ * Matching normally prefers the LIVE customer record over this learned value
+ * (see parser.ts's `liveCustomer ? liveCustomer.ruta : learnedEntry.ruta`
+ * fallback chain) — but if that live lookup ever fails for a row, the stale
+ * learned ruta is what silently gets assigned instead. This closes that gap
+ * by keeping match_feedback synchronized with the customer's true current
+ * route, so there is never a "second source of truth" to drift out of date.
+ *
+ * INVARIANT (mirrors cascadeCustomerNameUpdateToLearning above):
+ * 1. ONLY `ruta` in `match_feedback` is synchronized. `manifest_learning_patterns`
+ *    does NOT store a route field at all — nothing to cascade there.
+ * 2. `slCode`, `manifestName`, `normalizedName`, `fullName`, `hitCount` are
+ *    NEVER modified — this only corrects the stale route value.
+ * 3. In-memory `learnedCache` / `learnedCacheIndex` are patched immediately so
+ *    a manifest parsed later in the SAME browser session never sees the stale
+ *    value either, without waiting for the 5-minute cache TTL.
+ *
+ * @param slCode - The customer's unique SL code (case-insensitive)
+ * @param newRuta - The newly corrected route
+ * @returns Count of match_feedback documents updated
+ */
+export async function cascadeCustomerRouteUpdateToLearning(
+  slCode: string,
+  newRuta: string
+): Promise<{ updatedFeedback: number }> {
+  if (!slCode || !newRuta) return { updatedFeedback: 0 };
+  const upperSl = slCode.trim().toUpperCase();
+  const trimmedRuta = newRuta.trim();
+  if (!trimmedRuta) return { updatedFeedback: 0 };
+
+  let updatedFeedback = 0;
+
+  try {
+    const batch = writeBatch(db);
+    let batchOps = 0;
+
+    const qFeedback = query(collection(db, 'match_feedback'), where('slCode', '==', upperSl));
+    const snapFeedback = await getDocs(qFeedback);
+    snapFeedback.forEach(d => {
+      const data = d.data() as MatchFeedback;
+      if (data.ruta !== trimmedRuta) {
+        batch.update(d.ref, { ruta: trimmedRuta, updatedAt: serverTimestamp() });
+        batchOps++;
+        updatedFeedback++;
+      }
+    });
+
+    if (batchOps > 0) {
+      await batch.commit();
+      console.log(`[MatchLearning] 🔄 Cascaded route update for ${upperSl} → "${trimmedRuta}" (${updatedFeedback} feedback)`);
+    }
+
+    // Mutate in-memory learned cache if loaded, so a manifest parsed later in
+    // THIS session never sees the stale route either.
+    if (learnedCache && learnedCache.length > 0) {
+      let cacheMutated = false;
+      for (const item of learnedCache) {
+        if (item.slCode && item.slCode.toUpperCase() === upperSl) {
+          item.ruta = trimmedRuta;
+          cacheMutated = true;
+        }
+      }
+      if (cacheMutated && learnedCacheIndex) {
+        for (const entry of learnedCacheIndex.values()) {
+          if (entry.slCode && entry.slCode.toUpperCase() === upperSl) {
+            entry.ruta = trimmedRuta;
+          }
+        }
+        if (learnedCollisionMap) {
+          for (const list of learnedCollisionMap.values()) {
+            for (const item of list) {
+              if (item.slCode && item.slCode.toUpperCase() === upperSl) {
+                item.ruta = trimmedRuta;
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[MatchLearning] Error cascading customer route update for ${upperSl}:`, err);
+  }
+
+  return { updatedFeedback };
+}
+

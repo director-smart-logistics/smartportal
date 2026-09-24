@@ -126,6 +126,35 @@ export async function carryOnPackages(params: CarryOnParams): Promise<CarryOnRes
     return { success: false, movedTrackings: [], targetManifest, error: 'El manifiesto origen y destino son el mismo.' };
   }
 
+  // ── Guard: Firestore writeBatch hard limit ──────────────────────────────────
+  // This operation performs up to 2 writes per moved package (manifest
+  // reassignment in Step 2 + the invoiceId back-write in Step 4's "GAP-9 fix"
+  // loop) plus a small constant overhead (source invoice annulment + target
+  // invoice create/update) — i.e. ≈2N+2 mutations for N packages. Firestore
+  // caps a single writeBatch at 500 mutations.
+  //
+  // The doc comment above promises single-batch atomicity for a reason: Step 4
+  // aggregates ALL moved packages into one consolidation invoice with a single
+  // computed total. Splitting into multiple sequential batches (the pattern
+  // ingestion.ts uses for independent manifest rows) is NOT safe here — if a
+  // later chunk failed, the invoice would reflect a package count that
+  // doesn't match what actually got reassigned, corrupting the very
+  // consistency this module's "PERSISTENCE CONTRACT" guards against.
+  // Failing fast — before any read or write — is the correct tradeoff:
+  // it fixes the "queda pegado" symptom for oversized selections (instant
+  // rejection instead of a slow, eventually-failing commit) without ever
+  // risking a partially-applied bulk move. See
+  // consolidation-carry-on-service.spec.ts ("writeBatch limit guard").
+  const MAX_CARRY_ON_PACKAGES = 200;
+  if (packageIds.length > MAX_CARRY_ON_PACKAGES) {
+    return {
+      success: false,
+      movedTrackings: [],
+      targetManifest,
+      error: `No se pueden mover más de ${MAX_CARRY_ON_PACKAGES} paquetes en una sola operación (límite de escritura atómica de Firestore). Selecciona un subconjunto más pequeño y repite la operación.`,
+    };
+  }
+
   // ── Guard: CONSOLIDACION_TRANSITORIA is a "parking lot", not a real manifest.
   // Packages moved there must NOT generate invoices — the admin will later
   // reassign them to a real manifest and invoice them there.
@@ -153,32 +182,32 @@ export async function carryOnPackages(params: CarryOnParams): Promise<CarryOnRes
     // Fall back to a trackingNumber (or legacy `tracking`) query only when the
     // doc ID lookup fails — handles callers that pass tracking numbers instead
     // of Firestore doc IDs, and packages that predate the trackingNumber field.
-    const { getDoc } = await import('firebase/firestore');
-    const packageDocs: Array<{ id: string; data: any }> = [];
-    for (const pkgId of packageIds) {
-      // Primary: look up by Firestore document ID
-      const ref = doc(db, 'packages', pkgId);
-      const d = await getDoc(ref);
-      if (d.exists()) {
-        packageDocs.push({ id: d.id, data: d.data() });
-        continue;
-      }
-      // Fallback A: search by `trackingNumber` field (modern field name)
-      const snap = await getDocs(
-        query(collection(db, 'packages'), where('trackingNumber', '==', pkgId))
-      );
-      if (!snap.empty) {
-        snap.docs.forEach(sd => packageDocs.push({ id: sd.id, data: sd.data() }));
-        continue;
-      }
-      // Fallback B: search by legacy `tracking` field
-      const snapLegacy = await getDocs(
-        query(collection(db, 'packages'), where('tracking', '==', pkgId))
-      );
-      if (!snapLegacy.empty) {
-        snapLegacy.docs.forEach(sd => packageDocs.push({ id: sd.id, data: sd.data() }));
-      }
-    }
+    // Parallel package resolution: look up all doc IDs concurrently
+    const docLookups = await Promise.all(
+      packageIds.map(async (pkgId) => {
+        const ref = doc(db, 'packages', pkgId);
+        const d = await getDoc(ref);
+        if (d.exists()) {
+          return [{ id: d.id, data: d.data() }];
+        }
+        // Fallback A: search by `trackingNumber` field (modern field name)
+        const snap = await getDocs(
+          query(collection(db, 'packages'), where('trackingNumber', '==', pkgId))
+        );
+        if (!snap.empty) {
+          return snap.docs.map(sd => ({ id: sd.id, data: sd.data() }));
+        }
+        // Fallback B: search by legacy `tracking` field
+        const snapLegacy = await getDocs(
+          query(collection(db, 'packages'), where('tracking', '==', pkgId))
+        );
+        if (!snapLegacy.empty) {
+          return snapLegacy.docs.map(sd => ({ id: sd.id, data: sd.data() }));
+        }
+        return [];
+      })
+    );
+    const packageDocs: Array<{ id: string; data: any }> = docLookups.flat();
 
     if (packageDocs.length === 0) {
       return { success: false, movedTrackings: [], targetManifest, error: 'No se encontraron paquetes para mover.' };
@@ -293,7 +322,6 @@ export async function carryOnPackages(params: CarryOnParams): Promise<CarryOnRes
     if (sourceInvoiceId) {
       const invRef = doc(db, 'invoices', sourceInvoiceId);
       try {
-        const { getDoc } = await import('firebase/firestore');
         const invSnap = await getDoc(invRef);
         if (invSnap.exists()) {
           const invData = invSnap.data();
@@ -408,6 +436,7 @@ export async function carryOnPackages(params: CarryOnParams): Promise<CarryOnRes
             });
           }
         }
+      } else {
         // Create a new consolidation invoice in the target manifest
         const invoiceNumber = generateInvoiceNumber(slCode, true);
         const items = movable.map(p => {
@@ -694,15 +723,28 @@ export function daysSince(dateStr?: string | null): number {
 }
 
 /**
- * Returns the oldest consolidation start date among a set of packages.
- * Evaluates candidate invoice emission dates, firstConsolidatedAt, and savedAt/createdAt.
- * Used to compute customer card grace period countdowns.
+ * Returns the consolidation start date for a set of packages, aligned with
+ * `getConsolidationStartDate` semantics (post-fix 2026-09-23).
+ *
+ * IMPORTANT: This function is used as a FALLBACK when `getConsolidationStartDate`
+ * returns null (e.g. packages with no statusHistory or invoice metadata).
+ *
+ * For the statusHistory scan, only the LATEST (most recent) invoice emission date
+ * is extracted — NOT all historical dates. This prevents multi-annul scenarios from
+ * pulling in closed billing cycles.
+ *
+ * Non-invoice fallbacks (firstConsolidatedAt, savedAt, createdAt) are still included
+ * as last-resort candidates.
+ *
+ * @param packages - Array of consolidation packages to evaluate
+ * @returns ISO date string of the most relevant consolidation start date, or null
  */
 export function oldestPackageDate(packages: ConsolidationPackage[]): string | null {
-  let oldest: string | null = null;
-  let oldestMs: number | null = null;
+  let resultDate: string | null = null;
+  let resultMs: number | null = null;
 
   for (const pkg of packages) {
+    // Direct invoice emission date from package-level fields
     const invDate =
       extractInvoiceEmissionDate({
         invoiceDate: (pkg as any).invoiceDate || (pkg as any).annulledInvoiceDate,
@@ -719,30 +761,47 @@ export function oldestPackageDate(packages: ConsolidationPackage[]): string | nu
     if (pkg.savedAt) candidates.push(pkg.savedAt);
     if (pkg.createdAt) candidates.push(pkg.createdAt);
 
-    // Also scan statusHistory for earliest consolidation or invoice date
+    // Scan statusHistory for the LATEST invoice date only (most recent billing cycle).
+    // KEY FIX (2026-09-23): Previously pushed ALL dates (changedAt, every invoice note)
+    // into the candidates pool, which caused the MIN resolution to select closed-cycle dates.
     if (pkg.statusHistory && Array.isArray(pkg.statusHistory)) {
+      let latestInvoiceDateInHistory: string | null = null;
+      let latestInvoiceDateMs = 0;
+
       for (const h of pkg.statusHistory) {
         const note = h.note || (h as any).notes || '';
         const match = note.match(/(?:Factura|invoice)\s+([A-Z0-9-]{6,}\d{6,}(?:-C)?)/i);
         if (match) {
           const fromNote = extractDateIsoFromInvoiceNumber(match[1]);
-          if (fromNote) candidates.push(fromNote);
+          if (fromNote) {
+            const ms = new Date(fromNote).getTime();
+            // Take the LATEST invoice, not all of them
+            if (!isNaN(ms) && ms > latestInvoiceDateMs) {
+              latestInvoiceDateInHistory = fromNote;
+              latestInvoiceDateMs = ms;
+            }
+          }
         }
-        if (h.changedAt) candidates.push(h.changedAt);
-        if ((h as any).timestamp) candidates.push((h as any).timestamp);
+        // NOTE: We no longer push h.changedAt / h.timestamp into candidates.
+        // Those are event timestamps (when the annulment happened), NOT the billing
+        // cycle start date. Including them would pollute the candidate pool.
       }
+
+      // Only add the single most recent invoice date
+      if (latestInvoiceDateInHistory) candidates.push(latestInvoiceDateInHistory);
     }
 
+    // Resolve: pick the earliest among this package's filtered candidates
     for (const d of candidates) {
       if (!d) continue;
       const ms = new Date(d).getTime();
       if (!isNaN(ms)) {
-        if (oldestMs === null || ms < oldestMs) {
-          oldest = d;
-          oldestMs = ms;
+        if (resultMs === null || ms < resultMs) {
+          resultDate = d;
+          resultMs = ms;
         }
       }
     }
   }
-  return oldest;
+  return resultDate;
 }

@@ -97,6 +97,31 @@ export interface DataOriginPolicy {
    */
   readonly allowAutoLearnedRoute: boolean;
 
+  /**
+   * Whether a row's effective `ruta` may fall back to the customer's LIVE
+   * profile route (`customers/{slCode}.ruta` via `customerContactMap`) when
+   * no explicit override exists for that row this session.
+   *
+   * `true` for fresh parses — the customer's current route is the only
+   * sensible default while the operator is first reviewing the manifest.
+   * `false` for Firestore — the manifest already has a saved `row.ruta`
+   * (the value the operator/gerencia curated and persisted). If the
+   * customer's profile route changes AFTER that save, reopening the
+   * manifest must keep showing/using the SAVED route, never silently swap
+   * in the new profile route — see `showRouteDriftBadge` for how that
+   * divergence is surfaced instead of auto-applied.
+   *
+   * INCIDENT 2026-09-23: an agent working an unrelated ingest-scope fix
+   * stripped the three call-sites that enforced this (this flag did not
+   * exist yet — each site hand-rolled a `loadedFromFirestore` check).
+   * Re-opening any saved manifest silently rewrote routes from the live
+   * customer profile. This flag centralizes the gate so it can't be
+   * dropped site-by-site again; `manifest-reopen-immunity.spec.ts` and
+   * `use-nova-resolved-rows.spec.ts` assert real code respects it — do NOT
+   * revert to raw `loadedFromFirestore` checks at call-sites.
+   */
+  readonly allowAutoCustomerRouteFill: boolean;
+
   // ── UI nags ───────────────────────────────────────────────────────────────
   /**
    * Whether the per-group "X diferentes" amber badge renders next to the
@@ -138,6 +163,19 @@ export interface DataOriginPolicy {
    * forcing a full table reload.
    */
   readonly showRevalidateAllButton: boolean;
+
+  /**
+   * Whether the group header may show a "ruta del cliente cambió" red
+   * badge when the customer's live profile route (`customerContactMap`)
+   * differs from the row's saved `ruta`. Non-blocking, non-mutating — the
+   * operator must click an explicit "Aplicar corrección" action for the
+   * change to take effect; nothing here ever auto-applies it.
+   *
+   * `false` for fresh parses (nothing saved yet to diverge from).
+   * `true` for Firestore (the only origin where a "saved value" exists to
+   * compare the live profile against).
+   */
+  readonly showRouteDriftBadge: boolean;
 }
 
 /**
@@ -146,14 +184,16 @@ export interface DataOriginPolicy {
  * can recover after a stalled or partial auto-validation pass.
  */
 export const FRESH_POLICY: DataOriginPolicy = Object.freeze({
-  origin:                    'fresh',
-  allowAutoDivergentRematch: true,
-  allowAutoPreAlertAssign:   true,
-  allowAutoLearnedRoute:     true,
-  showDivergentBadges:       true,
-  showDivergentFilter:       true,
-  showFrozenBanner:          false,
-  showRevalidateAllButton:   true,
+  origin:                      'fresh',
+  allowAutoDivergentRematch:   true,
+  allowAutoPreAlertAssign:     true,
+  allowAutoLearnedRoute:       true,
+  allowAutoCustomerRouteFill:  true,
+  showDivergentBadges:         true,
+  showDivergentFilter:         true,
+  showFrozenBanner:            false,
+  showRevalidateAllButton:     true,
+  showRouteDriftBadge:         false,
 });
 
 /**
@@ -161,14 +201,16 @@ export const FRESH_POLICY: DataOriginPolicy = Object.freeze({
  * banner ON, Re-validar button ON (explicit opt-in escape hatch).
  */
 export const FIRESTORE_POLICY: DataOriginPolicy = Object.freeze({
-  origin:                    'firestore',
-  allowAutoDivergentRematch: false,
-  allowAutoPreAlertAssign:   false,
-  allowAutoLearnedRoute:     false,
-  showDivergentBadges:       false,
-  showDivergentFilter:       false,
-  showFrozenBanner:          true,
-  showRevalidateAllButton:   true,
+  origin:                      'firestore',
+  allowAutoDivergentRematch:   false,
+  allowAutoPreAlertAssign:     false,
+  allowAutoLearnedRoute:       false,
+  allowAutoCustomerRouteFill:  false,
+  showDivergentBadges:         false,
+  showDivergentFilter:         false,
+  showFrozenBanner:            true,
+  showRevalidateAllButton:     true,
+  showRouteDriftBadge:         true,
 });
 
 /**

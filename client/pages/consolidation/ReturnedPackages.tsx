@@ -32,6 +32,7 @@ import { db } from '@/lib/firebase/config';
 import { syncPackagesToSmartWeb } from '@/lib/services/sync-smartweb-service';
 import { deleteInvoiceFromSp2 } from '@/lib/services/sync-invoices-service';
 import { getRouteColor } from '@/lib/utils/route-colors';
+import { pkgHasPaidInvoice, buildReconsolidatePayload, buildReassignPayload } from './components/returned-packages-mutations';
 import { CopyButton } from '@/components/ui/copy-button';
 
 // Interface for returned packages loaded from Firestore
@@ -391,67 +392,8 @@ export default function ReturnedPackages() {
         const pkg = packages.find(p => p.id === id);
         if (!pkg) continue;
 
-        const hasPaidInvoice = pkg.invoiceStatus === 'paid' || (pkg.invoiceId && paidInvoices.has(pkg.invoiceId));
-
-        if (hasPaidInvoice) {
-          // If invoice was paid, preserve invoice linkage and pricing
-          batch.update(doc(db, 'packages', id), {
-            status: 'consolidated',
-            deliveryStatus: 'consolidated',
-            manifestId: 'consolidacion_transitoria',
-            manifestNumber: 'consolidacion_transitoria',
-            updatedManifest: 'consolidacion_transitoria',
-            encomiendaManifestNumber: 'none',
-            manifestUpdatedAt: now,
-            consolidacion: true,
-            ...(!pkg.firstConsolidatedAt ? { firstConsolidatedAt: now } : {}),
-            smartwebSyncSource: 'transitoria',
-            smartwebSynced: false,
-            statusHistory: arrayUnion({
-              status: 'consolidated',
-              changedAt: now,
-              changedBy: 'returns-management-manual',
-              note: `Paquete devuelto re-consolidado a Consolidación Transitoria (conservando factura pagada ${pkg.invoiceNumber || ''})`,
-            }),
-          });
-        } else {
-          // Unpaid: reset pricing guards & remove invoice refs
-          batch.update(doc(db, 'packages', id), {
-            status: 'consolidated',
-            deliveryStatus: 'consolidated',
-            manifestId: 'consolidacion_transitoria',
-            manifestNumber: 'consolidacion_transitoria',
-            updatedManifest: 'consolidacion_transitoria',
-            encomiendaManifestNumber: 'none',
-            manifestUpdatedAt: now,
-            consolidacion: true,
-            ...(!pkg.firstConsolidatedAt ? { firstConsolidatedAt: now } : {}),
-            invoiceId: deleteField(),
-            invoiceNumber: deleteField(),
-            invoiceStatus: deleteField(),
-            smartwebSyncSource: 'transitoria',
-            smartwebSynced: false,
-
-            // Clear pricing overrides so target manifest calculates clean standard pricing
-            ajustePrecio: deleteField(),
-            precio: deleteField(),
-            price: deleteField(),
-            precioSinPermiso: deleteField(),
-            precioConPermiso: deleteField(),
-            pesoRedondeo: deleteField(),
-            diferenciaRedondeo: deleteField(),
-            pesoConsolidacion: deleteField(),
-            cost: deleteField(),
-            costCRC: deleteField(),
-
-            statusHistory: arrayUnion({
-              status: 'consolidated',
-              changedAt: now,
-              changedBy: 'returns-management-manual',
-              note: 'Paquete devuelto re-consolidado (movido a Consolidación Transitoria) por administración',
-            }),
-          });
-        }
+        const hasPaidInvoice = pkgHasPaidInvoice(pkg, paidInvoices);
+        batch.update(doc(db, 'packages', id), buildReconsolidatePayload(pkg, now, hasPaidInvoice));
 
         pkgsToSync.push({
           id: pkg.id,
@@ -692,73 +634,8 @@ export default function ReturnedPackages() {
         const pkg = packages.find(p => p.id === id);
         if (!pkg) continue;
 
-        const hasPaidInvoice = pkg.invoiceStatus === 'paid' || (pkg.invoiceId && paidInvoices.has(pkg.invoiceId));
-
-        if (hasPaidInvoice) {
-          // If invoice was paid, preserve invoice linkage and pricing
-          batch.update(doc(db, 'packages', id), {
-            status: 'consolidated',
-            deliveryStatus: 'consolidated',
-            manifestId: mf,
-            manifestNumber: mf,
-            updatedManifest: mf,
-            encomiendaManifestNumber: mf.toUpperCase().startsWith('ENC-') ? mf : 'none',
-            manifestUpdatedAt: now,
-            consolidacion: true,
-            isReassigned: true,
-            isReturned: true,
-            wasReturned: true,
-            originalManifest: (pkg as any).originalManifest || pkg.manifestNumber || (pkg as any).manifiesto || mf,
-            smartwebSyncSource: 'reassign',
-            smartwebSynced: false,
-            statusHistory: arrayUnion({
-              status: 'consolidated',
-              changedAt: now,
-              changedBy: 'returns-management-manual',
-              note: `Paquete devuelto re-asignado al manifiesto ${mf} (conservando factura pagada ${pkg.invoiceNumber || ''})`,
-            }),
-          });
-        } else {
-          // Unpaid: clear old invoice link & pricing overrides for clean re-invoicing in target manifest
-          batch.update(doc(db, 'packages', id), {
-            status: 'consolidated',
-            deliveryStatus: 'consolidated',
-            manifestId: mf,
-            manifestNumber: mf,
-            updatedManifest: mf,
-            encomiendaManifestNumber: mf.toUpperCase().startsWith('ENC-') ? mf : 'none',
-            manifestUpdatedAt: now,
-            consolidacion: true,
-            isReassigned: true,
-            isReturned: true,
-            wasReturned: true,
-            originalManifest: (pkg as any).originalManifest || pkg.manifestNumber || (pkg as any).manifiesto || mf,
-            invoiceId: deleteField(),
-            invoiceNumber: deleteField(),
-            invoiceStatus: deleteField(),
-            smartwebSyncSource: 'reassign',
-            smartwebSynced: false,
-
-            // Clear pricing overrides so target manifest calculates clean standard pricing
-            ajustePrecio: deleteField(),
-            precio: deleteField(),
-            price: deleteField(),
-            precioSinPermiso: deleteField(),
-            precioConPermiso: deleteField(),
-            pesoRedondeo: deleteField(),
-            diferenciaRedondeo: deleteField(),
-            pesoConsolidacion: deleteField(),
-            cost: deleteField(),
-            costCRC: deleteField(),
-
-            statusHistory: arrayUnion({
-              status: 'consolidated',
-              changedAt: now,
-              changedBy: 'returns-management-manual',
-              note: `Paquete devuelto re-asignado al manifiesto ${mf} por administración`,
-            }),
-          });
-        }
+        const hasPaidInvoice = pkgHasPaidInvoice(pkg, paidInvoices);
+        batch.update(doc(db, 'packages', id), buildReassignPayload(pkg, now, mf, hasPaidInvoice));
 
         pkgsToSync.push({
           id: pkg.id,

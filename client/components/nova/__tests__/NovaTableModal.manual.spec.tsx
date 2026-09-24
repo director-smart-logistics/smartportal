@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act, within } from "@testing-library/react";
 import React from "react";
 
 // Mock framer-motion to avoid animation issues in JSDOM
@@ -346,6 +346,22 @@ vi.mock("@/components/ui/dropdown-menu", () => {
   };
 });
 
+vi.mock("@/components/ui/popover", () => {
+  const React = require("react");
+  return {
+    Popover: ({ children }: any) => React.createElement("div", null, children),
+    PopoverTrigger: ({ children, asChild, ...props }: any) => {
+      if (asChild) return React.cloneElement(children, props);
+      return React.createElement("button", props, children);
+    },
+    // Radix Popover positioning (Popper/ResizeObserver) doesn't resolve in
+    // jsdom — mirror the DropdownMenuContent mock above and always render
+    // the content so its buttons are queryable regardless of `open`.
+    PopoverContent: ({ children, className }: any) => React.createElement("div", { className }, children),
+    PopoverAnchor: ({ children }: any) => children,
+  };
+});
+
 vi.mock("@/components/ui/dialog", () => {
   const React = require("react");
   return {
@@ -392,6 +408,7 @@ vi.mock(".././nova-route-options", () => {
 import { ResultSummary } from ".././NovaTableModal";
 import type { NovaMessage } from "@/hooks/use-nova-chat";
 import type { ManifestRow } from "@/lib/services/manifest-processor";
+import { ingestManifestToPackages } from "@/lib/services/manifest-processor";
 
 function makeRow(overrides: Partial<ManifestRow> = {}): ManifestRow {
   return {
@@ -662,6 +679,59 @@ describe("NovaTableModal - Manual Validation and Interactive UI Specs", () => {
       expect.objectContaining({ enabled: false })
     );
     console.log("TEST4: Done");
+  });
+
+  // ── BUG-ROUTE-SCOPE regression (incident 2026-09-23) ──────────────────────
+  // Real incident: admin processed a manifest in batches by route filter
+  // (one route, "Guardar y Facturar", next route, ...). Because the default
+  // save path ingested ALL rows regardless of the active filter, every click
+  // re-touched every OTHER route's packages too — silently re-triggering
+  // invoice generation for a customer (SL8150) on a different route whose
+  // invoice had already been annulled. These two tests assert the fix in
+  // both directions so this specific class of bug can't reappear uncaught.
+  it("route filter active + no row selection: 'Guardar Datos' only ingests rows matching the filtered route — NOT other routes' packages", async () => {
+    (ingestManifestToPackages as any).mockClear();
+
+    const sjRow = makeRow({ tracking: "TRK-SJ", slCode: "SL100", ruta: "San Jose Centro" });
+    const cartagoRow = makeRow({ tracking: "TRK-CARTAGO", slCode: "SL200", ruta: "Cartago 1" });
+    const resultData = {
+      ...defaultResultData,
+      loadedFromFirestore: true,
+      rows: [sjRow, cartagoRow],
+    };
+
+    render(<ResultSummary resultData={resultData} embedMode={false} />);
+
+    // Open the route-filter popover and pick "San Jose Centro" (matches sjRow only).
+    // "San Jose Centro" also appears as plain text/badges elsewhere in the
+    // table (route badges, manifest picker color list), so scope the query
+    // to this specific Popover's wrapper (mocked as a single <div> holding
+    // both the trigger and its content — see the popover mock above).
+    const routeFilterTrigger = screen.getByLabelText("Filtrar por ruta");
+    fireEvent.click(routeFilterTrigger);
+    const routeFilterPopover = routeFilterTrigger.parentElement as HTMLElement;
+    const sjOption = await within(routeFilterPopover).findByText("San Jose Centro");
+    fireEvent.click(sjOption);
+
+    // Wait past the 300ms debounce that promotes routeFilter -> debouncedRouteFilter.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    // No explicit row selection — click "Guardar Datos" (the default path this bug lived in).
+    const saveBtn = screen.getByRole("button", { name: /Actualizar BD|Guardar en BD/ });
+    fireEvent.click(saveBtn);
+    const confirmSaveOnly = screen.getByTestId("confirm-save-only-btn");
+    await act(async () => {
+      fireEvent.click(confirmSaveOnly);
+    });
+
+    expect(ingestManifestToPackages).toHaveBeenCalled();
+    const ingestedRows = (ingestManifestToPackages as any).mock.calls[0][0] as ManifestRow[];
+    const ingestedTrackings = ingestedRows.map((r) => r.tracking);
+
+    expect(ingestedTrackings).toContain("TRK-SJ");
+    expect(ingestedTrackings).not.toContain("TRK-CARTAGO");
   });
 
   // 4. Skeleton Loader

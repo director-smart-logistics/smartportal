@@ -1,0 +1,18 @@
+echo "→ pre-commit: typecheck"
+pnpm typecheck || {
+  echo ""
+  echo "✗ Typecheck failed — commit blocked."
+  echo "  A broken build must never reach a commit (incident 2026-09-23: a"
+  echo "  syntax error committed by a prior agent silently reverted a fix"
+  echo "  and blocked everyone until it was caught by chance)."
+  exit 1
+}
+
+echo "→ pre-commit: test suite"
+pnpm test || {
+  echo ""
+  echo "✗ Tests failed — commit blocked."
+  echo "  If a test is genuinely wrong (not the code), fix the test in this"
+  echo "  same commit — never bypass with --no-verify."
+  exit 1
+}

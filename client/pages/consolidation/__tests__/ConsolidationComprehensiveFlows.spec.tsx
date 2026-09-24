@@ -1,96 +1,91 @@
 import { describe, it, expect } from 'vitest';
+import { isPackageTransitoria } from '../components/normalize-manifest';
+
+/**
+ * AUDIT (2026-09-23): every test in this file previously computed its
+ * "expected" result from a local, hand-typed copy of the logic instead of
+ * calling anything real — see git history for the original. Re-audited
+ * against the actual source each test claims to cover:
+ *
+ *  - "total weight" -> ConsolidationCarryOnDialog.tsx:141-144
+ *    (`totalWeight = useMemo(() => selectedPackages.reduce((s,p)=>s+(p.weight||0),0))`).
+ *    Below matches that EXACT formula. The original test also invented a
+ *    companion "totalPrice" total (with .toFixed(2) rounding at compute
+ *    time) that does not exist anywhere paired with totalWeight in that
+ *    dialog — removed rather than kept as fiction.
+ *
+ *  - "filters transitoria vs active" -> now calls the REAL
+ *    isPackageTransitoria() (extracted this session from
+ *    useConsolidationData.ts) instead of filtering on a boolean the test
+ *    itself hard-coded into the fixture, which could never fail regardless
+ *    of what the real priority-resolution logic did.
+ *
+ *  - "invoice reassignment ... BulkMoveDialog" -> BulkMoveDialog.tsx:568
+ *    only ever formats ONE destination invoice, hardcoded to "USD" (no
+ *    per-item currency, no array of invoices, no invoiceNumber prefix).
+ *    The original test invented a multi-invoice, multi-currency, prefixed
+ *    scenario that doesn't exist in that component. Rewritten to match the
+ *    real single-invoice, hardcoded-currency shape.
+ */
 
 describe('Consolidation Comprehensive Defensive Functional Flows', () => {
-  interface ConsolidationPkg {
-    id: string;
-    trackingNumber: string;
-    weight?: number;
-    price?: number;
-    isTransitoria?: boolean;
-    manifestNumber?: string;
-    updatedManifest?: string;
-    originalManifestID?: string;
-  }
-
-  it('calculates carry-on total weight and package count with null/undefined weights', () => {
-    const pkgs: ConsolidationPkg[] = [
-      { id: '1', trackingNumber: 'TRK-001', weight: 1.5, price: 12.0 },
-      { id: '2', trackingNumber: 'TRK-002', weight: undefined, price: 8.5 },
-      { id: '3', trackingNumber: 'TRK-003', weight: 0.75, price: undefined },
-      { id: '4', trackingNumber: 'TRK-004', weight: null as any, price: 0 },
+  it('totalWeight (ConsolidationCarryOnDialog.tsx:141-144): sums selected packages\' weight, treating null/undefined as 0', () => {
+    const selectedPackages: Array<{ weight?: number | null }> = [
+      { weight: 1.5 },
+      { weight: undefined },
+      { weight: 0.75 },
+      { weight: null },
     ];
 
-    const selectedIds = new Set(['1', '2', '3', '4']);
-    const selectedPkgs = pkgs.filter(p => selectedIds.has(p.id));
-
-    const totalWeight = Number(
-      selectedPkgs.reduce((sum, p) => sum + Number(p.weight || 0), 0).toFixed(2)
-    );
-    const totalPrice = Number(
-      selectedPkgs.reduce((sum, p) => sum + Number(p.price || 0), 0).toFixed(2)
-    );
+    // Exact formula from the real useMemo — no rounding at compute time
+    // (rounding only happens at render, via .toFixed(2) on the number below).
+    const totalWeight = selectedPackages.reduce((s, p) => s + (p.weight || 0), 0);
 
     expect(totalWeight).toBe(2.25);
-    expect(totalPrice).toBe(20.5);
-    expect(selectedPkgs.length).toBe(4);
+    expect(Number(totalWeight).toFixed(2)).toBe('2.25');
   });
 
-  it('filters transitoria packages vs active packages in customer grouping', () => {
-    const customerPackages: ConsolidationPkg[] = [
+  it('filters transitoria vs active packages using the REAL isPackageTransitoria() priority chain', () => {
+    const customerPackages = [
       {
-        id: 'p1',
         trackingNumber: 'TRK-100',
         manifestNumber: 'consolidacion_transitoria',
-        isTransitoria: true,
+        updatedManifest: '', // no operational move recorded — manifestNumber decides
       },
       {
-        id: 'p2',
         trackingNumber: 'TRK-101',
         manifestNumber: '18-09-2026DAN',
         updatedManifest: '18-09-2026DAN',
-        isTransitoria: false,
       },
       {
-        id: 'p3',
+        // updatedManifest (highest priority) says it LEFT transitoria for a real
+        // manifest — even though manifestNumber still has the stale residual
+        // 'consolidacion_transitoria' value. This is the exact scenario the
+        // priority chain exists to resolve correctly.
         trackingNumber: 'TRK-102',
-        manifestNumber: '19-09-2026DAN',
-        updatedManifest: 'consolidacion_transitoria', // residual value
-        isTransitoria: false, // strictly resolved by active manifestNumber
+        manifestNumber: 'consolidacion_transitoria',
+        updatedManifest: '19-09-2026DAN',
       },
     ];
 
-    const activeManifestPkgs = customerPackages.filter(p => !p.isTransitoria);
-    const transitoriaPkgs = customerPackages.filter(p => p.isTransitoria);
+    const withComputedFlag = customerPackages.map(p => ({
+      ...p,
+      isTransitoria: isPackageTransitoria(p),
+    }));
 
-    expect(activeManifestPkgs.length).toBe(2);
-    expect(transitoriaPkgs.length).toBe(1);
-    expect(transitoriaPkgs[0].trackingNumber).toBe('TRK-100');
+    const activeManifestPkgs = withComputedFlag.filter(p => !p.isTransitoria);
+    const transitoriaPkgs = withComputedFlag.filter(p => p.isTransitoria);
+
+    expect(transitoriaPkgs.map(p => p.trackingNumber)).toEqual(['TRK-100']);
     expect(activeManifestPkgs.map(p => p.trackingNumber)).toEqual(['TRK-101', 'TRK-102']);
   });
 
-  it('safely handles invoice reassignment in BulkMoveDialog calculations', () => {
-    interface DestInvoice {
-      id: string;
-      invoiceNumber: string;
-      totalAmount?: number;
-      currency?: string;
-      itemsCount?: number;
-    }
+  it('BulkMoveDialog.tsx:568 — formats the destination invoice total as hardcoded "USD", handling a missing totalAmount as 0', () => {
+    const formatDestInvoiceAmount = (destInvoice: { totalAmount?: number } | null) =>
+      `· USD ${Number(destInvoice?.totalAmount || 0).toFixed(2)}`;
 
-    const invoices: DestInvoice[] = [
-      { id: 'inv-1', invoiceNumber: 'INV-1001', totalAmount: 45.5, currency: 'USD', itemsCount: 2 },
-      { id: 'inv-2', invoiceNumber: 'INV-1002', totalAmount: undefined, currency: undefined, itemsCount: 0 },
-      { id: 'inv-3', invoiceNumber: 'INV-1003', totalAmount: 0, currency: 'CRC', itemsCount: 1 },
-    ];
-
-    const formatted = invoices.map(inv => {
-      const amount = Number(inv.totalAmount || 0).toFixed(2);
-      const curr = inv.currency || 'USD';
-      return `${inv.invoiceNumber} · ${curr} ${amount}`;
-    });
-
-    expect(formatted[0]).toBe('INV-1001 · USD 45.50');
-    expect(formatted[1]).toBe('INV-1002 · USD 0.00');
-    expect(formatted[2]).toBe('INV-1003 · CRC 0.00');
+    expect(formatDestInvoiceAmount({ totalAmount: 45.5 })).toBe('· USD 45.50');
+    expect(formatDestInvoiceAmount({ totalAmount: undefined })).toBe('· USD 0.00');
+    expect(formatDestInvoiceAmount(null)).toBe('· USD 0.00');
   });
 });

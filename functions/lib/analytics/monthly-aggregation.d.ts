@@ -135,5 +135,19 @@ export interface MonthlyAnalyticsData {
         topTier: string | null;
     };
 }
+/**
+ * Aggregates monthly analytics data from packages, invoices, customers, and pre-alerts.
+ *
+ * Performance notes:
+ * - Uses field-level selects to minimize Firestore read bandwidth.
+ * - Trend months are resolved sequentially (not concurrently) to cap peak memory at ~1×
+ *   instead of ~6× when multiple months lack cache.
+ * - The full-collection packages scan (formerly used to build a "customersWithPackages" Set)
+ *   was removed as dead code — the Set was never consumed downstream.
+ *
+ * @param month  - Target month in "YYYY-MM" format.
+ * @param includeTrend - When true, resolves 6-month trend (current + 5 prior months).
+ *                       Set to false for recursive trend sub-calls to avoid infinite recursion.
+ */
 export declare function aggregateMonthlyData(month: string, includeTrend?: boolean): Promise<MonthlyAnalyticsData>;
 //# sourceMappingURL=monthly-aggregation.d.ts.map

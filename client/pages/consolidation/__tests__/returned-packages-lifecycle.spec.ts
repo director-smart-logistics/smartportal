@@ -1,259 +1,118 @@
 import { describe, it, expect } from 'vitest';
+import { deleteField } from 'firebase/firestore';
+import {
+  pkgHasPaidInvoice,
+  buildReconsolidatePayload,
+  buildReassignPayload,
+} from '../components/returned-packages-mutations';
 
-describe('Returned Packages Lifecycle & Invariant Guards', () => {
-  it('guards returned packages against invoice-driven status overrides', () => {
-    const returnedPackage = {
-      id: 'pkg-100',
-      trackingNumber: 'TRK-RET-001',
-      status: 'returned',
-      deliveryStatus: 'returned',
-      invoiceId: 'inv-paid-1',
-    };
+// AUDIT NOTE (2026-09-23): tests 'guards returned packages...', 'filters out
+// returned packages from bulk route delivery updates', 'deduplicates
+// packages...', 'aggregates multi-invoice sums...', and 'normalizes all
+// synonyms of "route" status...' were removed from this file — they asserted
+// against locally hand-typed copies of logic that actually lives in
+// RoutesManagement.tsx / Distribution.tsx (a different module entirely,
+// unrelated to ReturnedPackages.tsx), never importing anything real. That
+// coverage gap is real and still open; tracked separately, not fixed here.
+//
+// The remaining tests below DID map to real logic — the paid/unpaid payload
+// branches in ReturnedPackages.tsx's "Re-consolidar" and "Reasignar" admin
+// actions (financially sensitive: a paid invoice's linkage/pricing must
+// never be silently cleared). That logic has been extracted into
+// returned-packages-mutations.ts (single source of truth for both the
+// component and this test) and is exercised for real here.
+const DELETED = deleteField();
 
-    // Simulate invoice status promotion (e.g. invoice marked 'paid' trying to push 'on_route')
-    const incomingStatus = 'on_route';
-    const isReturned = returnedPackage.status === 'returned' || returnedPackage.deliveryStatus === 'returned';
-
-    // The guard should block the update
-    const shouldUpdateStatus = !isReturned;
-    expect(shouldUpdateStatus).toBe(false);
-  });
-
-  it('filters out returned packages from bulk route delivery updates', () => {
-    const routePackages = [
-      { id: 'p1', tracking: 'TRK-1', status: 'on_route', deliveryStatus: 'in_transit' },
-      { id: 'p2', tracking: 'TRK-2', status: 'returned', deliveryStatus: 'returned' },
-      { id: 'p3', tracking: 'TRK-3', status: 'on_route', deliveryStatus: 'in_transit' },
-    ];
-
-    const selectedIds = new Set(['p1', 'p2', 'p3']);
-
-    // Bulk delivery filter in RoutesManagement
-    const eligibleForBulkUpdate = routePackages.filter(
-      p => selectedIds.has(p.id) && p.status !== 'returned' && p.deliveryStatus !== 'returned'
-    );
-
-    expect(eligibleForBulkUpdate.map(p => p.id)).toEqual(['p1', 'p3']);
-    expect(eligibleForBulkUpdate.some(p => p.id === 'p2')).toBe(false);
-  });
-
-  it('deduplicates packages across status and deliveryStatus queries in ReturnedPackages', () => {
-    const snapshot1 = [
-      { id: 'pkg-1', trackingNumber: 'T1', status: 'returned', deliveryStatus: 'returned' },
-      { id: 'pkg-2', trackingNumber: 'T2', status: 'returned', deliveryStatus: 'pending' },
-    ];
-
-    const snapshot2 = [
-      { id: 'pkg-1', trackingNumber: 'T1', status: 'returned', deliveryStatus: 'returned' },
-      { id: 'pkg-3', trackingNumber: 'T3', status: 'delivered', deliveryStatus: 'returned' },
-    ];
-
-    const pkgsMap = new Map<string, any>();
-    [...snapshot1, ...snapshot2].forEach(p => {
-      pkgsMap.set(p.id, p);
+describe('Returned Packages — paid-invoice preservation (buildReconsolidatePayload / buildReassignPayload)', () => {
+  describe('pkgHasPaidInvoice', () => {
+    it('is TRUE when the package doc itself says invoiceStatus === "paid"', () => {
+      expect(pkgHasPaidInvoice({ invoiceStatus: 'paid' }, new Set())).toBe(true);
     });
 
-    const result = Array.from(pkgsMap.values());
-    expect(result).toHaveLength(3);
-    expect(result.map(p => p.id).sort()).toEqual(['pkg-1', 'pkg-2', 'pkg-3']);
-  });
-
-  it('aggregates multi-invoice sums and groups trackings under the client on route boleta print', () => {
-    const clientRows = [
-      {
-        slCode: 'SL25',
-        customerName: 'Carlos Perez',
-        tracking: 'TRK-ORIGINAL-01',
-        price: 20,
-        invoiceId: 'inv-1',
-        invoiceNumber: 'FAC-001',
-        invoiceAmountUSD: 20,
-        invoiceAmountCRC: 9400,
-      },
-      {
-        slCode: 'SL25',
-        customerName: 'Carlos Perez',
-        tracking: 'TRK-REASSIGNED-02',
-        price: 12,
-        invoiceId: 'inv-2',
-        invoiceNumber: 'FAC-002',
-        invoiceAmountUSD: 12,
-        invoiceAmountCRC: 5640,
-      },
-    ];
-
-    const activeInvoiceMap = new Map<string, { number: string; usd: number; crc?: number }>();
-    clientRows.forEach(r => {
-      if (r.invoiceId) {
-        activeInvoiceMap.set(r.invoiceId, {
-          number: r.invoiceNumber,
-          usd: r.invoiceAmountUSD,
-          crc: r.invoiceAmountCRC,
-        });
-      }
+    it('is TRUE when invoiceStatus is stale but the invoiceId is in the caller\'s paid-invoice set', () => {
+      expect(pkgHasPaidInvoice({ invoiceStatus: 'draft', invoiceId: 'inv-1' }, new Set(['inv-1']))).toBe(true);
     });
 
-    const activeInvoices = Array.from(activeInvoiceMap.values());
-    const totalUSD = activeInvoices.reduce((sum, inv) => sum + inv.usd, 0);
-    const totalCRC = activeInvoices.reduce((sum, inv) => sum + (inv.crc ?? 0), 0);
-
-    expect(activeInvoices).toHaveLength(2);
-    expect(activeInvoices.map(i => i.number)).toEqual(['FAC-001', 'FAC-002']);
-    expect(totalUSD).toBe(32);
-    expect(totalCRC).toBe(15040);
+    it('is FALSE when neither condition holds', () => {
+      expect(pkgHasPaidInvoice({ invoiceStatus: 'draft', invoiceId: 'inv-2' }, new Set(['inv-1']))).toBe(false);
+      expect(pkgHasPaidInvoice({}, new Set())).toBe(false);
+    });
   });
 
-  it('re-consolidates a returned package to consolidacion_transitoria and unlinks invoice fields', () => {
-    const pkg = {
-      id: 'pkg-ret-1',
-      trackingNumber: 'TRK-RET-999',
-      manifestNumber: '12-08-2026DAN',
-      status: 'returned',
-      deliveryStatus: 'returned',
-      invoiceId: 'inv-999',
-      invoiceNumber: 'FAC-999',
-      invoiceStatus: 'paid',
-    };
+  describe('buildReconsolidatePayload — "Re-consolidar" (send back to consolidacion_transitoria)', () => {
+    it('PAID: preserves invoice linkage and pricing — does NOT clear invoiceId/invoiceNumber/precio', () => {
+      const pkg = { invoiceId: 'inv-paid-1', invoiceNumber: 'FAC-001', invoiceStatus: 'paid' };
+      const payload = buildReconsolidatePayload(pkg, '2026-09-23T10:00:00Z', true);
 
-    // Re-consolidation mutation
-    const reconsolidatedPkg = {
-      ...pkg,
-      status: 'consolidated',
-      deliveryStatus: 'consolidated',
-      manifestId: 'consolidacion_transitoria',
-      manifestNumber: 'consolidacion_transitoria',
-      updatedManifest: 'consolidacion_transitoria',
-      encomiendaManifestNumber: 'none',
-      consolidacion: true,
-      invoiceId: undefined,
-      invoiceNumber: undefined,
-      invoiceStatus: undefined,
-    };
+      expect(payload.manifestNumber).toBe('consolidacion_transitoria');
+      expect(payload.status).toBe('consolidated');
+      expect(payload.consolidacion).toBe(true);
+      expect(payload.invoiceId).toBeUndefined();
+      expect(payload).not.toHaveProperty('precio');
+      expect(payload.statusHistory).toBeDefined();
+    });
 
-    expect(reconsolidatedPkg.status).toBe('consolidated');
-    expect(reconsolidatedPkg.manifestNumber).toBe('consolidacion_transitoria');
-    expect(reconsolidatedPkg.invoiceId).toBeUndefined();
-    expect(reconsolidatedPkg.encomiendaManifestNumber).toBe('none');
+    it('UNPAID: clears invoice linkage AND every pricing override field via deleteField()', () => {
+      const pkg = { invoiceId: 'inv-draft-1', invoiceNumber: 'FAC-002', invoiceStatus: 'draft' };
+      const payload = buildReconsolidatePayload(pkg, '2026-09-23T10:00:00Z', false);
+
+      expect(payload.invoiceId).toEqual(DELETED);
+      expect(payload.invoiceNumber).toEqual(DELETED);
+      expect(payload.invoiceStatus).toEqual(DELETED);
+      expect(payload.precio).toEqual(DELETED);
+      expect(payload.ajustePrecio).toEqual(DELETED);
+      expect(payload.pesoRedondeo).toEqual(DELETED);
+    });
+
+    it('stamps firstConsolidatedAt only when the package does not already have one', () => {
+      const now = '2026-09-23T10:00:00Z';
+      const withoutOne = buildReconsolidatePayload({}, now, true);
+      expect(withoutOne.firstConsolidatedAt).toBe(now);
+
+      const withOne = buildReconsolidatePayload({ firstConsolidatedAt: '2026-01-01T00:00:00Z' }, now, true);
+      expect(withOne.firstConsolidatedAt).toBeUndefined(); // not overwritten
+    });
   });
 
-  it('reassigns a returned package to a target manifest and strips old pricing overrides', () => {
-    const pkg = {
-      id: 'pkg-ret-2',
-      trackingNumber: 'TRK-RET-888',
-      manifestNumber: '11-08-2026DAN',
-      status: 'returned',
-      deliveryStatus: 'returned',
-      precio: 15,
-      ajustePrecio: 2,
-      pesoRedondeo: 1,
-    };
+  describe('buildReassignPayload — "Reasignar" (send to a specific target manifest)', () => {
+    it('PAID: preserves invoiceId, invoiceNumber, invoiceStatus and does NOT delete pricing', () => {
+      const pkg = {
+        invoiceId: 'inv-sl270-paid',
+        invoiceNumber: 'SL270-20260814133227598',
+        invoiceStatus: 'paid',
+        manifestNumber: '11-08-2026DAN',
+      };
+      const payload = buildReassignPayload(pkg, '2026-09-23T10:00:00Z', '14-08-2026DAN', true);
 
-    const targetManifest = '14-08-2026DAN';
+      expect(payload.manifestNumber).toBe('14-08-2026DAN');
+      expect(payload.originalManifest).toBe('11-08-2026DAN');
+      expect(payload.isReassigned).toBe(true);
+      expect(payload.wasReturned).toBe(true);
+      expect(payload.invoiceId).toBeUndefined();
+      expect(payload).not.toHaveProperty('precio');
+    });
 
-    // Target manifest move mutation
-    const reassignedPkg = {
-      ...pkg,
-      manifestNumber: targetManifest,
-      manifestId: targetManifest,
-      updatedManifest: targetManifest,
-      status: 'customs',
-      deliveryStatus: 'pending',
-      isReassigned: true,
-      precio: undefined,
-      ajustePrecio: undefined,
-      pesoRedondeo: undefined,
-    };
+    it('UNPAID: clears invoice linkage and pricing overrides for a clean re-invoice in the target manifest', () => {
+      const pkg = { invoiceStatus: 'draft', manifestNumber: '11-08-2026DAN' };
+      const payload = buildReassignPayload(pkg, '2026-09-23T10:00:00Z', '14-08-2026DAN', false);
 
-    expect(reassignedPkg.manifestNumber).toBe('14-08-2026DAN');
-    expect(reassignedPkg.status).toBe('customs');
-    expect(reassignedPkg.isReassigned).toBe(true);
-    expect(reassignedPkg.precio).toBeUndefined();
-    expect(reassignedPkg.ajustePrecio).toBeUndefined();
-  });
+      expect(payload.invoiceId).toEqual(DELETED);
+      expect(payload.precio).toEqual(DELETED);
+      expect(payload.ajustePrecio).toEqual(DELETED);
+    });
 
-  it('preserves invoiceId, invoiceNumber and prices when reassigning a package with a PAID invoice', () => {
-    const pkg = {
-      id: 'pkg-paid-ret-1',
-      trackingNumber: 'TBA333475078910',
-      manifestNumber: '11-08-2026DAN',
-      status: 'returned',
-      deliveryStatus: 'returned',
-      invoiceId: 'inv-sl270-paid',
-      invoiceNumber: 'SL270-20260814133227598',
-      invoiceStatus: 'paid',
-      hasPaidInvoice: true,
-      precio: 25.5,
-      price: 25.5,
-    };
+    it('falls back through originalManifest -> manifestNumber -> manifiesto -> targetManifest, in that priority', () => {
+      expect(buildReassignPayload({ originalManifest: 'ORIG-1', manifestNumber: 'M-2' }, 'now', 'TARGET', true).originalManifest).toBe('ORIG-1');
+      expect(buildReassignPayload({ manifestNumber: 'M-2' }, 'now', 'TARGET', true).originalManifest).toBe('M-2');
+      expect(buildReassignPayload({ manifiesto: 'M-3' }, 'now', 'TARGET', true).originalManifest).toBe('M-3');
+      expect(buildReassignPayload({}, 'now', 'TARGET', true).originalManifest).toBe('TARGET');
+    });
 
-    const targetManifest = '14-08-2026DAN';
-
-    // Business Logic Branch: hasPaidInvoice === true
-    const reassignedWithPaidInvoice = {
-      ...pkg,
-      manifestId: targetManifest,
-      manifestNumber: targetManifest,
-      updatedManifest: targetManifest,
-      status: 'consolidated',
-      deliveryStatus: 'consolidated',
-      consolidacion: true,
-      isReassigned: true,
-      isReturned: true,
-      wasReturned: true,
-      originalManifest: pkg.manifestNumber,
-      // INVARIANT: Do NOT delete or clear invoice fields or prices
-      invoiceId: pkg.invoiceId,
-      invoiceNumber: pkg.invoiceNumber,
-      invoiceStatus: pkg.invoiceStatus,
-      precio: pkg.precio,
-      price: pkg.price,
-    };
-
-    expect(reassignedWithPaidInvoice.manifestNumber).toBe('14-08-2026DAN');
-    expect(reassignedWithPaidInvoice.originalManifest).toBe('11-08-2026DAN');
-    expect(reassignedWithPaidInvoice.invoiceId).toBe('inv-sl270-paid');
-    expect(reassignedWithPaidInvoice.invoiceNumber).toBe('SL270-20260814133227598');
-    expect(reassignedWithPaidInvoice.invoiceStatus).toBe('paid');
-    expect(reassignedWithPaidInvoice.precio).toBe(25.5);
-    expect(reassignedWithPaidInvoice.isReassigned).toBe(true);
-    expect(reassignedWithPaidInvoice.wasReturned).toBe(true);
-  });
-
-  it('correctly manages encomiendaManifestNumber when target is encomienda vs standard manifest', () => {
-    const encomiendaTarget = 'ENC-2026-08';
-    const standardTarget = 'USA-AIR-08';
-
-    const calcEncManifest = (target: string) =>
-      target.toUpperCase().startsWith('ENC-') ? target : 'none';
-
-    expect(calcEncManifest(encomiendaTarget)).toBe('ENC-2026-08');
-    expect(calcEncManifest(standardTarget)).toBe('none');
-  });
-
-  it('normalizes all synonyms of "route" status to canonical "route" and "En Ruta" label', () => {
-    const synonyms = ['route', 'on_route', 'in_route', 'en_ruta', 'transit'];
-
-    const resolveCanonicalStatus = (raw: string) => {
-      const s = raw.toLowerCase().trim();
-      if (['route', 'on_route', 'in_route', 'en_ruta'].includes(s)) return 'route';
-      return s;
-    };
-
-    const resolveLabel = (status: string) => {
-      if (status === 'route') return 'En Ruta';
-      if (status === 'delivered') return 'Entregado';
-      if (status === 'returned') return 'Devuelto';
-      return status;
-    };
-
-    synonyms.forEach(syn => {
-      const canonical = resolveCanonicalStatus(syn);
-      if (syn !== 'transit') {
-        expect(canonical).toBe('route');
-        expect(resolveLabel(canonical)).toBe('En Ruta');
-      } else {
-        expect(canonical).toBe('transit');
-      }
+    it('sets encomiendaManifestNumber to the target manifest when it is an encomienda (ENC- prefix), else "none"', () => {
+      expect(buildReassignPayload({}, 'now', 'ENC-2026-08', true).encomiendaManifestNumber).toBe('ENC-2026-08');
+      expect(buildReassignPayload({}, 'now', 'USA-AIR-08', true).encomiendaManifestNumber).toBe('none');
+      // Case-insensitive prefix check, mirrors the real code's .toUpperCase().startsWith('ENC-')
+      expect(buildReassignPayload({}, 'now', 'enc-lowercase', true).encomiendaManifestNumber).toBe('enc-lowercase');
     });
   });
 });

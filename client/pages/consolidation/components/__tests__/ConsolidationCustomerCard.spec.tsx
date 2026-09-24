@@ -405,7 +405,7 @@ describe('ConsolidationCustomerCard — Timing and Storage Charges', () => {
     expect(screen.getByText(/Día 1: 19\/08\/2026/i)).toBeTruthy();
   });
 
-  it('correctly extracts earliest consolidation date from statusHistory audit trail', () => {
+  it('correctly extracts LATEST consolidation date from statusHistory audit trail (post-fix 2026-09-23: multi-annul resets the cycle to the most recent invoice)', () => {
     const sectionWithAuditTrail: CustomerSection = {
       ...mockCustomerSection,
       lookupPackages: [
@@ -483,9 +483,12 @@ describe('ConsolidationCustomerCard — Timing and Storage Charges', () => {
       />
     );
 
-    // Verify it extracted the earliest annulled invoice date 08/08/2026, NOT the latest 19/08/2026
+    // Package was invoiced+annulled twice: 08/08/2026, then re-invoiced+annulled
+    // 19/08/2026. Per the 2026-09-23 fix (Math.min -> Math.max), the CURRENT
+    // billing cycle starts at the most recent annul, 19/08/2026 — NOT the
+    // stale 08/08/2026 from the closed first cycle.
     expect(screen.getByText(/GFUS01069999999999/i)).toBeTruthy();
-    expect(screen.getByText(/Día 1: 08\/08\/2026/i)).toBeTruthy();
+    expect(screen.getByText(/Día 1: 19\/08\/2026/i)).toBeTruthy();
   });
 
   it('renders package from an annulled invoice as unblocked and movable', () => {

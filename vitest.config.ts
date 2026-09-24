@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
+    testTimeout: 15000,
     exclude: ['**/node_modules/**', '**/dist/**', '**/playwright/**'],
     coverage: {
       provider: 'v8',

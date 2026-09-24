@@ -558,6 +558,26 @@ export async function upsertManifestPackageOverrides(
         continue;
       }
 
+      // ─── TRANSITORIA PROTECTION GUARD (Gap #4, 2026-09-23) ──────────────────────────
+      // INVARIANT: Packages parked in consolidacion_transitoria (e.g. after invoice
+      // annulment, possibly from a concurrent action in another tab/admin) must NOT
+      // be silently overwritten by auto-save or the price-adjustment sync — both call
+      // this function with NO rowManifestOverrides. Without this guard, auto-save races
+      // against useNovaPackagesWatch's real-time removedTrackings auto-sync: the watcher
+      // detects the package left the manifest and schedules a reload (1200ms debounce)
+      // to remove it from the table, but auto-save could fire first and silently write
+      // manifestNumber back to this manifest — reversing a legitimate external move the
+      // operator never asked to undo. Only an explicit rowManifestOverrides entry (admin
+      // "Cambiar manifiesto" action) may reclaim a transitoria package back into a real
+      // manifest. Mirrors the identical guard in ingestManifestToPackages above — DO NOT
+      // let these two drift; see ingestion.spec.ts ("upsertManifestPackageOverrides —
+      // transitoria protection") for the regression test.
+      // (pkgInfo.exists is already guaranteed true by the skip-check above.)
+      if (pkgInfo.isTransitoria && !hasExplicitOverride) {
+        batchSkipped += 1;
+        continue;
+      }
+
       const targetManifestNumberRaw = (options?.rowManifestOverrides?.[trackingId] ?? manifestNumber) || row.manifiesto;
       const targetManifestNumber = (targetManifestNumberRaw || '').trim();
 
@@ -797,6 +817,16 @@ export async function ingestManifestToPackages(
       // ─── FOREIGN MANIFEST COLLISION GUARD ──────────────────────────────────────────
       // INVARIANT: Do not overwrite packages belonging to a different active manifest unless explicitly overridden.
       if (isForeignManifest) {
+        result.skipped++;
+        continue;
+      }
+
+      // ─── TRANSITORIA PROTECTION GUARD ──────────────────────────────────────────────
+      // INVARIANT: Packages parked in consolidacion_transitoria (e.g. after invoice
+      // annulment) must NOT be silently overwritten by a routine manifest re-ingestion.
+      // Only an explicit rowManifestOverrides entry (admin "Cambiar manifiesto" action)
+      // may reclaim a transitoria package back into a real manifest.
+      if (isExisting && isTransitoria && !hasExplicitOverride) {
         result.skipped++;
         continue;
       }

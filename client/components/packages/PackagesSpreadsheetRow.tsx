@@ -185,6 +185,19 @@ export const PackagesSpreadsheetRow = React.memo(function PackagesSpreadsheetRow
             description={(pkg as any).description || (pkg as any).descripcion || ""}
             permisos={(pkg as any).requiresPermit || (pkg as any).permisos || false}
             manifests={manifests}
+            invoiceId={pkg.invoiceId || ""}
+            annulledInvoiceNumber={
+              pkg.annulledInvoiceNumber ||
+              (pkg.invoiceStatus === 'annulled' ? pkg.invoiceNumber : '') ||
+              (Array.isArray(pkgInvoices) && pkgInvoices.find((i: any) => ['annulled', 'cancelled', 'void'].includes(i.status))?.invoiceNumber) ||
+              ""
+            }
+            annulledInvoiceId={
+              pkg.annulledInvoiceId ||
+              (pkg.invoiceStatus === 'annulled' ? pkg.invoiceId : '') ||
+              (Array.isArray(pkgInvoices) && pkgInvoices.find((i: any) => ['annulled', 'cancelled', 'void'].includes(i.status))?.id) ||
+              ""
+            }
             open={isManifestOpen}
             onOpenChange={setIsManifestOpen}
             triggerClassName="w-full h-full px-3 py-2 text-xs font-mono text-gray-700 bg-transparent hover:bg-gray-100/60 focus:z-10 focus:ring-1 focus:ring-blue-500 rounded-none shadow-none text-left truncate cursor-pointer flex items-center justify-start transition-colors"

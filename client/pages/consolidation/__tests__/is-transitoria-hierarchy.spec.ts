@@ -1,26 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { isPackageTransitoria } from '../components/normalize-manifest';
 
-/**
- * Mirror of the canonical isTransitoria logic from Cloud Functions and useConsolidationData.
- */
-function isTransitoria(pkg: {
-  manifestId?: string | null;
-  manifestNumber?: string | null;
-  manifiesto?: string | null;
-  updatedManifest?: string | null;
-}): boolean {
-  if (!pkg) return false;
-  const uMf  = String(pkg.updatedManifest || '').trim().toLowerCase();
-  const mId  = String(pkg.manifestId || '').trim().toLowerCase();
-  const mNum = String(pkg.manifestNumber || '').trim().toLowerCase();
-  const mnf  = String(pkg.manifiesto || '').trim().toLowerCase();
-  
-  // Priority: updatedManifest (most recent operational/manual move) > manifestId > manifestNumber > manifiesto
-  if (uMf) return uMf === 'consolidacion_transitoria';
-  if (mId) return mId === 'consolidacion_transitoria';
-  if (mNum) return mNum === 'consolidacion_transitoria';
-  return mnf === 'consolidacion_transitoria';
-}
+// AUDIT NOTE (2026-09-23): this file used to re-implement isTransitoria as a
+// local "mirror" function and assert against its own copy — the real
+// production logic (inline inside useConsolidationData.ts's
+// mapDocToPackage) was never exercised, so it could drift silently. Fixed
+// by extracting the real logic into normalize-manifest.ts as
+// isPackageTransitoria() and importing it here AND in useConsolidationData.ts.
 
 describe('Manifest Priority Hierarchy & isTransitoria Invariant Guards', () => {
   it('returns TRUE when a package was moved to consolidacion_transitoria via updatedManifest', () => {
@@ -31,7 +17,7 @@ describe('Manifest Priority Hierarchy & isTransitoria Invariant Guards', () => {
       updatedManifest: 'consolidacion_transitoria',
     };
 
-    expect(isTransitoria(pkg)).toBe(true);
+    expect(isPackageTransitoria(pkg)).toBe(true);
   });
 
   it('returns FALSE when a package was moved from transitoria to a new real manifest via updatedManifest', () => {
@@ -42,7 +28,7 @@ describe('Manifest Priority Hierarchy & isTransitoria Invariant Guards', () => {
       updatedManifest: '22-09-2026DAN',
     };
 
-    expect(isTransitoria(pkg)).toBe(false);
+    expect(isPackageTransitoria(pkg)).toBe(false);
   });
 
   it('returns TRUE when manifestId is explicitly consolidacion_transitoria and updatedManifest is empty', () => {
@@ -53,7 +39,7 @@ describe('Manifest Priority Hierarchy & isTransitoria Invariant Guards', () => {
       updatedManifest: '',
     };
 
-    expect(isTransitoria(pkg)).toBe(true);
+    expect(isPackageTransitoria(pkg)).toBe(true);
   });
 
   it('returns FALSE for legacy packages with only manifestNumber set to a real manifest', () => {
@@ -61,7 +47,7 @@ describe('Manifest Priority Hierarchy & isTransitoria Invariant Guards', () => {
       manifestNumber: 'SL-MEGA-MAN-10-09-2026',
     };
 
-    expect(isTransitoria(pkg)).toBe(false);
+    expect(isPackageTransitoria(pkg)).toBe(false);
   });
 
   it('returns TRUE for legacy packages with only manifiesto set to consolidacion_transitoria', () => {
@@ -69,7 +55,7 @@ describe('Manifest Priority Hierarchy & isTransitoria Invariant Guards', () => {
       manifiesto: 'consolidacion_transitoria',
     };
 
-    expect(isTransitoria(pkg)).toBe(true);
+    expect(isPackageTransitoria(pkg)).toBe(true);
   });
 
   it('returns TRUE when only updatedManifest is present and is consolidacion_transitoria', () => {
@@ -77,7 +63,7 @@ describe('Manifest Priority Hierarchy & isTransitoria Invariant Guards', () => {
       updatedManifest: 'consolidacion_transitoria',
     };
 
-    expect(isTransitoria(pkg)).toBe(true);
+    expect(isPackageTransitoria(pkg)).toBe(true);
   });
 
   it('returns FALSE for brand new package in a real manifest with no prior transitoria', () => {
@@ -88,6 +74,11 @@ describe('Manifest Priority Hierarchy & isTransitoria Invariant Guards', () => {
       updatedManifest: '22-09-2026DAN',
     };
 
-    expect(isTransitoria(pkg)).toBe(false);
+    expect(isPackageTransitoria(pkg)).toBe(false);
+  });
+
+  it('returns FALSE for a null/undefined package (defensive)', () => {
+    expect(isPackageTransitoria(null as any)).toBe(false);
+    expect(isPackageTransitoria(undefined as any)).toBe(false);
   });
 });

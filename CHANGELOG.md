@@ -2,6 +2,66 @@
 
 All notable changes to the **Smart Portal 1 (Admin/Nova)** project will be documented in this file.
 
+## [0.0.1633] - 2026-09-23
+
+### Feat & Hardening (Traslado Directo a Consolidación Transitoria, Ingesta Acotada por Ruta y Protección de Rutas)
+- **Traslado a Consolidación Transitoria desde Celda de Manifiesto (`PackageManifestEditor.tsx`):**
+  - Añadida la opción directa de mover paquetes a *"Consolidación Transitoria"* desde el selector de manifiesto en la tabla de paquetes y en el modal de detalles de paquete.
+  - Para paquetes vinculados a factura, se añadió un modal de confirmación (`AlertDialog`) que enumera los paquetes hermanos vinculados y anula automáticamente la factura (`moveInvoiceToTransitoria`) reubicando todos los paquetes vinculados en una sola operación atómica.
+  - Paquetes no vinculados se trasladan individualmente (`moveUnlinkedPackageToTransitoria`) con notas completas en `statusHistory`.
+  - Soporte robusto para paquetes huérfanos con facturas previamente anuladas sin provocar bloqueos ni salidas tempranas.
+- **Cascada de Actualización de Rutas a Nova Learning (`match-learning.ts`, `customer-sync.ts`):**
+  - Implementada la función `cascadeCustomerRouteUpdateToLearning`: cuando un operador modifica la ruta de un cliente desde el selector de ruta o la libreta de clientes (`updateCustomerRuta`), el cambio se propaga de inmediato a `match_feedback.ruta` y limpia las cachés en memoria (`learnedCache`, `learnedCacheIndex`), asegurando coherencia inmediata en Nova sin requerir reinicios.
+- **Inmunidad y Preservación de Rutas en Manifiestos Reabiertos (`NovaTableModal.tsx`, `use-nova-resolved-rows.ts`, `types.ts`):**
+  - Centralización del gate `allowAutoCustomerRouteFill` en `DataOriginPolicy` para evitar que la reapertura de un manifiesto guardado sobrescriba las rutas previamente guardadas con la ruta activa del perfil de cliente.
+  - Implementado badge visual de alerta no bloqueante (`showRouteDriftBadge`) y acción en menú contextual ("Ruta cambió: X → Y") para aplicar correcciones únicamente de forma explícita por el operador.
+- **Ingesta Acotada por Filtro de Ruta y Protección en Auto-Guardado (`NovaTableModal.tsx`, `ingestion.ts`):**
+  - Se introdujo `routeScopedIngestRows`: al procesar por lotes de ruta mediante "Guardar y Facturar", únicamente se ingestan y facturan los paquetes de la ruta filtrada (y reasignaciones manuales), previniendo la re-ingesta involuntaria de paquetes de otras rutas o la re-emisión de facturas previamente anuladas.
+  - Blindaje en `upsertManifestPackageOverrides` para no reclamar silenciosamente paquetes estacionados en `consolidacion_transitoria`.
+- **Optimización de Mutaciones y Reactividad en Consolidación (`consolidation-carry-on-service.ts`, `useConsolidationData.ts`):**
+  - Límite de seguridad de 200 paquetes en `carryOnPackages` para respetar el límite de 500 operaciones por `writeBatch` de Firestore.
+  - Corrección de la condición en `carryOnPackages` para evitar la duplicación de facturas de consolidación en carry-on hacia manifiestos con factura existente.
+  - Coalescencia / debounce de 50ms en `useConsolidationData.ts` para agrupar emisiones casi simultáneas de los 3 listeners de `packages`.
+- **Infraestructura de Calidad y Pre-Commit Hook:**
+  - Configurado Husky pre-commit hook para ejecutar validación estricta de tipos (`typecheck`) y suite completa de pruebas unitarias/integración antes de cualquier commit.
+  - Aumentado timeout global en configuración de Vitest a 15s para evitar falsos positivos por concurrencia en la suite completa.
+
+## [0.0.1632] - 2026-09-23
+
+### Fixed (Resolución de Día 1 en Manifiesto de Consolidación ante Multi-Anulación de Facturas)
+- **Corrección de `Math.min` a `Math.max` en Extracción de Fecha de Factura (`ConsolidationCustomerCard.tsx`):**
+  - Se modificó la resolución de fecha base en `getConsolidationStartDate()`: en escenarios donde un paquete o cliente atraviesa múltiples ciclos de facturación con sus respectivas anulaciones (ej. Factura Julio anulada y Factura Septiembre anulada), el sistema ahora toma la fecha de la **última factura emitida/anulada** (`Math.max`), en lugar de la primera (`Math.min`).
+  - Corrige el bug donde clientes con paquetes re-facturados en septiembre seguían mostrando *"Día 79+ / Gracia Vencida"* acumulando días desde julio en lugar de reiniciar el conteo al ciclo activo de septiembre (*"Día ~4"*).
+- **Alineación de `latestCycleStart` en Cabecera de Cliente (`ConsolidationCustomerCard.tsx`):**
+  - Se actualizó el cálculo de gracia a nivel de tarjeta de cliente (`latestCycleStart` / `oldestPackageDate`) para reflejar consistentemente el inicio del ciclo activo más reciente del cliente, evitando discrepancias entre la cabecera y el detalle de paquetes.
+- **Alineación Preventiva en Servicio Auxiliar (`consolidation-carry-on-service.ts`):**
+  - Se filtró el escaneo de `statusHistory` en `oldestPackageDate()` para conservar únicamente la fecha de factura más reciente y no mezclar marcas temporales de eventos de anulación como fechas de ciclo de facturación.
+- **Cobertura de Pruebas de Regresión (`consolidation-transitoria-live-invariants.spec.ts`):**
+  - Añadido caso de prueba automatizado para el invariante multi-anulación (*"uses the LATEST invoice date when multiple annul events exist (Caso Esteban multi-annul)"*), superando 11/11 tests de invariantes sin regresiones.
+
+## [0.0.1631] - 2026-09-22
+
+### Fixed & Hardened (Blindaje Numérico de totalAmount y Sanitizador de NaN en slGetMonthlyAnalytics)
+- **Conversión Numérica Estricta de `totalAmount` (`functions/src/analytics/monthly-aggregation.ts`):**
+  - Se envolvieron todas las 7 ocurrencias de lectura de `totalAmount` en las agregaciones de facturas con `(Number(i.totalAmount) || 0)`.
+  - Resuelve la causa raíz de números astronómicos ($1.5 quintillones en rutas) y desbordamientos numéricos originados por documentos en Firestore donde `totalAmount` estaba almacenado como tipo string, provocando concatenación de cadenas de texto dentro de `.reduce()` en lugar de sumas aritméticas.
+- **Sanitizador Recursivo Antidesbordamiento y `NaN` / `Infinity` (`functions/src/analytics/monthly-aggregation.ts`):**
+  - Implementada función utilitaria recursiva `sanitizeNaN<T>()` en la frontera de respuesta de `aggregateMonthlyData()` que convierte automáticamente cualquier valor `NaN`, `Infinity` o `-Infinity` a `0`.
+  - Añadidas guardas `Number.isFinite()` en divisiones de ratios de ingresos.
+  - Garantiza que la serialización JSON de Firebase HTTPS Callable (`onCall`) nunca falle con error HTTP 500 INTERNAL (*"Data cannot be encoded in JSON: NaN"*).
+
+## [0.0.1630] - 2026-09-22
+
+### Fixed & Perf (Optimización de Memoria, Timeout y Dead Code en slGetMonthlyAnalytics)
+- **Timeout Extendido a 300s (`functions/src/analytics/callable.ts`):**
+  - Se configuró `timeoutSeconds: 300` en la Cloud Function `slGetMonthlyAnalytics`, resolviendo el timeout por defecto de 60s (HTTP 500 INTERNAL) durante el cálculo de métricas en meses de alto volumen o tendencias históricas de 6 meses.
+- **Eliminación de Full Table Scan Innecesario (`functions/src/analytics/monthly-aggregation.ts`):**
+  - Se removió la query global de la colección `packages` (`allPackagesWithCustSnap`) y el Set `customersWithPackages` que no se utilizaba en ningún cálculo posterior, optimizando costos de lectura en Firestore y reduciendo la presión de memoria.
+- **Resolución Secuencial de Tendencias Multi-Mes (`functions/src/analytics/monthly-aggregation.ts`):**
+  - Se sustituyó `Promise.all` concurrente por un loop secuencial `for...of` para la agregación de los 5 meses previos, limitando el consumo de memoria a ~1× en lugar de ~6× cuando varios meses carecen de snapshot en caché.
+- **Documentación JSDoc:**
+  - Documentada la función `aggregateMonthlyData()` con notas de performance, parámetros y tipos de retorno para trazabilidad y mantenimiento.
+
 ## [0.0.1627] - 2026-09-22
 
 ### Feat & Hardening (Contador de Auditoría en Vivo, Numeración Secuencial de Paneles y Blindaje de Consolidación Transitoria)

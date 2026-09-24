@@ -949,7 +949,14 @@ export const ResultSummary = memo(function ResultSummary({
     ] as string[];
     return subscribeCustomersBySlCodes(slCodes, (map) => {
       setCustomerContactMap(map);
-      if (!resultData.loadedFromFirestore) {
+      // AI GUARD: BUG-ROUTE-AUTOCORRECT (2026-09-23) — DO NOT remove this
+      // gate. Seeding rutaOverrides from the live customer profile is only
+      // safe for a fresh parse (allowAutoCustomerRouteFill). For a
+      // Firestore-loaded manifest this would silently overwrite the saved
+      // route the moment the realtime customer listener fires — see
+      // client/lib/nova/data-origin/types.ts for the full incident note and
+      // use-nova-resolved-rows.spec.ts for the regression test.
+      if (dataOriginPolicy.allowAutoCustomerRouteFill) {
         setRutaOverrides((prev) => {
           const next = { ...prev };
           map.forEach((info, slCode) => {
@@ -961,7 +968,7 @@ export const ResultSummary = memo(function ResultSummary({
         });
       }
     });
-  }, [showTable, resultData.rows, slCodeOverrides, matchOverrides, resultData.loadedFromFirestore]);
+  }, [showTable, resultData.rows, slCodeOverrides, matchOverrides, dataOriginPolicy.allowAutoCustomerRouteFill]);
 
   // ── Invoice-mode effect — reactive sync from live invoices + customer flags ──
   // Runs whenever persistedInvoices (onSnapshot) or customerContactMap changes.
@@ -1101,7 +1108,12 @@ export const ResultSummary = memo(function ResultSummary({
   // ── Pre-populate routes from learned cache for unmatched rows ──────────────
   useEffect(() => {
     if (!showTable) return;
-    if (resultData.loadedFromFirestore) return; // STRICT RULE: Never overwrite or auto-assign routes when loading from Firestore
+    // AI GUARD: BUG-ROUTE-AUTOCORRECT (2026-09-23) — STRICT RULE: never
+    // overwrite or auto-assign routes when loading from Firestore. Routed
+    // through dataOriginPolicy.allowAutoLearnedRoute (single source of
+    // truth) instead of a raw `loadedFromFirestore` check so this can't be
+    // dropped again without also flipping the policy contract + its tests.
+    if (!dataOriginPolicy.allowAutoLearnedRoute) return;
     loadUnmatchedRouteCache()
       .then(() => {
         setRutaOverrides((prev) => {
@@ -1127,10 +1139,18 @@ export const ResultSummary = memo(function ResultSummary({
         });
       })
       .catch(() => { });
-  }, [showTable, resultData.rows, routeOptions, unlinkedRows]);
+  }, [showTable, resultData.rows, routeOptions, unlinkedRows, dataOriginPolicy.allowAutoLearnedRoute]);
 
   // ── Realtime ruta sync — patch rutaOverrides whenever any ruta changes ───
+  // AI GUARD: BUG-ROUTE-AUTOCORRECT (2026-09-23) — same invariant as the two
+  // effects above: this global listener fires whenever ANY admin changes a
+  // customer's route anywhere in the app (Customer Collection, another Nova
+  // table, etc.) while this table happens to be mounted. For a Firestore-
+  // loaded manifest that MUST NOT silently rewrite the saved route — it's
+  // the exact live-reopen scenario the guard exists for. Gated on
+  // dataOriginPolicy.allowAutoCustomerRouteFill; do not drop this check.
   useEffect(() => {
+    if (!dataOriginPolicy.allowAutoCustomerRouteFill) return;
     const handler = (e: Event) => {
       const { slCode, ruta } = (
         e as CustomEvent<{ slCode: string; ruta: string }>
@@ -1139,7 +1159,7 @@ export const ResultSummary = memo(function ResultSummary({
     };
     window.addEventListener("customer-ruta-updated", handler);
     return () => window.removeEventListener("customer-ruta-updated", handler);
-  }, []);
+  }, [dataOriginPolicy.allowAutoCustomerRouteFill]);
 
   // ── Row selection state ───────────────────────────────────────────────────
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
@@ -2617,6 +2637,76 @@ export const ResultSummary = memo(function ResultSummary({
     [resultData.rows, selectedRows, filteredIdxs],
   );
 
+  // ── Route-scoped ingest rows ───────────────────────────────────────────
+  // INCIDENT (2026-09-23): admin processed a manifest in batches by route
+  // filter (Heredia → SJ Centro → Escazú, clicking "Guardar y Facturar"
+  // after each). Because the default (no-selection) ingest path used
+  // manifestDocRows — ALL rows, regardless of the active route filter —
+  // every click re-ingested EVERY route's packages, not just the filtered
+  // one. This silently re-triggered invoice generation for SL8150 (Sirley
+  // Carina), a customer on a different route whose invoice had already
+  // been annulled — the package vanished from the consolidation manifest
+  // page even though its invoice stayed annulled. This scope fixes that:
+  // when a route filter is active, ingest only touches packages matching
+  // it — never packages the admin isn't currently looking at.
+  //
+  // IMPORTANT: This scope only applies the route filter and structural
+  // exclusions (deleted rows). Toggle filters (review-only, etc.) and text
+  // search do NOT affect the ingest scope — those are purely visual
+  // navigation aids, not scoping decisions the admin made deliberately.
+  //
+  // manifestReassignedIndices rows are ALWAYS included, regardless of the
+  // active route filter — see NovaTableModal.tsx's own comment on that
+  // state ("ingested-only (no invoice)"): reassigning a package to another
+  // manifest is an explicit, targeted admin action via the manifest
+  // picker, not an accidental bulk touch. Excluding it here would silently
+  // drop the reassignment — the admin would believe the package moved,
+  // but ingestManifestToPackages would never see it, so
+  // options.rowManifestOverrides for that tracking is never consulted.
+  //
+  // AI GUARD: BUG-ROUTE-SCOPE (2026-09-23) ─────────────────────────────
+  // DO NOT merge this with activeRows or filteredIdxs. Those include text
+  // search and toggle filters which must NOT affect the ingest scope.
+  // DO NOT use this for saveManifestRecord — that MUST always receive
+  // manifestDocRows (all rows) to avoid truncating the manifest document
+  // (see AI GUARD: BUG-FILTER-SAVE 2026-06-08 at the manifestDocRows
+  // definitions below).
+  // DO NOT re-add `!manifestReassignedIndices.has(idx)` to the base
+  // filter below — a prior version did, and it silently broke manifest
+  // reassignment for every admin using the default save button. See
+  // NovaTableModal.route-scope.spec.ts ("reassigned rows are never
+  // dropped by the route filter").
+  const routeScopedIngestRows = useMemo(() => {
+    const baseRows = resultData.rows.filter((_, idx) => !deletedIndices.has(idx));
+    if (!debouncedRouteFilter) return baseRows;
+    return baseRows.filter((row) => {
+      const originalIdx = resultData.rows.indexOf(row);
+      // Reassigned rows are an explicit per-row admin action — always
+      // honored regardless of the route filter currently on screen.
+      if (manifestReassignedIndices.has(originalIdx)) return true;
+      const override = slCodeOverrides[originalIdx];
+      const effectiveSlCode = unlinkedRows.has(originalIdx)
+        ? ""
+        : override?.slCode ||
+          matchOverrides[originalIdx]?.slCode ||
+          row.slCode;
+      const effNombre = nameOverrides[originalIdx] ?? row.nombre;
+      const rk = effectiveSlCode || `__unmatched__${effNombre}`;
+      const effectiveRuta =
+        rutaOverrides[rk] ??
+        rutaOverrides[`__unmatched__${row.nombre}`] ??
+        rutaOverrides[row.slCode] ??
+        (override?.ruta || row.ruta) ??
+        "";
+      if (debouncedRouteFilter === "__sin_ruta__") return !effectiveRuta;
+      return effectiveRuta === debouncedRouteFilter;
+    });
+  }, [
+    debouncedRouteFilter, resultData.rows, deletedIndices,
+    manifestReassignedIndices, slCodeOverrides, matchOverrides,
+    nameOverrides, rutaOverrides, unlinkedRows,
+  ]);
+
   // ── Partial-selection UI summary (BUG-PARTIAL-SELECTION 2026-04-28) ─────
   // Mirrors the protection logic that runs inside handleIngestAndInvoice so
   // the save-confirm dialog can warn the operator BEFORE they click save.
@@ -3407,8 +3497,13 @@ export const ResultSummary = memo(function ResultSummary({
           rowManifestOverrides[row.tracking.toUpperCase()] = manifest;
       });
 
+      // ── AI GUARD: BUG-ROUTE-SCOPE (2026-09-23) ────────────────────────────
+      // When there's no explicit row selection, ingest only the rows the
+      // active route filter shows (routeScopedIngestRows) — NOT manifestDocRows
+      // (all rows). saveManifestRecord below still uses manifestDocRows, since
+      // the manifests/{mn} document itself must never be truncated by a filter.
       const result = await ingestManifestToPackages(
-        selectedRows.size > 0 ? resolvedRows : manifestDocRows,
+        selectedRows.size > 0 ? resolvedRows : buildResolvedRows(routeScopedIngestRows),
         resultData.manifestNumber,
         {
           manifestType: resultData.manifestType as string,
@@ -3859,8 +3954,9 @@ export const ResultSummary = memo(function ResultSummary({
             rowManifestOverrides[row.tracking.toUpperCase()] = manifest;
         });
 
+        // ── AI GUARD: BUG-ROUTE-SCOPE (2026-09-23) — mirrors handleIngest above.
         const ingestResult = await ingestManifestToPackages(
-          selectedRows.size > 0 ? resolvedRows : manifestDocRows,
+          selectedRows.size > 0 ? resolvedRows : buildResolvedRows(routeScopedIngestRows),
           resultData.manifestNumber,
           {
             manifestType: resultData.manifestType as string,
@@ -6943,12 +7039,22 @@ export const ResultSummary = memo(function ResultSummary({
                           const rutaKey = effectiveSlCode || groupKey;
                           const effNombreForRuta =
                             nameOverrides[firstIdx] ?? firstRow.nombre;
+                          // AI GUARD: BUG-ROUTE-AUTOCORRECT (2026-09-23) — the
+                          // group-header route DISPLAY must mirror the same
+                          // freeze rule as buildResolvedRows/persistence: a
+                          // Firestore-loaded manifest shows the SAVED ruta,
+                          // never the customer's live profile route, unless
+                          // the operator explicitly reassigned this session.
+                          // See client/lib/nova/data-origin/types.ts.
+                          const liveCustomerRuta = dataOriginPolicy.allowAutoCustomerRouteFill && effectiveSlCode
+                            ? customerContactMap.get(effectiveSlCode.toUpperCase())?.ruta
+                            : undefined;
                           const effectiveRuta =
                             rutaOverrides[rutaKey] ??
                             rutaOverrides[`__unmatched__${effNombreForRuta}`] ??
                             rutaOverrides[`__unmatched__${firstRow.nombre}`] ??
                             rutaOverrides[firstRow.slCode] ??
-                            (effectiveSlCode ? customerContactMap.get(effectiveSlCode.toUpperCase())?.ruta : undefined) ??
+                            liveCustomerRuta ??
                             (override?.ruta ||
                               matchOverrides[firstIdx]?.ruta ||
                               firstRow.ruta);
@@ -7082,6 +7188,24 @@ export const ResultSummary = memo(function ResultSummary({
                               )
                               : [];
                           const divergentCount = divergentEntries.length;
+                          // ── Route-drift detector (Gap #1, incident 2026-09-23) ──────────────
+                          // Non-blocking, non-mutating: flags when the customer's LIVE profile
+                          // route (cc?.ruta) diverges from the ruta actually SAVED for this group
+                          // (firstRow.ruta). Never auto-applies — the operator must click
+                          // "Aplicar corrección" (see badge below) to update rutaOverrides.
+                          // Gated on dataOriginPolicy.showRouteDriftBadge: only Firestore-loaded
+                          // manifests have a "saved" value to diverge from.
+                          const savedRuta = (firstRow.ruta || "").trim();
+                          const liveProfileRuta = (cc?.ruta || "").trim();
+                          const routeDrift =
+                            dataOriginPolicy.showRouteDriftBadge &&
+                            effectiveSlCode &&
+                            !(rutaKey in rutaOverrides) &&
+                            savedRuta &&
+                            liveProfileRuta &&
+                            savedRuta.toLowerCase() !== liveProfileRuta.toLowerCase()
+                              ? { from: savedRuta, to: liveProfileRuta }
+                              : null;
                           const terceroRow = effectiveSlCode
                             ? terceroRows.get(effectiveSlCode.toUpperCase())
                             : null;
@@ -7430,6 +7554,26 @@ export const ResultSummary = memo(function ResultSummary({
                                         <AlertTriangle className="h-2.5 w-2.5" />
                                         {divergentCount} diferente
                                         {divergentCount !== 1 ? "s" : ""}
+                                      </button>
+                                    )}
+                                    {/* Route-drift badge (Gap #1, incident 2026-09-23) — the customer's
+                                        live profile route no longer matches what was SAVED for this
+                                        group. Purely informational + an explicit opt-in action; never
+                                        auto-applies (see routeDrift computation above). */}
+                                    {routeDrift && (
+                                      <button
+                                        type="button"
+                                        title={`Ruta del cliente cambió de "${routeDrift.from}" a "${routeDrift.to}" desde que este manifiesto se guardó. Clic para aplicar la corrección a esta fila/grupo.`}
+                                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-red-500/15 text-red-700 dark:text-red-400 border border-red-500/30 shrink-0 whitespace-nowrap cursor-pointer hover:bg-red-500/25 transition-colors"
+                                        onClick={() =>
+                                          setRutaOverrides((prev) => ({
+                                            ...prev,
+                                            [rutaKey]: routeDrift.to,
+                                          }))
+                                        }
+                                      >
+                                        <AlertTriangle className="h-2.5 w-2.5" />
+                                        Ruta cambió: {routeDrift.from} → {routeDrift.to} · Aplicar
                                       </button>
                                     )}
                                     {/* Quick-approve button for fuzzy matches */}
@@ -8321,6 +8465,20 @@ export const ResultSummary = memo(function ResultSummary({
                                                           Desvincular
                                                           divergentes (
                                                           {divergentCount})
+                                                        </DropdownMenuItem>
+                                                      )}
+                                                      {routeDrift && (
+                                                        <DropdownMenuItem
+                                                          onClick={() =>
+                                                            setRutaOverrides((prev) => ({
+                                                              ...prev,
+                                                              [rutaKey]: routeDrift.to,
+                                                            }))
+                                                          }
+                                                          className="text-red-700 dark:text-red-400 focus:bg-red-50 dark:focus:bg-red-950/30"
+                                                        >
+                                                          <AlertTriangle className="h-3.5 w-3.5 mr-2 text-red-500 shrink-0" />
+                                                          Aplicar corrección de ruta ({routeDrift.from} → {routeDrift.to})
                                                         </DropdownMenuItem>
                                                       )}
                                                       <DropdownMenuSeparator />

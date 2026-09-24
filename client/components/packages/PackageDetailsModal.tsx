@@ -360,6 +360,9 @@ export function PackageDetailsModal({
                         description={pkg.description || ""}
                         permisos={pkg.requiresPermit || pkg.permisos || false}
                         manifests={manifests}
+                        invoiceId={pkg?.invoiceId || ""}
+                        annulledInvoiceNumber={pkg?.annulledInvoiceNumber || (pkg?.invoiceStatus === 'annulled' ? pkg?.invoiceNumber : '') || ""}
+                        annulledInvoiceId={pkg?.annulledInvoiceId || (pkg?.invoiceStatus === 'annulled' ? pkg?.invoiceId : '') || ""}
                       />
                     </div>
                   </div>

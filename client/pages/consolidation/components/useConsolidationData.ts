@@ -32,7 +32,7 @@ import type {
   CustomerSection,
   ManifestGroup,
 } from './types';
-import { normalizeManifest, TRANSITORIA_MANIFEST } from './normalize-manifest';
+import { normalizeManifest, TRANSITORIA_MANIFEST, isPackageTransitoria } from './normalize-manifest';
 
 const CUSTOMERS_COLLECTION = 'customers';
 const PACKAGES_COLLECTION  = 'packages';
@@ -75,17 +75,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
         || (data.manifiesto && (data.manifiesto || '').toLowerCase() !== TRANSITORIA ? data.manifiesto : '')
         || '';
 
-      const uMf  = (data.updatedManifest || '').trim().toLowerCase();
-      const mId  = (data.manifestId || '').trim().toLowerCase();
-      const mNum = (data.manifestNumber || '').trim().toLowerCase();
-      const mnf  = (data.manifiesto || '').trim().toLowerCase();
-      const isTransitoria = uMf
-        ? uMf === TRANSITORIA
-        : mId
-        ? mId === TRANSITORIA
-        : mNum
-        ? mNum === TRANSITORIA
-        : mnf === TRANSITORIA;
+      const isTransitoria = isPackageTransitoria(data);
 
       const nativePrice =
         typeof data.precio === 'number' ? data.precio
@@ -147,6 +137,31 @@ export function useConsolidationData(): UseConsolidationDataResult {
       setLoadingPackages(false);
     };
 
+    // AI GUARD: PERF-COALESCE-PKG-LISTENERS (2026-09-23) ───────────────────
+    // A single write (e.g. carryOnPackages moving a package out of
+    // consolidacion_transitoria) touches fields covered by 2-3 of the 3
+    // queries below at once, so Firestore fires 2-3 of their onSnapshot
+    // callbacks for the SAME logical change, each independently calling
+    // mergeAndEmitPackages -> setPackages -> a full re-render of
+    // customerSections/filteredSections/manifestViewSections (nested loops
+    // over every customer x package x invoice). On real data this reads as
+    // sluggish/"not updating" reactivity for every viewer of
+    // ConsolidationManifests, not just the operator who made the move —
+    // reported 2026-09-23 (admin B's list didn't drop a carried-on package
+    // immediately while admin A was moving it). Coalesce same-tick snapshot
+    // deliveries into a single recompute instead of chasing each one.
+    // DO NOT call mergeAndEmitPackages() directly from a listener callback —
+    // always go through scheduleEmit(). See useConsolidationData.spec.ts
+    // ("packages listener coalescing") for the regression test.
+    let emitTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleEmit = () => {
+      if (emitTimer !== null) return;
+      emitTimer = setTimeout(() => {
+        emitTimer = null;
+        mergeAndEmitPackages();
+      }, 50);
+    };
+
     // Query 1: explicit consolidation flag with composite index
     const qConsolidation = query(
       collection(db, PACKAGES_COLLECTION),
@@ -171,7 +186,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
       (snap) => {
         snap1Docs.clear();
         snap.docs.forEach(d => snap1Docs.set(d.id, d.data()));
-        mergeAndEmitPackages();
+        scheduleEmit();
       },
       (err) => {
         console.error('[ConsolidationData] qConsolidation error:', err);
@@ -184,7 +199,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
       (snap) => {
         snap2Docs.clear();
         snap.docs.forEach(d => snap2Docs.set(d.id, d.data()));
-        mergeAndEmitPackages();
+        scheduleEmit();
       },
       (err) => {
         console.error('[ConsolidationData] qUpdatedTransitoria error:', err);
@@ -196,7 +211,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
       (snap) => {
         snap3Docs.clear();
         snap.docs.forEach(d => snap3Docs.set(d.id, d.data()));
-        mergeAndEmitPackages();
+        scheduleEmit();
       },
       (err) => {
         console.error('[ConsolidationData] qManifestNumberTransitoria error:', err);
@@ -204,6 +219,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
     );
 
     return () => {
+      if (emitTimer !== null) clearTimeout(emitTimer);
       unsub1();
       unsub2();
       unsub3();
@@ -212,22 +228,28 @@ export function useConsolidationData(): UseConsolidationDataResult {
 
 
   // ── 2. Identify all relevant SL codes from active packages & invoices ─────
-  const targetSlCodes = useMemo(() => {
+  const targetSlCodesKey = useMemo(() => {
     const set = new Set<string>();
     for (const pkg of packages) {
-      const code = (pkg.slCode || '').trim();
+      const code = (pkg.slCode || '').trim().toUpperCase();
       if (code) set.add(code);
     }
     for (const inv of invoices) {
-      const code = (inv.slCode || '').trim();
+      const code = (inv.slCode || '').trim().toUpperCase();
       if (code) set.add(code);
     }
-    return Array.from(set);
+    return Array.from(set).sort().join(',');
   }, [packages, invoices]);
+
+  const targetSlCodes = useMemo(
+    () => (targetSlCodesKey ? targetSlCodesKey.split(',') : []),
+    [targetSlCodesKey]
+  );
 
   // ── 3. Fetch full customer details for the relevant SL codes ──────────────
   useEffect(() => {
-    if (!targetSlCodes.length) {
+    const slCodes = targetSlCodesKey ? targetSlCodesKey.split(',') : [];
+    if (!slCodes.length) {
       setCustomerProfiles(new Map());
       return;
     }
@@ -236,8 +258,8 @@ export function useConsolidationData(): UseConsolidationDataResult {
     const unsubs: (() => void)[] = [];
     const chunkMaps: Map<string, ConsolidationCustomer>[] = [];
 
-    for (let i = 0; i < targetSlCodes.length; i += CHUNK) {
-      const chunk = targetSlCodes.slice(i, i + CHUNK);
+    for (let i = 0; i < slCodes.length; i += CHUNK) {
+      const chunk = slCodes.slice(i, i + CHUNK);
       const chunkIndex = chunkMaps.length;
       chunkMaps.push(new Map());
 
@@ -284,7 +306,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
     }
 
     return () => unsubs.forEach((u) => u());
-  }, [targetSlCodes]);
+  }, [targetSlCodesKey]);
 
   // ── Unified effective customers list ─────────────────────────────────────
   const allEffectiveCustomers = useMemo((): ConsolidationCustomer[] => {
@@ -404,9 +426,20 @@ export function useConsolidationData(): UseConsolidationDataResult {
     });
   }, [flushInvoices]);
 
+  // Key tracking unique customer SL codes for Query B — prevents listener tear-down/recreation loops
+  // when invoice amounts, items, or statuses change but the set of customers remains unchanged.
+  const effectiveSlCodesKey = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of allEffectiveCustomers) {
+      const code = (c.slCode || '').trim().toUpperCase();
+      if (code) set.add(code);
+    }
+    return Array.from(set).sort().join(',');
+  }, [allEffectiveCustomers]);
+
   // Query B — by slCode for all effective consolidation customers.
   useEffect(() => {
-    const slCodes = allEffectiveCustomers.map(c => c.slCode).filter(Boolean);
+    const slCodes = effectiveSlCodesKey ? effectiveSlCodesKey.split(',') : [];
     if (!slCodes.length) {
       queryBMapRef.current.clear();
       flushInvoices();
@@ -449,7 +482,7 @@ export function useConsolidationData(): UseConsolidationDataResult {
     }
 
     return () => unsubs.forEach(u => u());
-  }, [allEffectiveCustomers, flushInvoices]);
+  }, [effectiveSlCodesKey, flushInvoices]);
 
 
   // ── Derived indexes ──────────────────────────────────────────────────────

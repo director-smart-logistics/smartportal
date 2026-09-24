@@ -156,8 +156,22 @@ export function useNovaResolvedRows({
       const effSlCode = getEffSlCode(row, idx);
       const tracking  = (row.tracking || '').toUpperCase().trim();
 
-      const isSlCodeOverridden = slCodeOverrides[idx] !== undefined 
-        || matchOverrides[idx] !== undefined 
+      // AI GUARD: BUG-ROUTE-AUTOCORRECT (2026-09-23) ─────────────────────────
+      // INVARIANT: A manifest reopened from Firestore (loadedFromFirestore=
+      // true) must NEVER have its saved `ruta` silently replaced by the
+      // customer's CURRENT profile route. The row's saved `ruta` (baked in
+      // at last save) is authoritative until the operator explicitly
+      // reassigns the SL code THIS session (isSlCodeOverridden) — only then
+      // does the live customer route become a sane default again.
+      // This restores commit d9f14fc ("preserve routes/prices from
+      // Firestore", v0.0.1477), which a later unrelated change stripped
+      // without noticing the invariant. Mirrors DataOriginPolicy's
+      // `allowAutoCustomerRouteFill` flag (client/lib/nova/data-origin) —
+      // do NOT remove this guard; see use-nova-resolved-rows.spec.ts
+      // ("route resolution — loadedFromFirestore immunity") for the
+      // regression test that must stay green.
+      const isSlCodeOverridden = slCodeOverrides[idx] !== undefined
+        || matchOverrides[idx] !== undefined
         || unlinkedRows.has(idx);
       const dbDefaultRoute = (loadedFromFirestore && !isSlCodeOverridden)
         ? undefined
