@@ -2730,6 +2730,7 @@ function PackageList({
               await annulInvoicesByTrackingsAndManifest([pkg.tracking], pkg.manifestNumber || '', {
                 reason: `Consolidación de ruta: ${reason}`,
                 annulledBy: 'driver_app',
+                toTransitoria: true,
               });
             }
           } catch (annulErr) {
@@ -2808,6 +2809,7 @@ function PackageList({
                 annulInvoicesByTrackingsAndManifest(trackings, manifestNum, {
                   reason: `Consolidación de ruta: ${reason}`,
                   annulledBy: 'driver_app',
+                toTransitoria: true,
                 })
               ]);
             }
@@ -3761,6 +3763,7 @@ export function ActiveRouteView({ session }: { session: RouteSession }) {
               await annulInvoicesByTrackingsAndManifest(trackings, manifestNum, {
                 reason: `Consolidación de ruta (Cierre): ${reason}`,
                 annulledBy: 'driver_app',
+                toTransitoria: true,
               });
             }
           } catch (annulErr) {

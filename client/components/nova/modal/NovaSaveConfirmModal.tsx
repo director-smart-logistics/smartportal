@@ -91,7 +91,7 @@ export interface NovaSaveConfirmModalProps {
   recentManifestTc: { tc: number; daysSince: number } | null;
 
   /** Origin of the loaded data — drives whether the integrity audit UI shows. */
-  dataOrigin: "fresh" | "firestore" | "mega_man";
+  dataOrigin: "fresh" | "firestore" | "mega_man" | "saved";
   integrityReport: SaveConfirmIntegrityReport | null;
   onOpenIntegrityModal: () => void;
 

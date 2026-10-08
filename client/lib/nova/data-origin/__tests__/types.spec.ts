@@ -23,6 +23,7 @@ import { describe, it, expect } from 'vitest';
 import {
   FRESH_POLICY,
   FIRESTORE_POLICY,
+  SAVED_POLICY,
   policyForOrigin,
   policyFromResultData,
   type DataOrigin,
@@ -41,6 +42,7 @@ describe('FRESH_POLICY', () => {
     expect(FRESH_POLICY.allowAutoPreAlertAssign).toBe(true);
     expect(FRESH_POLICY.allowAutoLearnedRoute).toBe(true);
     expect(FRESH_POLICY.allowAutoCustomerRouteFill).toBe(true);
+    expect(FRESH_POLICY.allowLivePreAlertWatch).toBe(true);
   });
 
   it('hides the route-drift badge (nothing saved yet to diverge from)', () => {
@@ -80,6 +82,8 @@ describe('FIRESTORE_POLICY', () => {
     expect(FIRESTORE_POLICY.allowAutoDivergentRematch).toBe(false);
     expect(FIRESTORE_POLICY.allowAutoPreAlertAssign).toBe(false);
     expect(FIRESTORE_POLICY.allowAutoLearnedRoute).toBe(false);
+    // F1.5: a saved manifest is not re-validated live; the P badges show the saved data.
+    expect(FIRESTORE_POLICY.allowLivePreAlertWatch).toBe(false);
     // INCIDENT 2026-09-23 (BUG-ROUTE-AUTOCORRECT): re-opening a saved
     // manifest must NEVER let the customer's live profile route silently
     // replace the route that was actually saved. See types.ts doc comment
@@ -116,6 +120,7 @@ describe('FIRESTORE_POLICY', () => {
       'allowAutoDivergentRematch',
       'allowAutoPreAlertAssign',
       'allowAutoLearnedRoute',
+      'allowLivePreAlertWatch',
       'allowAutoCustomerRouteFill',
       'showDivergentBadges',
       'showDivergentFilter',
@@ -183,5 +188,56 @@ describe('DataOriginPolicy shape', () => {
   it('exposes the same flag set on FRESH and FIRESTORE policies', () => {
     expect(Object.keys(FRESH_POLICY).sort())
       .toEqual(Object.keys(FIRESTORE_POLICY).sort());
+  });
+
+  it('exposes the same flag set on SAVED_POLICY', () => {
+    expect(Object.keys(SAVED_POLICY).sort()).toEqual(Object.keys(FRESH_POLICY).sort());
+  });
+});
+
+// ── F1.5: saved in this session → nothing automatic ─────────────────────────
+
+describe('SAVED_POLICY (the admin saved this manifest in the current session)', () => {
+  it('has origin === "saved"', () => {
+    expect(SAVED_POLICY.origin).toBe<DataOrigin>('saved');
+  });
+
+  it('runs NOTHING automatic: no rematch, no pre-alert assignment, no learned route, no live pre-alert listener', () => {
+    expect(SAVED_POLICY.allowAutoDivergentRematch).toBe(false);
+    expect(SAVED_POLICY.allowAutoPreAlertAssign).toBe(false);
+    expect(SAVED_POLICY.allowAutoLearnedRoute).toBe(false);
+    expect(SAVED_POLICY.allowLivePreAlertWatch).toBe(false);
+  });
+
+  it("keeps the row's customer route as its default (display = what 'Actualizar BD' persists)", () => {
+    expect(SAVED_POLICY.allowAutoCustomerRouteFill).toBe(true);
+    expect(SAVED_POLICY.showRouteDriftBadge).toBe(false);
+  });
+
+  it('shows the frozen banner and the manual escape hatches, hides divergent nags', () => {
+    expect(SAVED_POLICY.showFrozenBanner).toBe(true);
+    expect(SAVED_POLICY.showRevalidateAllButton).toBe(true);
+    expect(SAVED_POLICY.showDivergentBadges).toBe(false);
+    expect(SAVED_POLICY.showDivergentFilter).toBe(false);
+  });
+
+  it('is frozen', () => {
+    expect(Object.isFrozen(SAVED_POLICY)).toBe(true);
+  });
+
+  it('policyForOrigin("saved") and policyFromResultData(fresh data, saved=true) return it', () => {
+    expect(policyForOrigin('saved')).toBe(SAVED_POLICY);
+    expect(policyFromResultData({ loadedFromFirestore: false }, true)).toBe(SAVED_POLICY);
+    expect(policyFromResultData(undefined, true)).toBe(SAVED_POLICY);
+  });
+
+  it('a re-loaded manifest stays FIRESTORE_POLICY whatever the session flag', () => {
+    expect(policyFromResultData({ loadedFromFirestore: true }, true)).toBe(FIRESTORE_POLICY);
+    expect(policyFromResultData({ loadedFromFirestore: true }, false)).toBe(FIRESTORE_POLICY);
+  });
+
+  it('not saved yet → FRESH_POLICY (default argument keeps every old call-site unchanged)', () => {
+    expect(policyFromResultData({ loadedFromFirestore: false }, false)).toBe(FRESH_POLICY);
+    expect(policyFromResultData({ loadedFromFirestore: false })).toBe(FRESH_POLICY);
   });
 });

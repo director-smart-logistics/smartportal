@@ -7,6 +7,7 @@ import { I18nProvider } from "@/components/I18nProvider"; // Wrapper to ensure i
 import { Toaster } from "@/components/ui/toaster";
 import { createRoot } from "react-dom/client";
 import { Toaster as Sonner } from "@/components/ui/sonner";
+import { RouteReviewDialogHost } from "@/components/route-review/RouteReviewDialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
@@ -640,6 +641,7 @@ v7_relativeSplatPath: true,
 <FeatureFlagsProvider>
 <Toaster />
 <Sonner />
+<RouteReviewDialogHost />
 <AppRoutes />
 </FeatureFlagsProvider>
 </PermissionsProvider>

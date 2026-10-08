@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useRouteOptions } from "@/components/nova/nova-route-options";
 import { updateCustomerRuta } from "@/lib/services/customer-sync";
+import { getRouteAttention, openRouteReviewDialog } from "@/lib/route-review/route-attention";
 import { toast } from "sonner";
 import { getRouteColors, shortenRouteName } from "./utils";
 import { CalculatedSeaManifestRow } from "./useSpreadsheetCalculations";
@@ -176,6 +177,10 @@ export const SpreadsheetRow = memo(function SpreadsheetRow({
                 key={r.name}
                 onClick={async () => {
                   try {
+                    if (row.slCode && getRouteAttention(row.slCode)) {
+                      openRouteReviewDialog({ slCode: row.slCode, preselect: r.name, onApplied: (ruta) => onChange(row.id, "ruta", ruta) });
+                      return;
+                    }
                     // Update in spreadsheet context (so it's saved to the manifest)
                     onChange(row.id, "ruta", r.name);
 

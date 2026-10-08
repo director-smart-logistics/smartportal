@@ -4,6 +4,7 @@ import { X, ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { updateCustomerRuta } from "@/lib/services/customer-sync";
+import { getRouteAttention, openRouteReviewDialog } from "@/lib/route-review/route-attention";
 import { useRouteOptions } from "./nova-route-options";
 
 export function RoutePickerModal({
@@ -25,6 +26,12 @@ export function RoutePickerModal({
 
   const handleSave = async () => {
     if (!selected) return;
+    // Customer with an open route review → the decision dialog confirms and applies it everywhere.
+    if (getRouteAttention(slCode)) {
+      openRouteReviewDialog({ slCode, preselect: selected, onApplied: (ruta) => { onSaved(ruta); } });
+      onClose();
+      return;
+    }
     setSaving(true);
     try {
       await updateCustomerRuta(slCode, selected, false, 'nova_route_picker');

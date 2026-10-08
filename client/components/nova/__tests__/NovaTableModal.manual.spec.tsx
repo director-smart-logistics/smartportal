@@ -837,7 +837,9 @@ describe("NovaTableModal - Manual Validation and Interactive UI Specs", () => {
           nombre: "PAULA UMANA",
           slCode: "SL3521",
           nombreCliente: "ANA PAULA FONSECA QUADROS",
-        })
+          // F1.5: a re-loaded manifest shows the pre-alert SAVED on the row (no live listener).
+          preAlert: { found: true, tracking: "1Z0000", slCode: "SL1111" },
+        } as Partial<ManifestRow>)
       ],
     };
 
@@ -886,4 +888,115 @@ describe("NovaTableModal - Manual Validation and Interactive UI Specs", () => {
     // 8. Verify the AlertDialog has closed
     expect(screen.queryByText("Advertencia de Re-asignación de Pre-alerta")).toBeNull();
   });
+
+  // F1.5 — pre-alerts are validated once, before saving: live listener only on a fresh manifest.
+  it("never opens the live pre-alert listener on a re-loaded (saved) manifest", async () => {
+    const { watchTrackingPreAlerts } = await import("@/lib/services/nova-tools");
+    render(
+      <ResultSummary
+        resultData={{ ...defaultResultData, loadedFromFirestore: true, rows: [makeRow({ tracking: "1Z0001" })] }}
+        embedMode={false}
+      />
+    );
+    expect(watchTrackingPreAlerts).not.toHaveBeenCalled();
+  });
+
+  it("opens the live pre-alert listener on a fresh manifest, with its manifest number", async () => {
+    const { watchTrackingPreAlerts } = await import("@/lib/services/nova-tools");
+    render(
+      <ResultSummary
+        resultData={{ ...defaultResultData, loadedFromFirestore: true, rows: [makeRow({ tracking: "1Z0002" })] }}
+        embedMode={false}
+      />
+    );
+    cleanup();
+    vi.mocked(watchTrackingPreAlerts).mockClear();
+    render(
+      <ResultSummary
+        resultData={{ ...defaultResultData, loadedFromFirestore: false, rows: [makeRow({ tracking: "1Z0002" })] }}
+        embedMode={false}
+      />
+    );
+    // A fresh manifest opens the table from the chat card; the listener starts with the table.
+    const verTabla = screen.queryAllByRole("button", { name: /Ver tabla/ })[0];
+    if (verTabla) fireEvent.click(verTabla);
+    expect(watchTrackingPreAlerts).toHaveBeenCalled();
+    const call = vi.mocked(watchTrackingPreAlerts).mock.calls[0];
+    expect(call[2]).toBe(defaultResultData.manifestNumber);
+  });
+
+  it("saving a fresh manifest stops the live pre-alert listener for good", async () => {
+    const { watchTrackingPreAlerts } = await import("@/lib/services/nova-tools");
+    const stopLive = vi.fn();
+    vi.mocked(watchTrackingPreAlerts).mockImplementation(() => stopLive);
+    (ingestManifestToPackages as any).mockClear();
+    render(
+      <ResultSummary
+        resultData={{ ...defaultResultData, loadedFromFirestore: false, rows: [makeRow({ tracking: "1Z0003", slCode: "SL200" })] }}
+        embedMode={false}
+      />
+    );
+    const verTabla = screen.queryAllByRole("button", { name: /Ver tabla/ })[0];
+    if (verTabla) fireEvent.click(verTabla);
+    expect(watchTrackingPreAlerts).toHaveBeenCalled();
+    expect(stopLive).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Actualizar BD|Guardar en BD/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("confirm-save-only-btn"));
+    });
+    expect(ingestManifestToPackages).toHaveBeenCalled();
+
+    expect(stopLive).toHaveBeenCalled();                           // nothing live after saving
+    const callsAfterSave = vi.mocked(watchTrackingPreAlerts).mock.calls.length;
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(vi.mocked(watchTrackingPreAlerts).mock.calls.length).toBe(callsAfterSave);   // never re-opened
+    vi.mocked(watchTrackingPreAlerts).mockReset();
+  });
+
+  // The P must always be visible on a re-opened manifest — green AND red (saved data, no live check).
+  it("re-opened manifest shows the saved RED P (several accounts) and the saved green P", async () => {
+    render(
+      <ResultSummary
+        resultData={{ ...defaultResultData, loadedFromFirestore: true, rows: [
+          makeRow({ tracking: "TBA330000000401", slCode: "SL200", preAlert: { found: false, tracking: "TBA330000000401", ambiguousSlCodes: ["SL90001", "SL90002"] } } as Partial<ManifestRow>),
+          makeRow({ tracking: "TBA330000000301", slCode: "SL200", preAlert: { found: true, tracking: "TBA330000000301", slCode: "SL200" } } as Partial<ManifestRow>),
+        ] }}
+        embedMode={false}
+      />
+    );
+    const red = screen.getByTestId("prealert-badge-several");
+    expect(red.getAttribute("data-reason")).toBe("accounts");
+    expect(red.getAttribute("title")).toContain("SL90001, SL90002");
+    expect(screen.getAllByTestId(/^prealert-badge(-name-mismatch)?$/).length).toBe(1);
+  });
+
+  it("re-opened manifest: a tracking repeated in it shows RED P on every copy", async () => {
+    const pa = { found: true, tracking: "TBA330000000301", slCode: "SL200" };
+    render(
+      <ResultSummary
+        resultData={{ ...defaultResultData, loadedFromFirestore: true, rows: [
+          makeRow({ tracking: "TBA330000000301", slCode: "SL200", preAlert: pa } as Partial<ManifestRow>),
+          makeRow({ tracking: "TBA330000000301", slCode: "SL200", preAlert: pa } as Partial<ManifestRow>),
+        ] }}
+        embedMode={false}
+      />
+    );
+    const reds = screen.getAllByTestId("prealert-badge-several");
+    expect(reds).toHaveLength(2);
+    reds.forEach((b) => expect(b.getAttribute("data-reason")).toBe("repeated"));
+  });
+
+  it("re-opened manifest: a pre-alert saved as repeated keeps its RED P even with one row left", async () => {
+    render(
+      <ResultSummary
+        resultData={{ ...defaultResultData, loadedFromFirestore: true, rows: [
+          makeRow({ tracking: "TBA330000000301", slCode: "SL200", preAlert: { found: true, tracking: "TBA330000000301", slCode: "SL200", repeatedInManifest: true } } as Partial<ManifestRow>),
+        ] }}
+        embedMode={false}
+      />
+    );
+    expect(screen.getByTestId("prealert-badge-several").getAttribute("data-reason")).toBe("repeated");
+  });
 });
+

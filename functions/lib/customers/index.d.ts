@@ -3,4 +3,7 @@ export { triggerCustomerSync, slUpdateCustomerProfile, slSyncCustomerFromSp2, sl
 export { slLookupCustomerByEmail } from "./lookup-by-email";
 export { slRecreateCustomerBySlCode, slRecreateSp2UserAccount } from "./recreate";
 export { onCustomerWritten } from "./triggers";
+export { slUpdateSp2AddressFromLabel } from "./label-address-sp2-callable";
+export { slResolveRouteReview, slMovePackagesToCustomerRoute, slCheckRouteIntegrity } from "./route-review-callable";
+export { slDeleteCustomerAccount, slDeleteAccountFromSp2 } from "./account-delete";
 //# sourceMappingURL=index.d.ts.map

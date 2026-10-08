@@ -69,6 +69,8 @@ export interface CustomerAddress {
     schedule?: string;
   } | null;
   requiresEncomienda: boolean;
+  /** F8.2: service the customer proposed in SP2, until an official one is set */
+  encomiendaSuggestedName?: string | null;
   status: 'active' | 'inactive' | 'pending_confirmation' | 'escalated';
   isDefault: boolean;
   isActive: boolean;

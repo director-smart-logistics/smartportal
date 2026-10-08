@@ -30,7 +30,9 @@ const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
 const firestore_1 = require("firebase-admin/firestore");
 const app_1 = require("firebase-admin/app");
-const SP2_PROJECT_ID = "smart-portal-2";
+const sp2_target_1 = require("../config/sp2-target");
+// Real SP2 in production; the emulated SP2 only inside the Firebase emulator (see config/sp2-target).
+const SP2_PROJECT_ID = (0, sp2_target_1.sp2ProjectId)();
 const SP2_SHIPMENT_SYNC_URL = process.env.SP2_SHIPMENT_SYNC_URL ||
     "https://us-central1-smart-portal-2.cloudfunctions.net/slSyncShipmentsFromSp1";
 const sp1Db = (0, firestore_1.getFirestore)((0, app_1.getApp)(), "portal");

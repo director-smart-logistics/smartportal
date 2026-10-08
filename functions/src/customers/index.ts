@@ -25,3 +25,8 @@ export { slRecreateCustomerBySlCode, slRecreateSp2UserAccount } from "./recreate
 
 // Firestore trigger — canonical SP1 → SP2 propagation point.
 export { onCustomerWritten } from "./triggers";
+
+// F11.2 — Nova label: the corrected address also becomes the customer's principal address in SP2.
+export { slUpdateSp2AddressFromLabel } from "./label-address-sp2-callable";
+export { slResolveRouteReview, slMovePackagesToCustomerRoute, slCheckRouteIntegrity } from "./route-review-callable";
+export { slDeleteCustomerAccount, slDeleteAccountFromSp2 } from "./account-delete";

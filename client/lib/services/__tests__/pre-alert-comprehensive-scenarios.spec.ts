@@ -116,8 +116,8 @@ describe('Pre-Alert Comprehensive Scenarios & Anti-Regression Suite', () => {
       expect(isEligiblePreAlert({ active: true, status: 'annulled' })).toBe(false);
     });
 
-    it('debe rechazar pre-alertas con más de 60 días de antigüedad', () => {
-      const oldDate = new Date(Date.now() - 65 * 24 * 60 * 60 * 1000).toISOString();
+    it('debe rechazar pre-alertas con más de 90 días de antigüedad', () => {
+      const oldDate = new Date(Date.now() - 95 * 24 * 60 * 60 * 1000).toISOString(); // ventana 90 días (decisión 2026-09-25)
       expect(isEligiblePreAlert({ active: true, status: 'received', createdAt: oldDate })).toBe(false);
 
       const recentDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();

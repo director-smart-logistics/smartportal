@@ -127,6 +127,8 @@ export interface CustomerContactInfo {
     alias?: string | null;
     updatedAt?: string | null;
     createdAt?: string | null;
+    /** F8.2: service the customer proposed in SP2 (not in the list yet) */
+    encomiendaSuggestedName?: string | null;
   } | null;
   consolidationActivatedAt?: string | null;
   consolidationStartedAt?: string | null;
@@ -201,8 +203,9 @@ export async function getCustomersBySlCodes(
       const code = d.slCode || '';
       if (code) {
         const addresses = d.addresses || [];
-        const encAddr = addresses.find((a: any) => a.encomienda?.name) || addresses[0] || {};
-        const enc = d.encomienda || encAddr.encomienda || d.defaultAddress?.encomienda || null;
+        // F8.3 (G2): the DEFAULT address first; another address only when active.
+        const encAddr = addresses.find((a: any) => a.isActive !== false && a.encomienda?.name) || {};
+        const enc = d.encomienda || d.defaultAddress?.encomienda || encAddr.encomienda || null;
         // Prefer the top-level mirror (`encomiendaServiceName`) written by
         // `handleAssignEncomienda` — it's atomic and survives even when the
         // scheduled sync transiently rebuilds the `addresses[]` array.
@@ -1354,7 +1357,23 @@ export async function getInvoiceBreakdownByManifest(
 export async function annulInvoicesByTrackingsAndManifest(
   trackings: string[],
   manifestNumber: string,
-  options: { reason?: string; annulledBy?: string; excludeInvoiceIds?: string[]; forceAnnulPaid?: boolean } = {},
+  options: {
+    reason?: string; annulledBy?: string; excludeInvoiceIds?: string[]; forceAnnulPaid?: boolean;
+    /**
+     * Nova (2026-09-26): annul ONLY — the packages are unlinked from the annulled invoice and stay in
+     * their manifest with their status, so the re-create links them to the new invoice. Sending packages
+     * to consolidation is done only from Facturas (never from Nova). Without it (DriverRouteWizard
+     * returns, manifest-consolidation-service) the packages move to consolidacion_transitoria as before.
+     */
+    keepPackagesInManifest?: boolean;
+    /**
+     * Driver route assistant (2026-09-29): the package really goes to consolidation, so updatedManifest is set to
+     * consolidacion_transitoria too (updatedManifest wins over manifestNumber on the Consolidation page and the SP2
+     * list — a package moved earlier by Carry-On stayed hidden). NOT for movePackagesBetweenManifestDocs: there the
+     * package was just assigned its new manifest (updatedManifest) and must stay in it.
+     */
+    toTransitoria?: boolean;
+  } = {},
 ): Promise<{ annulledIds: string[]; skippedPaid: number }> {
   if (!trackings.length || !manifestNumber) {
     return { annulledIds: [], skippedPaid: 0 };
@@ -1397,7 +1416,13 @@ export async function annulInvoicesByTrackingsAndManifest(
       if (!all.some(t => trackingSet.has(t))) return;
 
       try {
-        await updateDoc(doc(db, 'invoices', d.id), {
+        // ATOMIC (F10, 2026-09-26): capture the linked packages FIRST, then annul the invoice and move
+        // them to transitoria in ONE commit. Before, the invoice was annulled, SP2 was awaited, and only
+        // then were the packages looked up — the SP1 invoice trigger cleared their link in between and
+        // they could stay behind unlinked, outside transitoria, without the annulled-invoice trace.
+        const validPkgDocs = await findPackagesLinkedToInvoice(d.id, (data.invoiceNumber as string) || undefined);
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'invoices', d.id), {
           status: 'annulled',
           annulledAt: now,
           annulledBy,
@@ -1411,27 +1436,6 @@ export async function annulInvoicesByTrackingsAndManifest(
             reason,
           }),
         });
-        
-        // Also ensure it is physically deleted from the client portal in SP2
-        await deleteInvoiceFromSp2(d.id, (data.invoiceNumber as string) || d.id);
-
-        // Unlink packages associated with this invoice to prevent phantom/ghost packages
-        const [snapId, snapNum] = await Promise.all([
-          getDocs(query(collection(db, 'packages'), where('invoiceId', '==', d.id))),
-          data.invoiceNumber
-            ? getDocs(query(collection(db, 'packages'), where('invoiceNumber', '==', data.invoiceNumber)))
-            : Promise.resolve({ empty: true, docs: [] } as any),
-        ]);
-        
-        const seenPkgIds = new Set<string>();
-        const validPkgDocs: any[] = [];
-        snapId.forEach((doc: any) => { seenPkgIds.add(doc.id); validPkgDocs.push(doc); });
-        snapNum.forEach((doc: any) => {
-          if (!seenPkgIds.has(doc.id)) {
-            seenPkgIds.add(doc.id);
-            validPkgDocs.push(doc);
-          }
-        });
 
         if (validPkgDocs.length > 0) {
           const invoiceEmissionDate = extractInvoiceEmissionDate({
@@ -1440,14 +1444,37 @@ export async function annulInvoicesByTrackingsAndManifest(
             invoiceNumber: data.invoiceNumber || d.id,
           }) || now;
 
-          const pkgBatch = writeBatch(db);
           const pkgsToSync: any[] = [];
           const consolidationItems: any[] = [];
           
           validPkgDocs.forEach(pkgDoc => {
             const pData = pkgDoc.data();
             const tr = (pData.trackingNumber || pData.tracking || pkgDoc.id || '').toString();
-            pkgBatch.update(doc(db, 'packages', pkgDoc.id), {
+            if (options.keepPackagesInManifest) {
+              // Nova: only the link to the annulled invoice goes; manifest, status and everything else stay.
+              batch.update(doc(db, 'packages', pkgDoc.id), {
+                invoiceId: deleteField(),
+                invoiceNumber: deleteField(),
+                invoiceStatus: deleteField(),
+                statusHistory: arrayUnion({
+                  status: pData.status || '',
+                  changedAt: now,
+                  changedBy: annulledBy,
+                  note: `Factura ${data.invoiceNumber || d.id} anulada desde Nova (${reason}) — el paquete sigue en su manifiesto.`,
+                }),
+              });
+              pkgsToSync.push({
+                id: pkgDoc.id,
+                trackingNumber: tr,
+                slCode: pData.slCode || data.slCode || '',
+                customerName: pData.customerName || data.clientName || '',
+                status: pData.status,
+                manifestNumber: pData.manifestNumber || manifestNumber,
+                forceSync: true,
+              });
+              return;
+            }
+            batch.update(doc(db, 'packages', pkgDoc.id), {
               invoiceId: deleteField(),
               invoiceNumber: deleteField(),
               invoiceStatus: deleteField(),
@@ -1463,6 +1490,7 @@ export async function annulInvoicesByTrackingsAndManifest(
               consolidacion: true,
               manifestId: 'consolidacion_transitoria',
               manifestNumber: 'consolidacion_transitoria',
+              ...(options.toTransitoria ? { updatedManifest: 'consolidacion_transitoria' } : {}),
               encomiendaManifestNumber: 'none',
               smartwebSynced: false,
               smartwebSyncSource: 'transitoria',
@@ -1507,8 +1535,11 @@ export async function annulInvoicesByTrackingsAndManifest(
             }
           });
           
-          await pkgBatch.commit();
-          
+          // The single atomic commit: invoice annulled + every package in transitoria (or, from Nova, unlinked).
+          await batch.commit();
+          // Also ensure it is physically deleted from the client portal in SP2 (after the commit).
+          await deleteInvoiceFromSp2(d.id, (data.invoiceNumber as string) || d.id);
+
           if (consolidationItems.length > 0) {
             try {
               const { addItemsToConsolidation } = await import('./manifest-consolidation-service');
@@ -1523,8 +1554,11 @@ export async function annulInvoicesByTrackingsAndManifest(
               console.warn('[annulInvoicesByTrackingsAndManifest] SP2 packages sync failed:', err)
             );
           }
+        } else {
+          await batch.commit();   // only the invoice annulment
+          await deleteInvoiceFromSp2(d.id, (data.invoiceNumber as string) || d.id);
         }
-        
+
         annulledIds.push(d.id);
       } catch (err) {
         console.warn('[annulInvoicesByTrackingsAndManifest] Skipped doc', d.id, err);
@@ -1704,9 +1738,21 @@ export async function moveInvoiceToTransitoria(
   const reason = options.reason ?? 'Movido a Consolidación Transitoria desde Paquetes';
   const actor = options.annulledBy ?? 'admin';
 
+  // ATOMIC (F10, 2026-09-26): the invoice annulment and the move of ALL its packages to transitoria are
+  // ONE commit — both happen or nothing does. Before, the invoice was annulled first and the packages
+  // were looked up and moved afterwards; the SP1 invoice trigger (enforcePackageLinksForInvoice) fired in
+  // between, cleared the packages' link, and a package could stay behind unlinked, outside transitoria
+  // and without its annulled-invoice date (reproduced on the QA emulator). Now the trigger sees the
+  // packages already in transitoria and leaves them alone; the UI never shows an intermediate state.
+  // Packages are found by BOTH invoiceId and invoiceNumber (deduped) — also when the invoice was already
+  // annulled, so a package orphaned by a PRIOR incomplete annulment is still swept into transitoria.
+  const validPkgDocs = await findPackagesLinkedToInvoice(invoiceId, invoiceNumber);
+  if (validPkgDocs.length > 450) {
+    throw new Error(`La factura ${invoiceNumber} tiene ${validPkgDocs.length} paquetes: demasiados para anularla en una sola operación atómica. No se modificó nada.`);
+  }
+  const batch = writeBatch(db);
   if (!invoiceAlreadyAnnulled) {
-    // 1. Annul the invoice doc
-    await updateDoc(doc(db, 'invoices', invoiceId), {
+    batch.update(doc(db, 'invoices', invoiceId), {
       status: 'annulled',
       annulledAt: nowISO,
       annulledBy: actor,
@@ -1719,17 +1765,7 @@ export async function moveInvoiceToTransitoria(
         note: reason,
       }),
     });
-
-    // 2. Physical delete from SP2 portal (fire-and-forget)
-    deleteInvoiceFromSp2(invoiceId, invoiceNumber).catch(err =>
-      console.warn('[moveInvoiceToTransitoria] SP2 deletion failed:', err),
-    );
   }
-
-  // 3. Find linked packages by BOTH invoiceId and invoiceNumber (deduped by doc id) —
-  //    runs regardless of invoiceAlreadyAnnulled, so a package orphaned by a PRIOR
-  //    annulment that never completed the move still gets swept into transitoria now.
-  const validPkgDocs = await findPackagesLinkedToInvoice(invoiceId, invoiceNumber);
 
   const movedTrackings: string[] = [];
   const pkgsToSync: any[] = [];
@@ -1742,15 +1778,13 @@ export async function moveInvoiceToTransitoria(
       invoiceNumber,
     }) || nowISO;
 
-    const pkgBatch = writeBatch(db);
-
     validPkgDocs.forEach(pkgDoc => {
       const pData = pkgDoc.data() || {};
       const tr = (pData.trackingNumber || pData.tracking || pkgDoc.id || '').toString();
       const currentManifestNumber = (pData.manifestNumber || pData.manifiesto || '') as string;
       const alreadyTransitoria = currentManifestNumber === 'consolidacion_transitoria';
 
-      pkgBatch.update(doc(db, 'packages', pkgDoc.id), {
+      batch.update(doc(db, 'packages', pkgDoc.id), {
         invoiceId: deleteField(),
         invoiceNumber: deleteField(),
         invoiceStatus: deleteField(),
@@ -1768,6 +1802,9 @@ export async function moveInvoiceToTransitoria(
         consolidacion: true,
         manifestId: 'consolidacion_transitoria',
         manifestNumber: 'consolidacion_transitoria',
+        // updatedManifest wins over manifestNumber everywhere (isPackageTransitoria, Consolidation page, SP2 list):
+        // a package moved earlier (Carry-On → '25-09-2026DAN') kept that value and vanished from consolidation.
+        updatedManifest: 'consolidacion_transitoria',
         encomiendaManifestNumber: 'none',
         smartwebSynced: false,
         smartwebSyncSource: 'transitoria',
@@ -1820,8 +1857,19 @@ export async function moveInvoiceToTransitoria(
       }
     });
 
-    await pkgBatch.commit();
+  }
 
+  // The single atomic commit: invoice annulled + every package in transitoria.
+  if (!invoiceAlreadyAnnulled || validPkgDocs.length > 0) await batch.commit();
+
+  if (!invoiceAlreadyAnnulled) {
+    // Physical delete from SP2 portal (fire-and-forget), only once the annulment is committed.
+    deleteInvoiceFromSp2(invoiceId, invoiceNumber).catch(err =>
+      console.warn('[moveInvoiceToTransitoria] SP2 deletion failed:', err),
+    );
+  }
+
+  if (validPkgDocs.length > 0) {
     if (consolidationItems.length > 0) {
       try {
         const { addItemsToConsolidation } = await import('./manifest-consolidation-service');
@@ -1865,6 +1913,7 @@ export async function moveUnlinkedPackageToTransitoria(packageId: string): Promi
   await updateDoc(pkgRef, {
     manifestId: 'consolidacion_transitoria',
     manifestNumber: 'consolidacion_transitoria',
+    updatedManifest: 'consolidacion_transitoria', // see moveInvoiceToTransitoria: updatedManifest wins over manifestNumber
     consolidacion: true,
     status: 'consolidated',
     invoiceId: null,
@@ -2279,6 +2328,7 @@ export async function getInvoiceStatusesByManifests(
       );
       snap.docs.forEach(d => {
         const data = d.data();
+        if (data.status === 'deleted') return;   // a deleted copy (same trackings) never overrides the live invoice
         const status = (data.status as string) || 'draft';
         const single = (data.trackingNumber as string | undefined) ?? '';
         const multi: string[] = Array.isArray(data.trackingNumbers) ? data.trackingNumbers : [];

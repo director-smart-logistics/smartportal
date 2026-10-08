@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, memo, useEffect } from "react";
+import { RouteReviewBadge } from "@/components/route-review/RouteReviewBadge";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocale } from "@/hooks/useLocale";
 import { useTheme } from "@/lib/context/ThemeContext";
@@ -377,6 +378,8 @@ const CustomerRow = memo(function CustomerRow({
             <span className={cn("text-sm font-semibold truncate", isDark ? "text-white" : "text-gray-900")}>
               {displayFullName.toUpperCase()}
             </span>
+            {/* "Revisar ruta" — live; disappears once the route is decided/confirmed */}
+            <RouteReviewBadge slCode={customer.slCode} />
             {customer.slCode && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
                 {customer.slCode}
@@ -955,10 +958,10 @@ const Customers = memo(function Customers() {
         title: t("common.success"),
         description: `Cliente ${customerToDelete.fullName} eliminado correctamente.`,
       });
-    } catch {
+    } catch (err: any) {
       toast({
         title: t("common.error"),
-        description: "No se pudo eliminar el cliente.",
+        description: err?.message || "No se pudo eliminar el cliente.",
         variant: "destructive",
       });
     } finally {

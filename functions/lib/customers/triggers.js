@@ -11,6 +11,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.onCustomerWritten = void 0;
+const route_review_1 = require("./route-review");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const v2_1 = require("firebase-functions/v2");
 const firebase_1 = require("../config/firebase");
@@ -18,8 +19,10 @@ const firestore_2 = require("firebase-admin/firestore");
 const app_1 = require("firebase-admin/app");
 const email_service_1 = require("../email/email-service");
 const audit_service_1 = require("../audit/audit-service");
+const sp2_target_1 = require("../config/sp2-target");
 // SP2 Project ID configuration
-const SP2_PROJECT_ID = "smart-portal-2";
+// Real SP2 in production; the emulated SP2 only inside the Firebase emulator (see config/sp2-target).
+const SP2_PROJECT_ID = (0, sp2_target_1.sp2ProjectId)();
 let sp2Db = null;
 /**
  * Get SP2 Firestore instance safely in the backend.
@@ -139,6 +142,39 @@ async function sendRouteUpdateAlert(slCode, fullName, oldRoute, newRoute, actor,
  * - Batched in chunks of 400 operations to safely stay below Firestore's 500-op limit.
  * - Only modifies `fullName` / `matchedName`. Does NOT alter `slCode` or pattern structure.
  */
+/**
+ * Route change → Nova learning (2026-09-27): match_feedback / manifest_learning_patterns entries of this customer
+ * that store a route get the new one, so Nova does not suggest the old route from what it learned.
+ * Entries without a `ruta` field are left alone.
+ */
+async function cascadeRutaToLearningBackend(slCode, newRuta) {
+    let batch = firebase_1.db.batch();
+    let ops = 0;
+    let updatedFeedback = 0;
+    let updatedPatterns = 0;
+    for (const [col, kind] of [["match_feedback", "fb"], ["manifest_learning_patterns", "pat"]]) {
+        const snap = await firebase_1.db.collection(col).where("slCode", "==", slCode).get();
+        for (const d of snap.docs) {
+            const data = d.data();
+            if (!("ruta" in data) || (data.ruta ?? null) === (newRuta ?? null))
+                continue;
+            batch.update(d.ref, { ruta: newRuta ?? null, rutaUpdatedAt: firestore_2.FieldValue.serverTimestamp(), updatedAt: firestore_2.FieldValue.serverTimestamp() });
+            ops++;
+            if (kind === "fb")
+                updatedFeedback++;
+            else
+                updatedPatterns++;
+            if (ops >= 400) {
+                await batch.commit();
+                batch = firebase_1.db.batch();
+                ops = 0;
+            }
+        }
+    }
+    if (ops > 0)
+        await batch.commit();
+    return { updatedFeedback, updatedPatterns };
+}
 async function cascadeNameToLearningBackend(slCode, newFullName) {
     let batch = firebase_1.db.batch();
     let batchOps = 0;
@@ -257,6 +293,17 @@ exports.onCustomerWritten = (0, firestore_1.onDocumentWritten)({
     }
     if (!after)
         return;
+    // "Revisar ruta" flag Nova listens to live: an open review, an SP2 decision not confirmed in SP1, or packages
+    // in process left on the previous route. Kept here, in one place, whatever wrote the review or the list.
+    const attention = (0, route_review_1.routeAttentionOf)(after.routeReview, after.packagesOnPreviousRoute);
+    if ((after.routeAttention ?? false) !== attention) {
+        try {
+            await event.data.after.ref.update({ routeAttention: attention, routeAttentionAt: new Date().toISOString() });
+        }
+        catch (flagErr) {
+            v2_1.logger.error(`[customer-trigger] routeAttention update failed for ${customerId}`, flagErr);
+        }
+    }
     const beforeRuta = before?.ruta;
     const afterRuta = after.ruta;
     const beforeCons = before?.consolidationEnabled;
@@ -300,6 +347,68 @@ exports.onCustomerWritten = (0, firestore_1.onDocumentWritten)({
         }
         catch (nameErr) {
             v2_1.logger.error(`[customer-trigger] Failed to cascade customer name update to Nova learning for ${slCode}:`, nameErr);
+        }
+    }
+    // "Revisar ruta": an SP1 admin changed the route directly while a review was open → that is the decision.
+    if (rutaChanged && before !== undefined && after.syncSource !== 'smart-portal-2') {
+        const closed = (0, route_review_1.resolveOnSp1RouteEdit)(after.routeReview, afterRuta, String(after.rutaLastUpdatedBy || 'sp1_admin'), new Date().toISOString());
+        if (closed) {
+            try {
+                await event.data.after.ref.update({ routeReview: closed });
+                await firebase_1.db.collection("route_reviews").add({ slCode, event: "resolved_in_sp1", at: closed.resolvedAt, by: closed.resolvedBy, reviewId: closed.id, previousRuta: beforeRuta || null, finalRuta: afterRuta || null, decision: closed.decision, review: closed, source: "onCustomerWritten (route edited)" });
+                const q = await getSp2Firestore().collection("users").where("slCode", "==", slCode).limit(1).get();
+                if (!q.empty)
+                    await q.docs[0].ref.update({ routeReview: closed });
+            }
+            catch (rrErr) {
+                v2_1.logger.error(`[customer-trigger] Failed to close the route review for ${slCode}:`, rrErr);
+            }
+        }
+    }
+    // Route change → packages still in process on the previous route are flagged on the customer (Nova shows them
+    // with a "mover a la ruta nueva" action). Nothing is moved by itself.
+    if (rutaChanged && slCode && !statusBecameDeleted && before !== undefined) {
+        try {
+            const [bySl, byClient] = await Promise.all([
+                firebase_1.db.collection("packages").where("slCode", "==", slCode).get(),
+                firebase_1.db.collection("packages").where("clientSlCode", "==", slCode).get(),
+            ]);
+            const all = new Map();
+            for (const d of [...bySl.docs, ...byClient.docs])
+                all.set(d.id, { id: d.id, ...d.data() });
+            const candidates = (0, route_review_1.openPackagesOnOtherRoute)([...all.values()], afterRuta).slice(0, 50);
+            const now = new Date().toISOString();
+            // Re-checked inside a transaction: a package moved by the admin meanwhile (slMovePackagesToCustomerRoute)
+            // must not come back on the list (the badge would stay for nothing).
+            const open = await firebase_1.db.runTransaction(async (tx) => {
+                const cSnap = await tx.get(event.data.after.ref);
+                const currentRuta = cSnap.get("ruta") ?? afterRuta;
+                const fresh = await Promise.all(candidates.map((p) => tx.get(firebase_1.db.collection("packages").doc(p.id))));
+                const still = (0, route_review_1.openPackagesOnOtherRoute)(fresh.filter((f) => f.exists).map((f) => ({ id: f.id, ...f.data() })), currentRuta);
+                tx.update(event.data.after.ref, {
+                    packagesOnPreviousRoute: still.length ? { count: still.length, items: still, previousRuta: beforeRuta || null, newRuta: currentRuta || null, detectedAt: now } : null,
+                });
+                return still;
+            });
+            if (open.length) {
+                await firebase_1.db.collection("route_reviews").add({ slCode, event: "packages_on_previous_route", at: now, previousRuta: beforeRuta || null, newRuta: afterRuta || null, count: open.length, items: open.slice(0, 50), source: "onCustomerWritten" });
+            }
+        }
+        catch (pkErr) {
+            v2_1.logger.error(`[customer-trigger] Failed to check packages on the previous route for ${slCode}:`, pkErr);
+        }
+    }
+    // Route change → Nova learning keeps the same route (logged)
+    if (rutaChanged && slCode && !statusBecameDeleted && before !== undefined) {
+        try {
+            const { updatedFeedback, updatedPatterns } = await cascadeRutaToLearningBackend(slCode, afterRuta || null);
+            v2_1.logger.info(`[customer-trigger] Route "${beforeRuta || ''}" → "${afterRuta || ''}" cascaded to Nova learning for ${slCode} (${updatedFeedback} feedback, ${updatedPatterns} patterns)`);
+            if (updatedFeedback > 0 || updatedPatterns > 0) {
+                await firebase_1.db.collection("route_reviews").add({ slCode, event: "learning_route_updated", at: new Date().toISOString(), previousRuta: beforeRuta || null, newRuta: afterRuta || null, updatedFeedback, updatedPatterns, source: "onCustomerWritten" });
+            }
+        }
+        catch (rutaErr) {
+            v2_1.logger.error(`[customer-trigger] Failed to cascade route to Nova learning for ${slCode}:`, rutaErr);
         }
     }
     // If only name or status changed on an existing customer, no route or consolidation processing is needed

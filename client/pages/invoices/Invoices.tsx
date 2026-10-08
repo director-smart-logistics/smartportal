@@ -3411,120 +3411,86 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
     setUpdatingStatusId(invoiceId);
     try {
       const nowAnnul = new Date().toISOString();
-      await firestoreApi.invoices.update(invoiceId, {
+      const annulNote = `Factura anulada. Paquetes movidos a: ${targetManifest ? targetManifest.manifestNumber : 'consolidacion_transitoria'}`;
+
+      // ATOMIC (F10, 2026-09-26): the invoice annulment and the move of its packages are ONE commit —
+      // both happen or nothing does. The admin annuls and the packages land in consolidation at the same
+      // instant and stay there until the admin moves them; the UI never shows them unlinked in between,
+      // and the SP1 invoice trigger (which clears package links of an annulled invoice) cannot race it.
+      // Step 1: locate the packages (same lookup as before: by tracking of the non-manual items).
+      const inv = invoices.find(i => i.id === invoiceId);
+      const now = nowAnnul;
+      const invoiceEmissionDate = (inv && extractInvoiceEmissionDate(inv)) || now;
+      const slCode = inv?.slCode || inv?.customerId || '';
+      const custName = (inv as any)?.clientName || inv?.customer?.fullName || slCode;
+      const ruta = inv?.customer?.ruta || (inv as any)?.clientRoute || '';
+      const manifest = (inv as any)?.manifestNumber
+        || ((inv as any)?.manifestNumbers as string[] | undefined)?.[0]
+        || '';
+      const items: ManifestConsolidationItem[] = (inv?.invoiceItems ?? [])
+        .filter(item => !item.isManual && item.trackingNumber)
+        .map(item => ({
+          tracking: item.trackingNumber!.toUpperCase(),
+          slCode,
+          customerName: custName,
+          ruta,
+          weight: item.realWeight ?? item.weight ?? 0,
+          price: item.totalPrice ?? item.unitPrice ?? 0,
+          currency: 'USD',
+          description: item.description ?? '',
+          permisos: !!(item.requiresPermit),
+          origin: 'Miami, FL',
+          manifestNumber: manifest,
+          invoiceId,
+          invoiceNumber: inv?.invoiceNumber,
+          invoiceDate: invoiceEmissionDate,
+          invoiceStatus: 'annulled',
+          status: '',
+          movedAt: invoiceEmissionDate,
+        }));
+      const targetDocId = targetManifest ? targetManifest.docId : 'consolidacion_transitoria';
+      const targetManifestNumber = targetManifest ? targetManifest.manifestNumber : 'consolidacion_transitoria';
+      const now2 = nowAnnul;
+      const trackings = items.map(i => i.tracking.toUpperCase());
+
+      const validDocs: any[] = [];
+      if (inv && trackings.length > 0) {
+        // Batch query packages in chunks of 30 (operators: 'in') to avoid N individual getDocs
+        const CHUNK_SIZE = 30;
+        const seenDocIds = new Set<string>();
+        for (let i = 0; i < trackings.length; i += CHUNK_SIZE) {
+          const chunk = trackings.slice(i, i + CHUNK_SIZE);
+          const [snapTN, snapT] = await Promise.all([
+            getDocs(query(collection(db, 'packages'), where('trackingNumber', 'in', chunk))),
+            getDocs(query(collection(db, 'packages'), where('tracking', 'in', chunk))),
+          ]);
+          for (const d of [...snapTN.docs, ...snapT.docs]) {
+            if (!seenDocIds.has(d.id)) {
+              seenDocIds.add(d.id);
+              validDocs.push(d);
+            }
+          }
+        }
+      }
+
+      // Step 2: ONE commit — invoice annulled + every package moved.
+      const annulBatch = writeBatch(db);
+      annulBatch.update(doc(db, 'invoices', invoiceId), {
         status: "annulled",
         annulledAt: nowAnnul,
+        updatedAt: serverTimestamp(),
         statusHistory: arrayUnion({
           status: 'annulled',
           changedAt: nowAnnul,
           changedBy: user?.email || user?.id || 'admin',
-          note: `Factura anulada. Paquetes movidos a: ${targetManifest ? targetManifest.manifestNumber : 'consolidacion_transitoria'}`
+          note: annulNote,
         }),
       });
-      // En SP1 cuando anulo o delete una factura esto deberia literalemnte borrar la factura de SP2
-      const annulInv = invoices.find(i => i.id === invoiceId);
-      deleteInvoiceFromSp2(invoiceId, (annulInv as any)?.invoiceNumber ?? invoiceId).catch(err => console.warn('[handleAnnulInvoice] SP2 deletion failed:', err));
-
-      logAction({
-        userId: user?.id ?? 'unknown',
-        userName: user?.fullName,
-        userEmail: user?.email,
-        userRole: user?.role,
-        action: 'invoice_updated',
-        category: 'invoice',
-        resource: '/invoices',
-        resourceId: invoiceId,
-        result: 'success',
-        metadata: {
-          invoiceNumber: (annulInv as any)?.invoiceNumber ?? invoiceId,
-          status: 'annulled',
-          previousStatus: annulInv?.status,
-          note: `Factura anulada. Paquetes movidos a: ${targetManifest ? targetManifest.manifestNumber : 'consolidacion_transitoria'}`
-        },
-      });
-      // Optimistic update — reflect status change in the cursor cache and liveInvoiceData immediately
-      setLiveInvoiceData(prev => {
-        const next = new Map(prev);
-        const existing = next.get(invoiceId) || {};
-        next.set(invoiceId, { ...existing, status: 'annulled' });
-        return next;
-      });
-      queryClient.setQueriesData({ queryKey: ['invoices-cursor'] }, (old: any) => {
-        if (!old?.data) return old;
-        return { ...old, data: old.data.map((inv: any) => inv.id === invoiceId ? { ...inv, status: 'annulled' } : inv) };
-      });
-      queryClient.invalidateQueries({ queryKey: ['invoices-cursor'] });
-      queryClient.invalidateQueries({ queryKey: ['invoice', invoiceId] });
-
-      // Move non-manual invoice items to manifest_consolidation
-      const inv = invoices.find(i => i.id === invoiceId);
       if (inv) {
-        const now = new Date().toISOString();
-        const invoiceEmissionDate = extractInvoiceEmissionDate(inv) || now;
-        const slCode = inv.slCode || inv.customerId || '';
-        const custName = (inv as any).clientName || inv.customer?.fullName || slCode;
-        const ruta = inv.customer?.ruta || (inv as any).clientRoute || '';
-        const manifest = (inv as any).manifestNumber
-          || ((inv as any).manifestNumbers as string[] | undefined)?.[0]
-          || '';
-
-        const items: ManifestConsolidationItem[] = (inv.invoiceItems ?? [])
-          .filter(item => !item.isManual && item.trackingNumber)
-          .map(item => ({
-            tracking: item.trackingNumber!.toUpperCase(),
-            slCode,
-            customerName: custName,
-            ruta,
-            weight: item.realWeight ?? item.weight ?? 0,
-            price: item.totalPrice ?? item.unitPrice ?? 0,
-            currency: 'USD',
-            description: item.description ?? '',
-            permisos: !!(item.requiresPermit),
-            origin: 'Miami, FL',
-            manifestNumber: manifest,
-            invoiceId,
-            invoiceNumber: inv.invoiceNumber,
-            invoiceDate: invoiceEmissionDate,
-            invoiceStatus: 'annulled',
-            status: '',
-            movedAt: invoiceEmissionDate,
-          }));
-
-        if (items.length > 0) {
-          const targetDocId = targetManifest ? targetManifest.docId : 'consolidacion_transitoria';
-          const targetManifestNumber = targetManifest ? targetManifest.manifestNumber : 'consolidacion_transitoria';
-          
-          const now2 = new Date().toISOString();
-          const trackings = items.map(i => i.tracking.toUpperCase());
-          
-          // Batch query packages in chunks of 30 (operators: 'in') to avoid N individual getDocs
-          const CHUNK_SIZE = 30;
-          const trackingChunks: string[][] = [];
-          for (let i = 0; i < trackings.length; i += CHUNK_SIZE) {
-            trackingChunks.push(trackings.slice(i, i + CHUNK_SIZE));
-          }
-          
-          const validDocs: any[] = [];
-          const seenDocIds = new Set<string>();
-          for (const chunk of trackingChunks) {
-            const [snapTN, snapT] = await Promise.all([
-              getDocs(query(collection(db, 'packages'), where('trackingNumber', 'in', chunk))),
-              getDocs(query(collection(db, 'packages'), where('tracking', 'in', chunk))),
-            ]);
-            for (const d of [...snapTN.docs, ...snapT.docs]) {
-              if (!seenDocIds.has(d.id)) {
-                seenDocIds.add(d.id);
-                validDocs.push(d);
-              }
-            }
-          }
-          
-          if (validDocs.length > 0) {
-            const pkgBatch = writeBatch(db);
-            validDocs.forEach(pkgDoc => {
-              const data = pkgDoc.data() as any;
-              const currentMf = data.manifestNumber || data.manifiesto || '';
-              pkgBatch.update(doc(db, 'packages', pkgDoc.id), {
+        validDocs.forEach(pkgDoc => {
+          const data = pkgDoc.data() as any;
+          const currentMf = data.manifestNumber || data.manifiesto || '';
+          annulBatch.update(doc(db, 'packages', pkgDoc.id), {
                 // Stamp origin so consolidation view can group under source manifest.
                 // Guard: never overwrite if already stamped (idempotent).
                 ...(!data.originalManifestId && currentMf && currentMf !== targetManifestNumber
@@ -3560,9 +3526,48 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
                   note: `Factura ${inv.invoiceNumber || invoiceId} anulada desde panel de facturas — paquete desvinculado.`,
                 }),
               });
-            });
-            await pkgBatch.commit();
+        });
+      }
+      await annulBatch.commit();
 
+      // Step 3: everything that follows a committed annulment (unchanged).
+      // En SP1 cuando anulo o delete una factura esto deberia literalemnte borrar la factura de SP2
+      const annulInv = invoices.find(i => i.id === invoiceId);
+      deleteInvoiceFromSp2(invoiceId, (annulInv as any)?.invoiceNumber ?? invoiceId).catch(err => console.warn('[handleAnnulInvoice] SP2 deletion failed:', err));
+
+      logAction({
+        userId: user?.id ?? 'unknown',
+        userName: user?.fullName,
+        userEmail: user?.email,
+        userRole: user?.role,
+        action: 'invoice_updated',
+        category: 'invoice',
+        resource: '/invoices',
+        resourceId: invoiceId,
+        result: 'success',
+        metadata: {
+          invoiceNumber: (annulInv as any)?.invoiceNumber ?? invoiceId,
+          status: 'annulled',
+          previousStatus: annulInv?.status,
+          note: `Factura anulada. Paquetes movidos a: ${targetManifest ? targetManifest.manifestNumber : 'consolidacion_transitoria'}`
+        },
+      });
+      // Optimistic update — reflect status change in the cursor cache and liveInvoiceData immediately
+      setLiveInvoiceData(prev => {
+        const next = new Map(prev);
+        const existing = next.get(invoiceId) || {};
+        next.set(invoiceId, { ...existing, status: 'annulled' });
+        return next;
+      });
+      queryClient.setQueriesData({ queryKey: ['invoices-cursor'] }, (old: any) => {
+        if (!old?.data) return old;
+        return { ...old, data: old.data.map((inv: any) => inv.id === invoiceId ? { ...inv, status: 'annulled' } : inv) };
+      });
+      queryClient.invalidateQueries({ queryKey: ['invoices-cursor'] });
+      queryClient.invalidateQueries({ queryKey: ['invoice', invoiceId] });
+
+      if (inv && items.length > 0) {
+          if (validDocs.length > 0) {
             // Push the new manifestNumber to SP2 so the customer portal
             // (shipments collection) stays in sync.
             const pkgsForSp2 = validDocs
@@ -3597,7 +3602,6 @@ const InvoiceGeneration = memo(function InvoiceGeneration() {
           } else {
             await addItemsToConsolidation(items);
           }
-        }
       }
 
       toast({

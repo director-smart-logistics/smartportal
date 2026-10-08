@@ -1,0 +1,96 @@
+{
+  "note": "Nova (SP1) real flow in the combined QA emulator BEFORE the pre-alert match fixes. Produced by scripts/qa-emulator/e2e/nova-upload.cjs with seed-nova-scenarios.cjs + fixtures/manifest-prealert-scenarios.csv.",
+  "rows": [
+    {
+      "case": "M1",
+      "tracking": "9632001960806794376300877098560696",
+      "manifestName": "Cliente Uno",
+      "P": null,
+      "assignedByPreAlert": null
+    },
+    {
+      "case": "M2",
+      "tracking": "420331959405511899223197428491",
+      "manifestName": "Cliente Dos",
+      "P": "Pre-alerta: SL90002 — Cliente Dos",
+      "assignedByPreAlert": "SL90002"
+    },
+    {
+      "case": "M3",
+      "tracking": "TBA330000000301",
+      "manifestName": "Cliente Uno",
+      "P": "Pre-alerta: SL90002 — Cliente Dos",
+      "assignedByPreAlert": "SL90002"
+    },
+    {
+      "case": "M4",
+      "tracking": "TBA330000000401",
+      "manifestName": "Cliente Uno",
+      "P": "Pre-alerta: SL90001 — Cliente Uno",
+      "assignedByPreAlert": "SL90001"
+    },
+    {
+      "case": "M5",
+      "tracking": "TBA330000000402",
+      "manifestName": "Cliente Uno",
+      "P": "Pre-alerta: SL2429 — Cliente Pre-alertado (SL2429)",
+      "assignedByPreAlert": "SL2429"
+    },
+    {
+      "case": "M6",
+      "tracking": "TBA330000000403",
+      "manifestName": "Cliente Uno",
+      "P": null,
+      "assignedByPreAlert": null
+    },
+    {
+      "case": "M7",
+      "tracking": "TBA330000000404",
+      "manifestName": "Cliente Uno",
+      "P": "Pre-alerta: SL90001 — Cliente Uno",
+      "assignedByPreAlert": "SL90001"
+    },
+    {
+      "case": "M8",
+      "tracking": "TBA330000000405",
+      "manifestName": "Cliente Dos",
+      "P": "Pre-alerta: SL90001 — Cliente Uno",
+      "assignedByPreAlert": "SL90001"
+    },
+    {
+      "case": "M9",
+      "tracking": "TBA330000000406",
+      "manifestName": "Cliente Dos",
+      "P": "Pre-alerta: SL90001 — Cliente Uno",
+      "assignedByPreAlert": "SL90001"
+    },
+    {
+      "case": "M10",
+      "tracking": "TBA330000000407",
+      "manifestName": "Cliente Uno",
+      "P": null,
+      "assignedByPreAlert": null
+    },
+    {
+      "case": "M11",
+      "tracking": "TBA330000000408",
+      "manifestName": "Cliente Dos",
+      "P": null,
+      "assignedByPreAlert": null
+    },
+    {
+      "case": "M13",
+      "tracking": "TBA330000000409",
+      "manifestName": "Cliente Uno",
+      "P": null,
+      "assignedByPreAlert": null
+    },
+    {
+      "case": "M12",
+      "tracking": "TBA330000000499",
+      "manifestName": "Cliente Dos",
+      "P": null,
+      "assignedByPreAlert": null
+    }
+  ]
+}

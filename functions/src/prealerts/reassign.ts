@@ -27,8 +27,10 @@ import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https
 import { logger } from "firebase-functions/v2";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { initializeApp, getApps, getApp } from "firebase-admin/app";
+import { sp2ProjectId } from "../config/sp2-target";
 
-const SP2_PROJECT_ID = "smart-portal-2";
+// Real SP2 in production; the emulated SP2 only inside the Firebase emulator (see config/sp2-target).
+const SP2_PROJECT_ID = sp2ProjectId();
 const SP2_SHIPMENT_SYNC_URL =
   process.env.SP2_SHIPMENT_SYNC_URL ||
   "https://us-central1-smart-portal-2.cloudfunctions.net/slSyncShipmentsFromSp1";

@@ -31,6 +31,8 @@ const firestore_1 = require("firebase-functions/v2/firestore");
 const v2_1 = require("firebase-functions/v2");
 const firebase_1 = require("../config/firebase");
 const firestore_2 = require("firebase-admin/firestore");
+const reassign_rule_1 = require("./reassign-rule");
+const prealert_links_1 = require("./prealert-links");
 // ── Config ──────────────────────────────────────────────────────────────────
 const SP2_SYNC_URL = process.env.SP2_INVOICE_SYNC_URL ||
     "https://us-central1-smart-portal-2.cloudfunctions.net/slSyncInvoicesFromSp1";
@@ -443,6 +445,16 @@ async function enforcePackageLinksForInvoice(invoiceId, invoiceData, beforeData)
                 skipped++;
                 continue;
             }
+            // N16: a closed/old package already billed on another invoice keeps it — a newer invoice with
+            // the same tracking (recycled number) must not take it over. Linking an unbilled package and
+            // clearing the link (desiredInvId null) are still allowed.
+            if (currentInvId && desiredInvId && desiredInvId !== currentInvId && (0, reassign_rule_1.isSettledPackage)(pkg)) {
+                v2_1.logger.warn("[invoice-trigger] Closed/old package keeps its invoice (recycled tracking)", {
+                    invoiceId, packageId: pkgDoc.id, tracking, keeps: currentInvId, wouldBe: desiredInvId,
+                });
+                skipped++;
+                continue;
+            }
             try {
                 await pkgDoc.ref.update({
                     invoiceId: desiredInvId,
@@ -575,6 +587,16 @@ exports.onInvoiceWritten = (0, firestore_1.onDocumentWritten)({
                     for (const snap of pkgSnaps) {
                         for (const doc of snap.docs) {
                             const currentPkgData = doc.data();
+                            // N14: only this invoice's packages, or current packages of its previous customer.
+                            // Never another customer's package nor an old/finished one with a recycled number.
+                            if (!(0, reassign_rule_1.mayFollowInvoiceReassignment)(currentPkgData, { invoiceId, beforeSlCode })) {
+                                if (currentPkgData.slCode !== afterSlCode) {
+                                    v2_1.logger.warn("[invoice-trigger] Package left with its customer (not part of this reassignment)", {
+                                        invoiceId, packageId: doc.id, packageSlCode: currentPkgData.slCode, toSlCode: afterSlCode,
+                                    });
+                                }
+                                continue;
+                            }
                             if (currentPkgData.slCode !== afterSlCode) {
                                 batch.update(doc.ref, {
                                     slCode: afterSlCode,
@@ -633,6 +655,16 @@ exports.onInvoiceWritten = (0, firestore_1.onDocumentWritten)({
     }
     // ── Push ────────────────────────────────────────────────────────────
     const payload = buildSp2Payload(corrected, invoiceId);
+    // F2.2: the confirmed pre-alert of each tracking, by id (SP2 links without searching). On a
+    // read failure the invoice still syncs without links (SP2 keeps its previous behavior).
+    try {
+        const preAlertLinks = await (0, prealert_links_1.loadPreAlertLinks)(firebase_1.db, corrected);
+        if (preAlertLinks.length)
+            payload.preAlertLinks = preAlertLinks;
+    }
+    catch (err) {
+        v2_1.logger.warn("[invoice-trigger] Could not read pre-alert links — synced without them", { invoiceId, error: err.message });
+    }
     await pushToSp2(payload, before ? "update" : "create");
     // ── Enforce package <-> invoice link invariant ──────────────────────
     // Runs after the SP2 push so the customer-facing total is up to date by

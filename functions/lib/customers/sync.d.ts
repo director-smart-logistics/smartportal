@@ -222,6 +222,8 @@ interface SP1CustomerAddress {
         schedule?: string;
     } | null;
     requiresEncomienda: boolean;
+    /** F8.2: service the customer proposed, until an official one is set (label note) */
+    encomiendaSuggestedName?: string | null;
     status: string;
     isDefault: boolean;
     isActive: boolean;
@@ -266,6 +268,22 @@ export declare const triggerCustomerSync: import("firebase-functions/v2/https").
     success: boolean;
     stats: SyncStats;
 }>, unknown>;
+/**
+ * Identity guard before CREATING an SP1 ficha from an SP2 account (2026-09-29).
+ *  - An account that arrives as deleted/inactive never creates a ficha (that is how "deleted" fichas that
+ *    only existed in SP1 appeared).
+ *  - If this SP2 account (uid) already has an SP1 ficha under ANOTHER code, a second ficha is NOT created:
+ *    that is how 16 customers ended with one code in SP1 and another in SP2 (packages and pre-alerts split,
+ *    Nova unsure which account to use). An alert is logged for the admin instead.
+ * Returns null when creating is fine, else the reason it was skipped.
+ */
+export declare function guardNewSp1Customer(sp1Db: FirebaseFirestore.Firestore, sp2User: {
+    slCode: string;
+    uid?: string;
+    status?: string;
+    isActive?: boolean;
+    email?: string;
+}): Promise<string | null>;
 interface UpdateCustomerProfileRequest {
     slCode: string;
     fullName: string;
@@ -280,17 +298,6 @@ export declare const slUpdateCustomerProfile: import("firebase-functions/v2/http
     sp1Updated: boolean;
     sp2Updated: boolean;
 }>, unknown>;
-/**
- * HTTP endpoint: Real-time customer upsert pushed from SP2 on user registration.
- *
- * SP2 calls this immediately when a new user document is created (via the
- * slUserProfileCreated Firestore trigger and slRegisterAccount HTTP endpoint),
- * eliminating the up-to-6-hour gap of the scheduled incremental poll.
- *
- * Auth:   x-sync-secret header must match SP2_SYNC_SECRET env var.
- * Body:   { user: SP2UserProfile }
- * Method: POST
- */
 export declare const slSyncCustomerFromSp2: import("firebase-functions/v2/https").HttpsFunction;
 /**
  * Callable endpoint: Force sync a customer from SP2 to SP1 by slCode.

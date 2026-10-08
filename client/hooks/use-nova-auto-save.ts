@@ -25,11 +25,14 @@
  * the operator just edited. On reload, `loadMegaManFromFirestore` rehydrates
  * a 100% identical table, so no edit is ever lost to a refresh / tab close.
  *
- * Packages and invoices in their own collections are NOT touched —
- * they reflect the LAST explicit "Actualizar BD". This is a deliberate
- * trade-off: between manual saves the table state lives in `manifests/{mn}`
- * (lossless) while billing artefacts stay frozen until the operator
- * confirms the heavy pipeline.
+ * Invoices are NOT touched (they need the explicit buttons). Existing
+ * `packages` docs ARE updated (upsertManifestPackageOverrides, since
+ * BUG-AUTOSAVE-PARTIAL) — but ONLY the rows and fields the admin changed in
+ * this tab since the baseline (F-AUTOSAVE-SAFE, 2026-09-26): rows the admin
+ * did not touch (e.g. another route while working route by route) and changes
+ * made outside this tab (another admin, Paquetes, Rutas) are never
+ * overwritten with the table's stale state. New packages are only created by
+ * the explicit "Guardar en BD".
  *
  * ─── Debounce + dedup ───────────────────────────────────────────────────────
  *
@@ -80,6 +83,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   saveManifestRecord,
   upsertManifestPackageOverrides,
+  snapshotAutosavePayloads,
   type ManifestRow,
 } from '@/lib/services/manifest-processor';
 import type { CustomerContactInfo } from '@/lib/services/invoice-service';
@@ -194,6 +198,30 @@ export function useNovaAutoSave(params: UseNovaAutoSaveParams): UseNovaAutoSaveR
   }, [manifestType, customerContacts, exchangeRate, priceAdjustments, priceOverrides, preAlertsMap, dataOriginPolicy]);
   useEffect(() => { statusRef.current = status; }, [status]);
 
+  // F-AUTOSAVE-SAFE (2026-09-26): what each row looked like the last time this tab saved it (or when the
+  // manifest was opened). The auto-save writes to `packages` ONLY the rows — and only the fields — the admin
+  // changed since then. Before, it rewrote EVERY existing row with the table state: saving route B rewrote
+  // route A, and a change made to a package outside this tab (another admin, Paquetes, Rutas) was silently
+  // overwritten with the stale table value (proven by scripts/qa-emulator/e2e/sp1-nova-save-scope.cjs).
+  const baselineRef = useRef<Map<string, Record<string, unknown>> | null>(null);
+  const takeBaseline = useCallback(() => {
+    try {
+      const rows = buildRowsRef.current();
+      baselineRef.current = snapshotAutosavePayloads(rows, manifestNumber, {
+        manifestType: optsRef.current.manifestType,
+        customerContacts: optsRef.current.customerContacts as any,
+        exchangeRate: optsRef.current.exchangeRate,
+        priceAdjustments: optsRef.current.priceAdjustments || {},
+        priceOverrides: optsRef.current.priceOverrides || {},
+        preAlertsMap: optsRef.current.preAlertsMap,
+        dataOriginPolicy: optsRef.current.dataOriginPolicy,
+      });
+    } catch (err) {
+      console.warn('[Nova][autosave] baseline failed:', err);
+      baselineRef.current = new Map();
+    }
+  }, [manifestNumber]);
+
   const performSave = useCallback(async () => {
     if (!manifestNumber) return;
     if (!enabledRef.current) return; // Hard safety switch
@@ -233,6 +261,7 @@ export function useNovaAutoSave(params: UseNovaAutoSaveParams): UseNovaAutoSaveR
           priceOverrides: priceOverridesByTracking,
         }),
         upsertManifestPackageOverrides(rows, manifestNumber, {
+          baseline: baselineRef.current ?? new Map(),
           manifestType: optsRef.current.manifestType,
           customerContacts: contacts,
           exchangeRate: optsRef.current.exchangeRate,
@@ -242,6 +271,8 @@ export function useNovaAutoSave(params: UseNovaAutoSaveParams): UseNovaAutoSaveR
           dataOriginPolicy: optsRef.current.dataOriginPolicy,
         }),
       ]);
+      // What was written becomes the new baseline for those rows.
+      pkgResult.written.forEach((v, k) => baselineRef.current?.set(k, v));
       if (pkgResult.errors > 0) {
         console.warn(
           `[Nova][autosave] packages sync had ${pkgResult.errors} error(s); manifest doc saved OK.`,
@@ -281,6 +312,7 @@ export function useNovaAutoSave(params: UseNovaAutoSaveParams): UseNovaAutoSaveR
   useEffect(() => {
     if (initialMountRef.current) {
       initialMountRef.current = false;
+      takeBaseline();   // the manifest as it was opened — nothing edited yet
       return;
     }
     if (!enabled || !manifestNumber) return;
@@ -350,11 +382,13 @@ export function useNovaAutoSave(params: UseNovaAutoSaveParams): UseNovaAutoSaveR
   // External notification that a save happened outside the hook (e.g. caller
   // invoked saveManifestRecord directly). Clears dirty state and updates UI.
   const markSaved = useCallback(() => {
+    // An explicit save ("Guardar en BD") wrote the rows itself: they are the new baseline.
+    takeBaseline();
     dirtyRef.current = false;
     setLastSavedAt(Date.now());
     setErrorMessage(null);
     setStatus('saved');
-  }, []);
+  }, [takeBaseline]);
 
   return { status, lastSavedAt, errorMessage, flush, markSaved };
 }

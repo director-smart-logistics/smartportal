@@ -65,3 +65,6 @@ coverage/.tmp/
 
 coverage/
 lighthouse-report.json
+
+# Read-only audit reports (contain customers personal data — never commit)
+audit-output/

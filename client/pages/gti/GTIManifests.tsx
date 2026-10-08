@@ -66,8 +66,10 @@ import {
 import {
   downloadGTITiquetes,
   downloadGTITiquetesXLSX,
+  isFE,
   type GTICalculatedRow,
   type GTIRowInput,
+  type GTIExportResult,
 } from '@/lib/services/gti-export';
 
 // ── Editable fields config ────────────────────────────────────────────────────
@@ -201,6 +203,40 @@ function downloadXLSXManifest(manifest: GTIManifestDoc) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'GTI');
   XLSX.writeFile(wb, `GTI_${manifest.manifestNumber}${manifest.routeSuffix ? '_' + manifest.routeSuffix : ''}.xlsx`);
+}
+
+/** Stored manifest rows → generator input: the stored colones amount is THE amount (as downloaded). */
+function gtiInputsFromManifest(manifest: GTIManifestDoc): GTIRowInput[] {
+  return manifest.rows.map((r) => ({
+    nombre: r.nombre,
+    dni: r.dni,
+    email: r.email,
+    phone: r.phone,
+    montoCRC: Number((r as any).montoCRC) > 0 ? Number((r as any).montoCRC) : r.monto,
+    precioUSD: r.precioUSD,
+    descripcion: r.descripcion,
+    electronicInvoiceRequired: (r as any).electronicInvoiceRequired ?? (r as any).tipoDocumento === '01',
+    tipoDocumento: (r as any).tipoDocumento,
+    invoiceId: (r as any).invoiceId,
+    invoiceNumber: (r as any).invoiceNumber,
+  }));
+}
+
+/** Tell the admin what went into the GTI file and what was left out (and why). */
+function reportGTIResult(res: GTIExportResult, toast: (o: any) => void) {
+  const left = [
+    ...res.excludedFE.map((r) => `${r.nombre}: factura electrónica — hacerla directamente en GTI`),
+    ...res.excludedNoAmount.map((r) => `${r.nombre}: sin monto`),
+  ];
+  toast({
+    title: res.included.length ? 'Archivo GTI generado' : 'No se generó archivo GTI',
+    description: `${res.included.length} factura(s) en el archivo`
+      + (res.included.filter(isFE).length ? ` (${res.included.filter(isFE).length} factura(s) electrónica(s))` : '') + '.'
+      + (left.length ? ` NO incluidas (${left.length}): ${left.join(' · ')}` : '')
+      + (res.feIncomplete.length ? ` Revisar en GTI (factura electrónica incompleta): ${res.feIncomplete.map((x) => `${x.row.nombre}: falta ${x.missing.join(', ')}`).join(' · ')}` : ''),
+    variant: left.length || res.feIncomplete.length ? 'destructive' : undefined,
+    duration: left.length || res.feIncomplete.length ? 30000 : undefined,
+  });
 }
 
 // ── EditableCell ─────────────────────────────────────────────────────────────
@@ -867,57 +903,33 @@ function ManifestCard({
               <DropdownMenuItem
                 onClick={(e) => {
                   e.stopPropagation();
-                  const inputs: GTIRowInput[] = manifest.rows.map((r) => ({
-                    nombre: r.nombre,
-                    dni: r.dni,
-                    email: r.email,
-                    phone: r.phone,
-                    precioUSD: r.precioUSD,
-                    descripcion: r.descripcion,
-                    electronicInvoiceRequired:
-                      (r as any).electronicInvoiceRequired ?? (r as any).tipoDocumento === '01',
-                    tipoDocumento: (r as any).tipoDocumento,
-                    condicionVenta: (r as any).condicionVenta,
-                    medioPago: (r as any).medioPago,
-                  }));
-                  downloadGTITiquetesXLSX(inputs, {
+                  const inputs = gtiInputsFromManifest(manifest);
+                  reportGTIResult(downloadGTITiquetesXLSX(inputs, {
                     tc: manifest.tc,
                     manifestNumber: manifest.manifestNumber,
                     routeSuffix: manifest.routeSuffix,
-                  });
+                  }), toast);
                 }}
                 className="gap-2 text-xs cursor-pointer font-medium text-emerald-600 dark:text-emerald-400"
               >
                 <FileDown className="h-3.5 w-3.5" />
-                Excel GTI Oficial (52 Cols)
+                Excel GTI (plantilla oficial)
               </DropdownMenuItem>
 
               <DropdownMenuItem
                 onClick={(e) => {
                   e.stopPropagation();
-                  const inputs: GTIRowInput[] = manifest.rows.map((r) => ({
-                    nombre: r.nombre,
-                    dni: r.dni,
-                    email: r.email,
-                    phone: r.phone,
-                    precioUSD: r.precioUSD,
-                    descripcion: r.descripcion,
-                    electronicInvoiceRequired:
-                      (r as any).electronicInvoiceRequired ?? (r as any).tipoDocumento === '01',
-                    tipoDocumento: (r as any).tipoDocumento,
-                    condicionVenta: (r as any).condicionVenta,
-                    medioPago: (r as any).medioPago,
-                  }));
-                  downloadGTITiquetes(inputs, {
+                  const inputs = gtiInputsFromManifest(manifest);
+                  reportGTIResult(downloadGTITiquetes(inputs, {
                     tc: manifest.tc,
                     manifestNumber: manifest.manifestNumber,
                     routeSuffix: manifest.routeSuffix,
-                  });
+                  }), toast);
                 }}
                 className="gap-2 text-xs cursor-pointer font-medium text-emerald-600 dark:text-emerald-400"
               >
                 <FileText className="h-3.5 w-3.5" />
-                CSV GTI Oficial (52 Cols)
+                CSV GTI (plantilla oficial)
               </DropdownMenuItem>
 
               <DropdownMenuSeparator />

@@ -50,11 +50,14 @@
  *
  * - `fresh`     → Excel file just parsed; operator reviewing AI matches.
  * - `firestore` → Saved manifest re-loaded; operator-curated, frozen by default.
+ * - `saved`     → Fresh parse that the admin already SAVED in this session. Pre-alerts are
+ *                 validated ONCE, before saving: from the first save on, nothing automatic runs
+ *                 (docs/NOVA_PREALERT_MATCH_SCENARIOS.md rule 5, section F).
  *
  * Add a new variant only when the lifecycle differs materially (e.g. data
  * loaded from a third-party API that needs partial auto-validation).
  */
-export type DataOrigin = 'fresh' | 'firestore';
+export type DataOrigin = 'fresh' | 'firestore' | 'saved';
 
 /**
  * The behavior contract that the data-origin module hands to every consumer.
@@ -96,6 +99,16 @@ export interface DataOriginPolicy {
    * `true` for fresh parses. `false` for Firestore.
    */
   readonly allowAutoLearnedRoute: boolean;
+
+  /**
+   * Whether Nova keeps a LIVE listener on SP2 `pre_alerts` for the manifest trackings (P badges
+   * and pre-alert auto-assignment follow what customers do while the admin reviews).
+   *
+   * `true` only for fresh parses before the first save. `false` once saved (this session or
+   * re-loaded): the pre-alert check happens once, before saving; afterwards the P badges show
+   * the saved data and only the admin's explicit "Corregir por Pre-Alertas" re-checks SP2.
+   */
+  readonly allowLivePreAlertWatch: boolean;
 
   /**
    * Whether a row's effective `ruta` may fall back to the customer's LIVE
@@ -188,6 +201,7 @@ export const FRESH_POLICY: DataOriginPolicy = Object.freeze({
   allowAutoDivergentRematch:   true,
   allowAutoPreAlertAssign:     true,
   allowAutoLearnedRoute:       true,
+  allowLivePreAlertWatch:      true,
   allowAutoCustomerRouteFill:  true,
   showDivergentBadges:         true,
   showDivergentFilter:         true,
@@ -205,12 +219,34 @@ export const FIRESTORE_POLICY: DataOriginPolicy = Object.freeze({
   allowAutoDivergentRematch:   false,
   allowAutoPreAlertAssign:     false,
   allowAutoLearnedRoute:       false,
+  allowLivePreAlertWatch:      false,
   allowAutoCustomerRouteFill:  false,
   showDivergentBadges:         false,
   showDivergentFilter:         false,
   showFrozenBanner:            true,
   showRevalidateAllButton:     true,
   showRouteDriftBadge:         true,
+});
+
+/**
+ * Policy for a fresh parse the admin already SAVED in this session. Nothing automatic runs:
+ * no divergent rematch, no pre-alert auto-assignment, no learned route, no live pre-alert
+ * listener. The row's default route is still its customer's route (a display default, not a
+ * process: nothing changes unless the admin saves again), so what is shown is what "Actualizar
+ * BD" persists. Same frozen banner as a re-loaded manifest; divergent nags hidden.
+ */
+export const SAVED_POLICY: DataOriginPolicy = Object.freeze({
+  origin:                      'saved',
+  allowAutoDivergentRematch:   false,
+  allowAutoPreAlertAssign:     false,
+  allowAutoLearnedRoute:       false,
+  allowLivePreAlertWatch:      false,
+  allowAutoCustomerRouteFill:  true,
+  showDivergentBadges:         false,
+  showDivergentFilter:         false,
+  showFrozenBanner:            true,
+  showRevalidateAllButton:     true,
+  showRouteDriftBadge:         false,
 });
 
 /**
@@ -221,6 +257,7 @@ export const FIRESTORE_POLICY: DataOriginPolicy = Object.freeze({
 export function policyForOrigin(origin: DataOrigin): DataOriginPolicy {
   switch (origin) {
     case 'firestore': return FIRESTORE_POLICY;
+    case 'saved':     return SAVED_POLICY;
     case 'fresh':     return FRESH_POLICY;
   }
 }
@@ -234,7 +271,9 @@ export function policyForOrigin(origin: DataOrigin): DataOriginPolicy {
  */
 export function policyFromResultData(
   data: { loadedFromFirestore?: boolean | null | undefined } | null | undefined,
+  savedThisSession = false,
 ): DataOriginPolicy {
   if (data && data.loadedFromFirestore === true) return FIRESTORE_POLICY;
+  if (savedThisSession === true) return SAVED_POLICY;
   return FRESH_POLICY;
 }

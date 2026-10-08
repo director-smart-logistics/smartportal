@@ -14,6 +14,7 @@ import {
 import { createRoot } from "react-dom/client";
 import { firebaseApi } from "../../lib/firebase/callable";
 import { ShippingLabelPrint, type ParcelPreview } from "../nova/NovaShippingLabelModal";
+import { reprintLabelAddressText } from "../../lib/customers/label-address";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
@@ -199,6 +200,10 @@ export function RecentLabelsHistory({
       } catch (e) {
         console.warn("[RecentLabelsHistory] Failed to load customer details for quick print:", e);
       }
+
+      // Reprint with the customer's CURRENT full address when it changed after this label was saved;
+      // otherwise the saved text, completed with district/canton/province (label-address.ts).
+      parcel.deliveryAddress = reprintLabelAddressText(customerData as any, label.recipientAddress, label.updatedAt || label.createdAt);
 
       const root = createRoot(container);
       root.render(<ShippingLabelPrint parcel={parcel} customer={customerData} />);

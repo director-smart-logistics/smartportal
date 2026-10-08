@@ -1,9 +1,24 @@
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
-import { db, admin } from "../config/firebase";
+import { FieldValue } from "firebase-admin/firestore";
+import { db } from "../config/firebase";
 
 // ── SP2 automatic sync helper (fire-and-forget) ───────────────────────────────
-function pushBulkStatusToSP2(
+export interface Sp2BulkSyncResult {
+  total: number; updated: number; created: number; skipped: number; errors: number;
+  details: Array<{ tracking: string; outcome: string; reason?: string }>;
+  error?: string;
+}
+
+/**
+ * Route Management → SP2 (2026-09-28): the new status of every package is pushed to SP2 and AWAITED (a
+ * fire-and-forget fetch can be cut when the function answers). `force` (Route Management's explicit admin
+ * actions only) = forceSync: SP1 governs, SP2's regression guard must not keep a package "En ruta" or
+ * "Facturado". Other callers keep the guard (e.g. a label reprint never moves a delivered package back).
+ * One retry on a network/5xx error.
+ * The per-package outcome goes back to the admin (why a package was skipped).
+ */
+export async function pushBulkStatusToSP2(
   packages: Array<{
     trackingNumber?: string;
     slCode?: string;
@@ -16,40 +31,58 @@ function pushBulkStatusToSP2(
     calculatedCost?: number;
     cost?: number;
     currency?: string;
-  }>
-): void {
+  }>,
+  force: boolean,
+): Promise<Sp2BulkSyncResult> {
   const url    = process.env.SP2_SHIPMENT_SYNC_URL ||
                  'https://us-central1-smart-portal-2.cloudfunctions.net/slSyncShipmentsFromSp1';
   const secret = process.env.SP2_SYNC_SECRET || '';
-
-  if (!secret) return;
-
+  const result: Sp2BulkSyncResult = { total: packages.length, updated: 0, created: 0, skipped: 0, errors: 0, details: [] };
+  const noSl = packages.filter(p => !p.trackingNumber || !p.slCode);
+  for (const p of noSl) { result.skipped++; result.details.push({ tracking: String(p.trackingNumber || ''), outcome: 'skipped', reason: 'Sin código SL en SP1' }); }
   const syncable = packages.filter(p => !!p.trackingNumber && !!p.slCode);
-  if (syncable.length === 0) return;
-
-  fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'x-sync-secret': secret,
-    },
-    body: JSON.stringify({
-      packages: syncable.map(p => ({
-        trackingNumber: p.trackingNumber,
-        slCode:         p.slCode,
-        status:         p.status,
-        weight:         p.weight,
-        description:    p.description,
-        ruta:           p.ruta,
-        manifestNumber: p.manifestNumber,
-        requiresPermit: p.requiresPermit,
-        cost:           p.calculatedCost ?? p.cost,
-        currency:       p.currency,
-      })),
-    }),
-  }).catch((err: Error) => {
-    logger.warn('[pushBulkStatusToSP2] Non-blocking sync error', { error: err.message });
+  if (!secret) { result.error = 'SP2_SYNC_SECRET no configurado'; result.errors += syncable.length; return result; }
+  const body = (list: typeof syncable) => JSON.stringify({
+    packages: list.map(p => ({
+      trackingNumber: p.trackingNumber,
+      slCode:         p.slCode,
+      status:         p.status,
+      weight:         p.weight,
+      description:    p.description,
+      ruta:           p.ruta,
+      manifestNumber: p.manifestNumber,
+      requiresPermit: p.requiresPermit,
+      cost:           p.calculatedCost ?? p.cost,
+      currency:       p.currency,
+      ...(force ? { forceSync: true } : {}),
+    })),
   });
+  const CHUNK = 100;
+  for (let i = 0; i < syncable.length; i += CHUNK) {
+    const list = syncable.slice(i, i + CHUNK);
+    let lastErr = '';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-sync-secret': secret }, body: body(list) });
+        if (!res.ok) { lastErr = `HTTP ${res.status}`; if (res.status < 500) break; continue; }
+        const json: any = await res.json().catch(() => ({}));
+        const s = json.summary || {};
+        result.updated += s.updated || 0; result.created += s.created || 0; result.skipped += s.skipped || 0; result.errors += s.errors || 0;
+        for (const r of (json.results || [])) if (r.outcome !== 'updated') result.details.push({ tracking: r.tracking, outcome: r.outcome, reason: r.reason });
+        lastErr = '';
+        break;
+      } catch (err: any) {
+        lastErr = err?.message || String(err);
+      }
+    }
+    if (lastErr) {
+      result.errors += list.length;
+      result.error = lastErr;
+      for (const p of list) result.details.push({ tracking: String(p.trackingNumber), outcome: 'error', reason: lastErr });
+      logger.error('[pushBulkStatusToSP2] SP2 sync failed', { error: lastErr, count: list.length });
+    }
+  }
+  return result;
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -107,6 +140,8 @@ interface BulkUpdateStatusRequest {
   packageIds: string[];
   status: string;
   extraFields?: Record<string, unknown>;
+  /** Route Management: the admin's explicit status wins in SP2 (forceSync). */
+  forceSp2?: boolean;
 }
 
 // ── slListRoutes ───────────────────────────────────────────────────────────────
@@ -207,7 +242,7 @@ export const slCreateRoute = onCall(
       throw new HttpsError("already-exists", `A route named "${data.name}" already exists`);
     }
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     const ref = db.collection("routes").doc();
 
     const routeData = {
@@ -274,7 +309,7 @@ export const slUpdateRoute = onCall(
 
     const updateData: Record<string, unknown> = {
       ...fields,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedBy: request.auth.uid,
     };
 
@@ -336,7 +371,7 @@ export const slSeedRoutes = onCall(
       throw new HttpsError("invalid-argument", "routes array is required and must not be empty");
     }
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     const batch = db.batch();
     let seeded = 0;
 
@@ -442,7 +477,7 @@ export const slBulkUpdatePackageStatus = onCall(
       throw new HttpsError("permission-denied", "Admin or Manager access required");
     }
 
-    const { packageIds, status, extraFields = {} } = request.data;
+    const { packageIds, status, extraFields = {}, forceSp2 = false } = request.data;
 
     if (!Array.isArray(packageIds) || packageIds.length === 0) {
       throw new HttpsError("invalid-argument", "packageIds must be a non-empty array");
@@ -451,7 +486,7 @@ export const slBulkUpdatePackageStatus = onCall(
       throw new HttpsError("invalid-argument", "status is required");
     }
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     const CHUNK = 500; // Firestore batch limit
     let updated = 0;
 
@@ -481,8 +516,8 @@ export const slBulkUpdatePackageStatus = onCall(
       await batch.commit();
     }
 
-    // Push all updated packages to SP2 automatically (fire-and-forget)
-    pushBulkStatusToSP2(
+    // Push all updated packages to SP2 and WAIT for its answer (the admin sees what was updated / skipped).
+    const sp2 = await pushBulkStatusToSP2(
       packageIds.map((id: string) => {
         const d = packageDataMap.get(id) ?? {};
         return {
@@ -498,9 +533,19 @@ export const slBulkUpdatePackageStatus = onCall(
           cost:           d.cost,
           currency:       d.currency,
         };
-      })
+      }),
+      forceSp2 === true
     );
 
-    return { success: true, updated };
+    try {
+      await db.collection("package_status_sync_logs").add({
+        at: new Date().toISOString(), by: request.auth!.token.email || request.auth!.uid, status, count: packageIds.length,
+        sp2: { updated: sp2.updated, created: sp2.created, skipped: sp2.skipped, errors: sp2.errors, error: sp2.error ?? null },
+        notUpdated: sp2.details.slice(0, 200), source: "slBulkUpdatePackageStatus",
+      });
+    } catch (logErr) {
+      logger.warn("[slBulkUpdatePackageStatus] log write failed", { error: (logErr as Error).message });
+    }
+    return { success: true, updated, sp2 };
   }
 );

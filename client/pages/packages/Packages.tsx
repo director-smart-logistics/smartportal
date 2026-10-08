@@ -39,6 +39,8 @@ import { SkeletonDataTable } from "@/components/SkeletonLoaders";
 import { useRoutes } from "@/lib/hooks/queries/useRoutes";
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { firebaseApi } from '@/lib/firebase/callable';
+import { InvoiceSiblingsNotice } from '@/components/packages/InvoiceSiblingsNotice';
+import { findInvoiceSiblings, type InvoiceSibling } from '@/lib/services/invoice-siblings';
 import { firestoreApi, backfillPackageSearchTokens } from '@/lib/firebase/firestore-client';
 import { db } from '@/lib/firebase';
 import { addDoc, updateDoc, doc, arrayUnion, collection, getDocs, query, where, onSnapshot, Timestamp, orderBy, limit } from 'firebase/firestore';
@@ -651,6 +653,26 @@ export default function PackagesEnhanced() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  // After an edit that changed the status: offer the other packages of the same invoice (SP2 card = the invoice).
+  const [siblingPrompt, setSiblingPrompt] = useState<{ status: string; siblings: InvoiceSibling[]; checked: Set<string> } | null>(null);
+  const [siblingSaving, setSiblingSaving] = useState(false);
+  const statusText = (st: string) => { const k = `packages.statuses.${st}`; const tr = t(k); return tr !== k ? tr : st; };
+  const applySiblingPrompt = async () => {
+    if (!siblingPrompt) return;
+    const ids = [...siblingPrompt.checked];
+    if (!ids.length) { setSiblingPrompt(null); return; }
+    setSiblingSaving(true);
+    try {
+      await firebaseApi.packages.bulkUpdateStatus(ids, siblingPrompt.status, {}, true);
+      toast({ title: "Otros paquetes de la factura", description: `${ids.length} paquete${ids.length !== 1 ? 's' : ''} también ${ids.length !== 1 ? 'quedaron' : 'quedó'} en ${statusText(siblingPrompt.status)} (SP1 y SP2).` });
+      queryClient.invalidateQueries({ queryKey: ['packages'] });
+    } catch (err: any) {
+      toast({ title: "No se pudieron actualizar los otros paquetes", description: err?.message || String(err), variant: "destructive" });
+    } finally {
+      setSiblingSaving(false);
+      setSiblingPrompt(null);
+    }
+  };
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -1139,6 +1161,12 @@ export default function PackagesEnhanced() {
       if (selectedPackage) {
         await updatePackageMutation.mutateAsync(packageData);
         toast({ title: t("common.success"), description: t("packages.form.successUpdate") });
+        if (packageData.status && packageData.status !== (selectedPackage as any).status) {
+          const newStatus = String(packageData.status);
+          findInvoiceSiblings([selectedPackage as any], newStatus)
+            .then((siblings) => { if (siblings.length) setSiblingPrompt({ status: newStatus, siblings, checked: new Set(siblings.map((x) => x.id)) }); })
+            .catch((e) => console.warn('[invoice-siblings]', e));
+        }
         
         // Auto-sync the updated customer assignment to SP2
         try {
@@ -1432,6 +1460,30 @@ export default function PackagesEnhanced() {
 
   return (
     <DashboardLayout>
+      <AlertDialog open={!!siblingPrompt} onOpenChange={(o) => { if (!o && !siblingSaving) setSiblingPrompt(null); }}>
+        <AlertDialogContent data-testid="invoice-siblings-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Actualizar también los otros paquetes de la factura?</AlertDialogTitle>
+            <AlertDialogDescription>El paquete quedó en {siblingPrompt ? statusText(siblingPrompt.status) : ''}. En el portal del cliente la factura se muestra como una sola tarjeta.</AlertDialogDescription>
+          </AlertDialogHeader>
+          {siblingPrompt && (
+            <InvoiceSiblingsNotice
+              siblings={siblingPrompt.siblings}
+              checked={siblingPrompt.checked}
+              onToggle={(id) => setSiblingPrompt((p) => { if (!p) return p; const n = new Set(p.checked); n.has(id) ? n.delete(id) : n.add(id); return { ...p, checked: n }; })}
+              loading={false}
+              statusLabel={statusText(siblingPrompt.status)}
+              statusText={statusText}
+            />
+          )}
+          <div className="flex justify-end gap-2 mt-4">
+            <AlertDialogCancel disabled={siblingSaving}>Solo este paquete</AlertDialogCancel>
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); applySiblingPrompt(); }} disabled={siblingSaving} data-testid="invoice-siblings-apply">
+              {siblingSaving ? 'Actualizando…' : 'Actualizar marcados'}
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}

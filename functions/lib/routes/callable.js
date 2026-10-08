@@ -1,42 +1,88 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.slBulkUpdatePackageStatus = exports.slListPackagesByRoute = exports.slSeedRoutes = exports.slDeleteRoute = exports.slUpdateRoute = exports.slCreateRoute = exports.slGetRoute = exports.slListRoutes = void 0;
+exports.pushBulkStatusToSP2 = pushBulkStatusToSP2;
 const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
+const firestore_1 = require("firebase-admin/firestore");
 const firebase_1 = require("../config/firebase");
-// ── SP2 automatic sync helper (fire-and-forget) ───────────────────────────────
-function pushBulkStatusToSP2(packages) {
+/**
+ * Route Management → SP2 (2026-09-28): the new status of every package is pushed to SP2 and AWAITED (a
+ * fire-and-forget fetch can be cut when the function answers). `force` (Route Management's explicit admin
+ * actions only) = forceSync: SP1 governs, SP2's regression guard must not keep a package "En ruta" or
+ * "Facturado". Other callers keep the guard (e.g. a label reprint never moves a delivered package back).
+ * One retry on a network/5xx error.
+ * The per-package outcome goes back to the admin (why a package was skipped).
+ */
+async function pushBulkStatusToSP2(packages, force) {
     const url = process.env.SP2_SHIPMENT_SYNC_URL ||
         'https://us-central1-smart-portal-2.cloudfunctions.net/slSyncShipmentsFromSp1';
     const secret = process.env.SP2_SYNC_SECRET || '';
-    if (!secret)
-        return;
+    const result = { total: packages.length, updated: 0, created: 0, skipped: 0, errors: 0, details: [] };
+    const noSl = packages.filter(p => !p.trackingNumber || !p.slCode);
+    for (const p of noSl) {
+        result.skipped++;
+        result.details.push({ tracking: String(p.trackingNumber || ''), outcome: 'skipped', reason: 'Sin código SL en SP1' });
+    }
     const syncable = packages.filter(p => !!p.trackingNumber && !!p.slCode);
-    if (syncable.length === 0)
-        return;
-    fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-sync-secret': secret,
-        },
-        body: JSON.stringify({
-            packages: syncable.map(p => ({
-                trackingNumber: p.trackingNumber,
-                slCode: p.slCode,
-                status: p.status,
-                weight: p.weight,
-                description: p.description,
-                ruta: p.ruta,
-                manifestNumber: p.manifestNumber,
-                requiresPermit: p.requiresPermit,
-                cost: p.calculatedCost ?? p.cost,
-                currency: p.currency,
-            })),
-        }),
-    }).catch((err) => {
-        v2_1.logger.warn('[pushBulkStatusToSP2] Non-blocking sync error', { error: err.message });
+    if (!secret) {
+        result.error = 'SP2_SYNC_SECRET no configurado';
+        result.errors += syncable.length;
+        return result;
+    }
+    const body = (list) => JSON.stringify({
+        packages: list.map(p => ({
+            trackingNumber: p.trackingNumber,
+            slCode: p.slCode,
+            status: p.status,
+            weight: p.weight,
+            description: p.description,
+            ruta: p.ruta,
+            manifestNumber: p.manifestNumber,
+            requiresPermit: p.requiresPermit,
+            cost: p.calculatedCost ?? p.cost,
+            currency: p.currency,
+            ...(force ? { forceSync: true } : {}),
+        })),
     });
+    const CHUNK = 100;
+    for (let i = 0; i < syncable.length; i += CHUNK) {
+        const list = syncable.slice(i, i + CHUNK);
+        let lastErr = '';
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-sync-secret': secret }, body: body(list) });
+                if (!res.ok) {
+                    lastErr = `HTTP ${res.status}`;
+                    if (res.status < 500)
+                        break;
+                    continue;
+                }
+                const json = await res.json().catch(() => ({}));
+                const s = json.summary || {};
+                result.updated += s.updated || 0;
+                result.created += s.created || 0;
+                result.skipped += s.skipped || 0;
+                result.errors += s.errors || 0;
+                for (const r of (json.results || []))
+                    if (r.outcome !== 'updated')
+                        result.details.push({ tracking: r.tracking, outcome: r.outcome, reason: r.reason });
+                lastErr = '';
+                break;
+            }
+            catch (err) {
+                lastErr = err?.message || String(err);
+            }
+        }
+        if (lastErr) {
+            result.errors += list.length;
+            result.error = lastErr;
+            for (const p of list)
+                result.details.push({ tracking: String(p.trackingNumber), outcome: 'error', reason: lastErr });
+            v2_1.logger.error('[pushBulkStatusToSP2] SP2 sync failed', { error: lastErr, count: list.length });
+        }
+    }
+    return result;
 }
 // ── slListRoutes ───────────────────────────────────────────────────────────────
 exports.slListRoutes = (0, https_1.onCall)({ cors: true }, async (request) => {
@@ -109,7 +155,7 @@ exports.slCreateRoute = (0, https_1.onCall)({ cors: true }, async (request) => {
     if (!existing.empty) {
         throw new https_1.HttpsError("already-exists", `A route named "${data.name}" already exists`);
     }
-    const now = firebase_1.admin.firestore.FieldValue.serverTimestamp();
+    const now = firestore_1.FieldValue.serverTimestamp();
     const ref = firebase_1.db.collection("routes").doc();
     const routeData = {
         name: data.name,
@@ -164,7 +210,7 @@ exports.slUpdateRoute = (0, https_1.onCall)({ cors: true }, async (request) => {
     }
     const updateData = {
         ...fields,
-        updatedAt: firebase_1.admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
         updatedBy: request.auth.uid,
     };
     // Remove undefined values
@@ -205,7 +251,7 @@ exports.slSeedRoutes = (0, https_1.onCall)({ cors: true }, async (request) => {
     if (!Array.isArray(routes) || routes.length === 0) {
         throw new https_1.HttpsError("invalid-argument", "routes array is required and must not be empty");
     }
-    const now = firebase_1.admin.firestore.FieldValue.serverTimestamp();
+    const now = firestore_1.FieldValue.serverTimestamp();
     const batch = firebase_1.db.batch();
     let seeded = 0;
     for (const route of routes) {
@@ -287,14 +333,14 @@ exports.slBulkUpdatePackageStatus = (0, https_1.onCall)({ cors: true }, async (r
     if (!["SUPER_ADMIN", "ADMIN", "MANAGER"].includes(callerRole)) {
         throw new https_1.HttpsError("permission-denied", "Admin or Manager access required");
     }
-    const { packageIds, status, extraFields = {} } = request.data;
+    const { packageIds, status, extraFields = {}, forceSp2 = false } = request.data;
     if (!Array.isArray(packageIds) || packageIds.length === 0) {
         throw new https_1.HttpsError("invalid-argument", "packageIds must be a non-empty array");
     }
     if (!status) {
         throw new https_1.HttpsError("invalid-argument", "status is required");
     }
-    const now = firebase_1.admin.firestore.FieldValue.serverTimestamp();
+    const now = firestore_1.FieldValue.serverTimestamp();
     const CHUNK = 500; // Firestore batch limit
     let updated = 0;
     // Read package docs first so we have tracking/slCode for SP2 sync
@@ -315,8 +361,8 @@ exports.slBulkUpdatePackageStatus = (0, https_1.onCall)({ cors: true }, async (r
         }
         await batch.commit();
     }
-    // Push all updated packages to SP2 automatically (fire-and-forget)
-    pushBulkStatusToSP2(packageIds.map((id) => {
+    // Push all updated packages to SP2 and WAIT for its answer (the admin sees what was updated / skipped).
+    const sp2 = await pushBulkStatusToSP2(packageIds.map((id) => {
         const d = packageDataMap.get(id) ?? {};
         return {
             trackingNumber: d.trackingNumber ?? d.tracking ?? id,
@@ -331,7 +377,17 @@ exports.slBulkUpdatePackageStatus = (0, https_1.onCall)({ cors: true }, async (r
             cost: d.cost,
             currency: d.currency,
         };
-    }));
-    return { success: true, updated };
+    }), forceSp2 === true);
+    try {
+        await firebase_1.db.collection("package_status_sync_logs").add({
+            at: new Date().toISOString(), by: request.auth.token.email || request.auth.uid, status, count: packageIds.length,
+            sp2: { updated: sp2.updated, created: sp2.created, skipped: sp2.skipped, errors: sp2.errors, error: sp2.error ?? null },
+            notUpdated: sp2.details.slice(0, 200), source: "slBulkUpdatePackageStatus",
+        });
+    }
+    catch (logErr) {
+        v2_1.logger.warn("[slBulkUpdatePackageStatus] log write failed", { error: logErr.message });
+    }
+    return { success: true, updated, sp2 };
 });
 //# sourceMappingURL=callable.js.map

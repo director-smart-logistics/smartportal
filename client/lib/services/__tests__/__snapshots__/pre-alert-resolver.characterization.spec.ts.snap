@@ -1,0 +1,526 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`batchConsumePreAlerts — golden master > [BUG N9] consuming for SL800 also marks SL801 pre-alert of the same tracking as invoiced 1`] = `
+[
+  {
+    "id": "TBA350000000001_SL800",
+    "invoiceNumber": "F-9",
+    "status": "invoiced",
+  },
+]
+`;
+
+exports[`batchConsumePreAlerts — golden master > [STABLE] consuming a single-owner pre-alert marks only it 1`] = `
+[
+  {
+    "id": "TBA350000000002_SL802",
+    "manifestNumber": "MAN-2",
+    "status": "manifested",
+  },
+]
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N1] no slCode + doc id ending _2429 (SP2 shipment key) → invents SL2429 1`] = `
+{
+  "TBA330000000002": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N1] no slCode + numeric userId 2429 → invents SL2429 (another person) 1`] = `
+{
+  "TBA330000000001": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N2] two accounts pre-alerted the same tracking → one picked silently (the one with a name) 1`] = `
+{
+  "TBA330000000003": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N3] SP2 has nothing, SP1 synced copy has one → ghost match 1`] = `
+{
+  "TBA330000000004": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N3] SP2 pre-alert CANCELLED, SP1 copy still active → ghost match revives it 1`] = `
+{
+  "TBA330000000005": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N4] pre-alert consumed by manifest A matches again while editing manifest B 1`] = `
+{
+  "TBA330000000006": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N5] pre-alert without any date is valid forever 1`] = `
+{
+  "TBA330000000007": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N6] pre-alert flagged needsReview by SP2 still decides the customer 1`] = `
+{
+  "TBA330000000008": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N7] FedEx 34-digit barcode never finds the 12-digit pre-alert (real 541441998502) 1`] = `
+{
+  "9622080430009957513300541441998502": {
+    "found": true,
+    "slCode": "SL608",
+    "sp2PreAlertId": "541441998502_SL608",
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [BUG N7] FedEx 34-digit barcode never finds the 12-digit pre-alert (real 877098560696) 1`] = `
+{
+  "9632001960806794376300877098560696": {
+    "found": true,
+    "slCode": "SL607",
+    "sp2PreAlertId": "877098560696_SL607",
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [N1 rule] no stored slCode (userId account is SL1854) → no P: the owner must be stored on the pre-alert 1`] = `
+{
+  "TBA328164202808": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [N5 rule] 65 days old → found: the window is 90 days (decision 2026-09-25) 1`] = `
+{
+  "TBA328164202806": {
+    "found": true,
+    "slCode": "SL506",
+    "sp2PreAlertId": "x1",
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [N5 rule] 95 days old → not found (outside the 90-day window) 1`] = `
+{
+  "TBA328164202809": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [STABLE] USPS 420+ZIP scanned, customer pre-alerted the 22-digit core 1`] = `
+{
+  "420331959405511899223197428491": {
+    "found": true,
+    "slCode": "SL502",
+    "sp2PreAlertId": "9405511899223197428491_SL502",
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [STABLE] USPS 420+ZIP4 scanned, 22-digit core pre-alerted 1`] = `
+{
+  "4203316612349400111899223197428490": {
+    "found": true,
+    "slCode": "SL507",
+    "sp2PreAlertId": "9400111899223197428490_SL507",
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [STABLE] cancelled (active:false) → not found 1`] = `
+{
+  "TBA328164202804": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [STABLE] exact 1Z with slCode 1`] = `
+{
+  "1Z999AA10123456784": {
+    "found": true,
+    "slCode": "SL501",
+    "sp2PreAlertId": "1Z999AA10123456784_SL501",
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [STABLE] exact TBA with slCode 1`] = `
+{
+  "TBA328164202802": {
+    "found": true,
+    "slCode": "SL500",
+    "sp2PreAlertId": "TBA328164202802_SL500",
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [STABLE] invoiced → not found 1`] = `
+{
+  "TBA328164202805": {
+    "found": false,
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [STABLE] lower-case slCode normalized 1`] = `
+{
+  "TBA328164202803": {
+    "found": true,
+    "slCode": "SL503",
+    "sp2PreAlertId": "x1",
+  },
+}
+`;
+
+exports[`batchResolvePreAlerts — golden master > [STABLE] no pre-alert anywhere → not found 1`] = `
+{
+  "TBA328164202807": {
+    "found": false,
+  },
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > " 1z999aa10123456784 " 1`] = `
+{
+  "canonical": "1Z999AA10123456784",
+  "carrier": "UPS",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "1Z999AA10123456784",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "]C1TBA328164202802" 1`] = `
+{
+  "canonical": "TBA328164202802",
+  "carrier": "AMAZON",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "TBA328164202802",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "1Z999AA10123456784" 1`] = `
+{
+  "canonical": "1Z999AA10123456784",
+  "carrier": "UPS",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "1Z999AA10123456784",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "1234567890" 1`] = `
+{
+  "canonical": "1234567890",
+  "carrier": "DHL",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "1234567890",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "771234567890" 1`] = `
+{
+  "canonical": "771234567890",
+  "carrier": "FEDEX",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "771234567890",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "612345678901234" 1`] = `
+{
+  "canonical": "612345678901234",
+  "carrier": "FEDEX",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "612345678901234",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "9400111899223197428490" 1`] = `
+{
+  "canonical": "9400111899223197428490",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "420331229400111899223197428490",
+    "420331269400111899223197428490",
+    "420331669400111899223197428490",
+    "420331699400111899223197428490",
+    "420331729400111899223197428490",
+    "420331789400111899223197428490",
+    "420331829400111899223197428490",
+    "420331929400111899223197428490",
+    "9400111899223197428490",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "92055901755477000000000011" 1`] = `
+{
+  "canonical": "92055901755477000000000011",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "92055901755477000000000011",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "4203316694001008754116860220" 1`] = `
+{
+  "canonical": "94001008754116860220",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "4203312294001008754116860220",
+    "4203312694001008754116860220",
+    "4203316694001008754116860220",
+    "4203316994001008754116860220",
+    "4203317294001008754116860220",
+    "4203317894001008754116860220",
+    "4203318294001008754116860220",
+    "4203319294001008754116860220",
+    "94001008754116860220",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "420331669400111899223344556677" 1`] = `
+{
+  "canonical": "9400111899223344556677",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "420331229400111899223344556677",
+    "420331269400111899223344556677",
+    "420331669400111899223344556677",
+    "420331699400111899223344556677",
+    "420331729400111899223344556677",
+    "420331789400111899223344556677",
+    "420331829400111899223344556677",
+    "420331929400111899223344556677",
+    "9400111899223344556677",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "420331959405511899223197428491" 1`] = `
+{
+  "canonical": "9405511899223197428491",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "420331229405511899223197428491",
+    "420331269405511899223197428491",
+    "420331669405511899223197428491",
+    "420331699405511899223197428491",
+    "420331729405511899223197428491",
+    "420331789405511899223197428491",
+    "420331829405511899223197428491",
+    "420331929405511899223197428491",
+    "420331959405511899223197428491",
+    "9405511899223197428491",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "4203316612349400111899223197428490" 1`] = `
+{
+  "canonical": "9400111899223197428490",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "420331229400111899223197428490",
+    "420331269400111899223197428490",
+    "4203316612349400111899223197428490",
+    "420331669400111899223197428490",
+    "420331699400111899223197428490",
+    "420331729400111899223197428490",
+    "420331789400111899223197428490",
+    "420331829400111899223197428490",
+    "420331929400111899223197428490",
+    "9400111899223197428490",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "9622080430009957513300541441998502" 1`] = `
+{
+  "canonical": "9622080430009957513300541441998502",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "541441998502",
+    "9622080430009957513300541441998502",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "9632001960806794376300877098560696" 1`] = `
+{
+  "canonical": "9632001960806794376300877098560696",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "877098560696",
+    "9632001960806794376300877098560696",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "9632080400208194694100875411686022" 1`] = `
+{
+  "canonical": "9632080400208194694100875411686022",
+  "carrier": "USPS",
+  "type": "POSTAL_COMPOSITE",
+  "variants": [
+    "875411686022",
+    "9632080400208194694100875411686022",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "GFUS01037285975296" 1`] = `
+{
+  "canonical": "GFUS01037285975296",
+  "carrier": "SPEEDLOGISTICS",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "GFUS01037285975296",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "GSUNJ62X00ABCD" 1`] = `
+{
+  "canonical": "GSUNJ62X00ABCD",
+  "carrier": "SPEEDLOGISTICS",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "GSUNJ62X00ABCD",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "LP00123456789012" 1`] = `
+{
+  "canonical": "LP00123456789012",
+  "carrier": "CAINIAO",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "LP00123456789012",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "LY123456789CN" 1`] = `
+{
+  "canonical": "LY123456789CN",
+  "carrier": "OTHER",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "LY123456789CN",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "TBA328164202802" 1`] = `
+{
+  "canonical": "TBA328164202802",
+  "carrier": "AMAZON",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "TBA328164202802",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "YT2512345678901234" 1`] = `
+{
+  "canonical": "YT2512345678901234",
+  "carrier": "YUNEXPRESS",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "YT2512345678901234",
+  ],
+}
+`;
+
+exports[`canonicalizeTracking — golden master of real formats > "tba-328164202802" 1`] = `
+{
+  "canonical": "TBA328164202802",
+  "carrier": "AMAZON",
+  "type": "DISCRETE_ALPHANUMERIC",
+  "variants": [
+    "TBA328164202802",
+  ],
+}
+`;
+
+exports[`watchPreAlerts (Nova live listener) — golden master > [BUG N2] two accounts, same tracking → first document wins 1`] = `
+{
+  "TBA340000000002": {
+    "found": false,
+  },
+}
+`;
+
+exports[`watchPreAlerts (Nova live listener) — golden master > [BUG N6] needsReview pre-alert still matches live 1`] = `
+{
+  "TBA340000000004": {
+    "found": false,
+  },
+}
+`;
+
+exports[`watchPreAlerts (Nova live listener) — golden master > [BUG N10] pre-alert without slCode is still reported as found (the P shows with the row customer) 1`] = `
+{
+  "TBA340000000003": {
+    "found": false,
+  },
+}
+`;
+
+exports[`watchPreAlerts (Nova live listener) — golden master > [STABLE] exact TBA with slCode 1`] = `
+{
+  "TBA340000000001": {
+    "found": true,
+    "slCode": "SL700",
+    "sp2PreAlertId": "a",
+  },
+}
+`;

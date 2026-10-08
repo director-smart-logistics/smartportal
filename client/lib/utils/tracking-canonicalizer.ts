@@ -215,8 +215,10 @@ export function canonicalizeTracking(raw: string): CanonicalTrackingResult {
     else if (digitsOnly.length >= 32 && /^[0-9]{9}9/.test(digitsOnly.substring(3))) {
       core = digitsOnly.substring(12);
     } else {
-      // Fallback: match first occurrence of '9' followed by 19-21 digits
-      const match9 = digitsOnly.substring(3).match(/9[0-9]{19,21}/);
+      // Fallback (N8): the IMpb tracking is always at the END of the barcode — read it from the
+      // end ('9' + 19-21 digits up to the last digit). Before, the first '9' anywhere was taken,
+      // e.g. 4203319519400111899223197428490 → 9519400111899223197428 (a middle slice).
+      const match9 = digitsOnly.substring(3).match(/9[0-9]{19,21}$/);
       if (match9) {
         core = match9[0];
       }
@@ -289,6 +291,14 @@ export function canonicalizeTracking(raw: string): CanonicalTrackingResult {
   }
 
   // ── 13. PURE NUMERIC (Partial USPS or other courier fallback) ─────────────
+  // N7: FedEx 34-digit barcode ("96" + routing + the 12-digit FedEx tracking at the END).
+  // ML Cargo manifests carry the full barcode; customers pre-alert the 12 digits. The last 12,
+  // read from the end, are added as ONE extra lookup key (exact equality downstream). The
+  // canonical value and carrier stay as before (see "Jimena Sibaja" test).
+  const variantsNumeric = [normalized];
+  if (digitsOnly.length === 34 && digitsOnly.startsWith('96') && normalized === digitsOnly) {
+    variantsNumeric.push(digitsOnly.slice(-12));
+  }
   return {
     raw,
     normalized,
@@ -296,6 +306,6 @@ export function canonicalizeTracking(raw: string): CanonicalTrackingResult {
     carrierType: 'POSTAL_COMPOSITE',
     carrier: digitsOnly.startsWith('9') ? 'USPS' : 'OTHER',
     allowSuffix: false, // Strict: no arbitrary suffix guessing
-    trackingVariants: [normalized],
+    trackingVariants: variantsNumeric,
   };
 }

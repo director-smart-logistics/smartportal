@@ -8,6 +8,8 @@ import {
   limit,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
+import { principalLabelAddress, activeAdminOverride, areStringsRedundant, deduplicateAddressLines } from '@/lib/customers/label-address';
+import { resolveCustomerEncomiendaService } from '@/lib/services/encomienda-lookup';
 
 const CUSTOMERS_COLLECTION = 'customers';
 const PACKAGES_COLLECTION  = 'packages';
@@ -29,6 +31,8 @@ export interface EncomiendaCustomer {
   recipientPhone?: string;
   streetAddress?: string;
   details?: string;
+  /** "district, canton, province" of the principal address (empty when the admin's correction applies) */
+  geo?: string;
   deliveryInstructions?: string;
 }
 
@@ -103,147 +107,59 @@ export interface UseEncomiendaDispatchDataResult {
   error: string | null;
 }
 
-// Extract encomienda service name from various fields
+// ── Customer address / service / notes for the dispatch and the encomienda manifest ─────────────
+// F11 (docs/F11_LABEL_ADDRESS_AUDIT.md): the SAME principal address and service the labels print —
+// principalLabelAddress / activeAdminOverride / resolveCustomerEncomiendaService. Before, this screen
+// took the first address with any encomienda (not the principal), ignored the customer's proposed
+// service (F8.2) and dropped the district/canton (L4, L5).
+
 function getEncomiendaServiceName(c: any): string {
-  if (c.adminAddressOverride?.courierService) {
-    return c.adminAddressOverride.courierService.trim();
-  }
-
-  const encName =
-    c.encomiendaServiceName ||
-    (c.addresses && Array.isArray(c.addresses)
-      ? c.addresses.find((a: any) => a?.encomienda?.name)?.encomienda?.name
-      : undefined) ||
-    c.encomienda?.name ||
-    c.defaultAddress?.encomienda?.name ||
-    c.courierService ||
-    c.encomiendaProvider;
-
-  return (encName || '').trim();
+  const override = activeAdminOverride(c);
+  if (override?.courierService) return override.courierService.trim();
+  return resolveCustomerEncomiendaService(c).trim();
 }
 
-// Helper functions for landmark/instruction deduplication
-function cleanStringForComparison(str: string): string {
-  if (!str) return '';
-  return str
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // remove accents
-    .replace(/[^a-z0-9\s]/g, "") // keep only alphanumeric and spaces
-    .trim();
-}
-
-function areStringsRedundant(str1: string, str2: string): boolean {
-  const c1 = cleanStringForComparison(str1);
-  const c2 = cleanStringForComparison(str2);
-  if (!c1 || !c2) return false;
-  if (c1 === c2) return true;
-
-  const stopWords = ['en', 'el', 'la', 'de', 'del', 'un', 'una', 'los', 'las', 'y', 'a', 'con', 'por', 'para', 'o', 'u', 'mini', 'super', 'instrucciones', 'detalles', 'señas', 'entregar'];
-  const words1 = c1.split(/\s+/).filter(Boolean);
-  const words2 = c2.split(/\s+/).filter(Boolean);
-
-  // Keep significant words of str2 that are not present in str1
-  const uniqueTo2 = words2.filter(w => !words1.includes(w) && !stopWords.includes(w));
-  return uniqueTo2.length === 0;
-}
-
-function deduplicateAddressLines(addressStr: string): string {
-  if (!addressStr) return "";
-  const lines = addressStr.split(/\n+/).map(l => l.trim()).filter(Boolean);
-  const uniqueLines: string[] = [];
-  
-  for (const line of lines) {
-    const cleanLine = line.replace(/^(instrucciones|detalles|señas):\s*/i, "");
-    const isRedundant = uniqueLines.some(existing => {
-      const cleanExisting = existing.replace(/^(instrucciones|detalles|señas):\s*/i, "");
-      return areStringsRedundant(cleanExisting, cleanLine);
-    });
-    if (!isRedundant) {
-      uniqueLines.push(line);
-    }
-  }
-  return uniqueLines.join("\n");
-}
-
-// Extract customer address details from defaultAddress or addresses list
 function getCustomerAddress(c: any): string {
-  if (c.adminAddressOverride?.deliveryAddress) {
-    return deduplicateAddressLines(c.adminAddressOverride.deliveryAddress);
-  }
-
-  let addrObj = c.defaultAddress;
-
-  if (!addrObj && c.addresses && Array.isArray(c.addresses)) {
-    // Find default and active address first
-    addrObj = c.addresses.find((a: any) => a?.isDefault && a?.isActive)
-              || c.addresses.find((a: any) => a?.isDefault)
-              || c.addresses.find((a: any) => a?.isActive)
-              || c.addresses[0];
-  }
-
+  const override = activeAdminOverride(c);
+  if (override?.deliveryAddress) return deduplicateAddressLines(override.deliveryAddress);
+  const addrObj = principalLabelAddress(c);
   if (!addrObj) return '';
-
-  const streetAddress = streetAddressHelper(addrObj);
-  const details = addrObj.details || '';
-  const city = addrObj.city || addrObj.district || '';
-  const province = addrObj.province || addrObj.canton || '';
-  const country = addrObj.country || '';
-
-  return [streetAddress, details, city, province, country]
-    .map(val => typeof val === 'string' ? val.trim() : '')
+  // district (else city, as this screen printed before), canton (was dropped — L5), province
+  const geo = [addrObj.district || addrObj.city, addrObj.canton, addrObj.province].map((v) => String(v || '').trim()).filter(Boolean).join(', ');
+  return [addrObj.streetAddress, addrObj.details, geo, addrObj.country]
+    .map((val) => (typeof val === 'string' ? val.trim() : ''))
     .filter(Boolean)
     .join(', ');
 }
 
-function streetAddressHelper(addrObj: any): string {
-  return addrObj.streetAddress || '';
+/**
+ * What the "Salida" shipping label prints as the address (F11 — the same rule as every label):
+ *   - the admin's hand-typed address while it is newer than the customer's → only that text;
+ *   - else the principal address: street, otras señas and district / canton / province.
+ */
+export function dispatchLabelAddress(c: any): { streetAddress: string; details: string; geo: string } {
+  if (activeAdminOverride(c)?.deliveryAddress) return { streetAddress: '', details: '', geo: '' };
+  const a = principalLabelAddress(c);
+  const geo = a ? [a.district || a.city, a.canton, a.province].map((v) => String(v || '').trim()).filter(Boolean).join(', ') : '';
+  return { streetAddress: String(a?.streetAddress || '').trim(), details: String(a?.details || '').trim(), geo };
 }
 
-// Extract customer notes/instructions from notes and deliveryInstructions
+// Customer notes + delivery instructions (without repeating what the address already says)
 function getCustomerNotes(c: any): string {
-  let addrObj = c.defaultAddress;
-
-  if (!addrObj && c.addresses && Array.isArray(c.addresses)) {
-    addrObj = c.addresses.find((a: any) => a?.isDefault && a?.isActive)
-              || c.addresses.find((a: any) => a?.isDefault)
-              || c.addresses.find((a: any) => a?.isActive)
-              || c.addresses[0];
-  }
-
+  const addrObj = principalLabelAddress(c);
+  const override = activeAdminOverride(c);
   const notesParts: string[] = [];
-  if (c.notes) {
+  if (c.notes && !(override?.deliveryAddress && areStringsRedundant(override.deliveryAddress, c.notes))) {
     notesParts.push(c.notes);
   }
-  if (addrObj?.deliveryInstructions) {
-    const details = addrObj.details || '';
-    const instructions = addrObj.deliveryInstructions || '';
-    
-    let isRedundant = areStringsRedundant(details, instructions) || (c.notes && areStringsRedundant(c.notes, instructions));
-    if (c.adminAddressOverride?.deliveryAddress) {
-      isRedundant = isRedundant || areStringsRedundant(c.adminAddressOverride.deliveryAddress, instructions);
-    }
-
-    if (!isRedundant) {
-      notesParts.push(addrObj.deliveryInstructions);
-    }
+  const instructions = String(addrObj?.deliveryInstructions || '');
+  if (instructions) {
+    const isRedundant = areStringsRedundant(String(addrObj?.details || ''), instructions)
+      || (!!c.notes && areStringsRedundant(c.notes, instructions))
+      || (!!override?.deliveryAddress && areStringsRedundant(override.deliveryAddress, instructions));
+    if (!isRedundant) notesParts.push(instructions);
   }
-
-  // Deduplicate c.notes against adminAddressOverride as well
-  if (c.notes && c.adminAddressOverride?.deliveryAddress) {
-    const isNotesRedundant = areStringsRedundant(c.adminAddressOverride.deliveryAddress, c.notes);
-    if (isNotesRedundant) {
-      const index = notesParts.indexOf(c.notes);
-      if (index > -1) {
-        notesParts.splice(index, 1);
-      }
-    }
-  }
-
-  return notesParts
-    .map(val => typeof val === 'string' ? val.trim() : '')
-    .filter(Boolean)
-    .join(' | ');
+  return notesParts.map((val) => (typeof val === 'string' ? val.trim() : '')).filter(Boolean).join(' | ');
 }
 
 /** Normalize manifest number (uppercase, trimmed) */
@@ -463,18 +379,12 @@ export function useEncomiendaDispatchData({ manifests, hasLoaded = false }: UseE
             const address = getCustomerAddress(data);
             const notes = getCustomerNotes(data);
 
-            let addrObj = data.defaultAddress;
-            if (!addrObj && data.addresses && Array.isArray(data.addresses)) {
-              addrObj = data.addresses.find((a: any) => a?.isDefault && a?.isActive)
-                        || data.addresses.find((a: any) => a?.isDefault)
-                        || data.addresses.find((a: any) => a?.isActive)
-                        || data.addresses[0];
-            }
+            const addrObj = principalLabelAddress(data);   // F11: the same address the labels print
 
             const recipientName = (addrObj?.recipientName || '').trim();
             const recipientPhone = (addrObj?.recipientPhone || '').trim();
-            const streetAddress = (addrObj?.streetAddress || '').trim();
-            const details = (addrObj?.details || '').trim();
+            // F11: the admin's newer correction wins; else street + otras señas + district/canton/province.
+            const { streetAddress, details, geo } = dispatchLabelAddress(data);
             const deliveryInstructions = (addrObj?.deliveryInstructions || '').trim();
 
             fetchedList.push({
@@ -493,6 +403,7 @@ export function useEncomiendaDispatchData({ manifests, hasLoaded = false }: UseE
               recipientPhone,
               streetAddress,
               details,
+              geo,
               deliveryInstructions,
             });
           });

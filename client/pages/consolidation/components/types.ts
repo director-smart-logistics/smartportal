@@ -10,6 +10,7 @@
  */
 
 import type { ComplianceResult } from '@/lib/services/consolidation-rules-service';
+import { packageDayOne } from '@/lib/consolidation/day-one';
 
 // ── Core entities ──────────────────────────────────────────────────────────────
 
@@ -84,6 +85,11 @@ export interface ConsolidationPackage {
     note?: string | null;
     notes?: string | null;
   }>;
+  /** "Día 1" (2026-09-28): the FIRST invoice of the package, stored once by the SP1 server (first-invoice.ts). */
+  firstInvoiceNumber?: string;
+  firstInvoiceDate?: string;
+  /** Earliest SP1 invoice of the customer listing this tracking (computed by the page when firstInvoice* is missing). */
+  invoiceHistoryFirst?: { invoiceNumber: string; date: string };
 }
 
 /**
@@ -121,6 +127,9 @@ export interface ConsolidationInvoice {
     changedBy?: string | null;
     reason?: string | null;
   }>;
+  /** Only for the "Día 1" rule: emission date and the legacy `items` list of the invoice. */
+  invoiceDate?: string;
+  items?: Array<{ trackingNumber?: string; tracking?: string }>;
 }
 
 // ── Grouped structures ─────────────────────────────────────────────────────────
@@ -384,8 +393,8 @@ export function diagnoseUninvoiced(
     };
   }
 
-  // 3. Check if it's within grace period
-  const created = pkg.firstConsolidatedAt || pkg.invoicedAt || pkg.savedAt || pkg.createdAt;
+  // 3. Check if it's within grace period — same "Día 1" as the badge (first invoice, @/lib/consolidation/day-one)
+  const created = packageDayOne(pkg).date;
   if (created) {
     const ageMs = Date.now() - new Date(created).getTime();
     const ageDays = Math.floor(ageMs / 86_400_000);

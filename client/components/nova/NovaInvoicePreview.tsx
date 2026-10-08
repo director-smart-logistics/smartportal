@@ -27,6 +27,9 @@ import {
 } from "@/lib/services/invoice-service";
 import { resolveEffectiveCustomerName } from "@/lib/utils/customer-name";
 
+/** See the note on the preview's motion.divs: keeps the fades off WAAPI (one-frame blink at the end). */
+const noopAnimationUpdate = () => {};
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  formatInvoiceItemCaption
 //
@@ -755,10 +758,15 @@ export const NovaInvoicePreview = memo(function NovaInvoicePreview({
 
   return (
     <AnimatePresence>
+      {/* onUpdate (no-op) keeps these fades on framer's JS animator. With the browser-accelerated one
+          (WAAPI, framer-motion 12) the element sat at opacity 0 for ONE frame when the fade ended —
+          the card at ~260 ms, then the backdrop at ~360 ms: the "double blink" the admin saw when
+          clicking an invoice pill (measured frame by frame on the real Nova, 2026-09-26). */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
+        onUpdate={noopAnimationUpdate}
         className={
           inline
             ? "contents"
@@ -773,6 +781,7 @@ export const NovaInvoicePreview = memo(function NovaInvoicePreview({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 8 }}
           transition={{ duration: 0.2 }}
+          onUpdate={noopAnimationUpdate}
           className={
             inline
               ? "bg-background rounded-2xl border border-border overflow-hidden"

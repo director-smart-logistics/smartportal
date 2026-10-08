@@ -62,6 +62,7 @@ import { firestoreApi } from '@/lib/firebase/firestore-client';
 import { syncPackagesToSmartWeb } from '@/lib/services/sync-smartweb-service';
 import { arrayUnion, doc, updateDoc, getDoc, getDocs, query, collection, where, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
+import { attachPreAlertLinks } from '@/lib/services/sp2-prealert-links';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -362,6 +363,8 @@ const INVOICE_SYNC_CHUNK = 300;
 
 async function syncInvoicesChunk(chunk: InvoiceRecord[], maxRetries = 3): Promise<SyncInvoicesResponse> {
   const payload = chunk.map(buildPayload);
+  // F2.2b: the confirmed pre-alert of each tracking, by id (SP2 links without searching).
+  await attachPreAlertLinks(payload);
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {

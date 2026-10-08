@@ -2,6 +2,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth";
 import { getFirestore, connectFirestoreEmulator, initializeFirestore, enableMultiTabIndexedDbPersistence } from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
+import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
 
 // Primary Firebase config (smart-portal-admin / smart-portal-1)
 const env = (typeof import.meta !== "undefined" && import.meta.env) ? import.meta.env : (process.env as any) || {};
@@ -18,10 +19,14 @@ const firebaseConfig = {
 // Secondary Firebase config (smart-portal-2) — used only as fallback for
 // customer lookup when a name is not found in SP1's customers collection.
 // API key stored in VITE_SP2_FIREBASE_API_KEY env var, never hardcoded.
+// Local QA only (dev server + emulators): VITE_SP2_PROJECT_ID points SP2 at the emulated
+// project. A production build never enters this branch.
+const useFirebaseEmulators = !!env.DEV && env.VITE_USE_FIREBASE_EMULATORS === "true";
+
 const sp2Config = {
   apiKey: env.VITE_SP2_FIREBASE_API_KEY || "",
   authDomain: "smart-portal-2.firebaseapp.com",
-  projectId: "smart-portal-2",
+  projectId: (useFirebaseEmulators && env.VITE_SP2_PROJECT_ID) || "smart-portal-2",
   storageBucket: "smart-portal-2.firebasestorage.app",
   messagingSenderId: "1091996057622",
   appId: "1:1091996057622:web:d1b08859d486b36b1a3537",
@@ -59,10 +64,15 @@ import { getAnalytics } from "firebase/analytics";
 import { getPerformance } from "firebase/performance";
 import { getMessaging } from "firebase/messaging";
 
-if (env.DEV && env.VITE_USE_FIREBASE_EMULATORS === "true") {
+if (useFirebaseEmulators) {
   connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
   connectFirestoreEmulator(db, "localhost", 8080);
   connectStorageEmulator(storage, "localhost", 9199);
+  // SP2 must be emulated too: before this, emulator mode still read SP2 PRODUCTION
+  // (Nova pre-alerts, customer fallback). Same for callable functions of both apps.
+  connectFirestoreEmulator(dbSP2, "localhost", 8080);
+  connectFunctionsEmulator(getFunctions(app, "us-central1"), "localhost", 5001);
+  if (sp2App) connectFunctionsEmulator(getFunctions(sp2App, "us-central1"), "localhost", 5001);
 }
 
 export let analytics: any = null;

@@ -136,6 +136,7 @@ import {
   upsertManifestPackageOverrides,
   type ManifestRow,
 } from '../../manifest-processor';
+import { snapshotAutosavePayloads } from '../ingestion';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -476,6 +477,30 @@ describe('loadMegaManFromFirestore — hydration fidelity', () => {
 // consolidation rounding are lost across the move.
 
 describe('ingestManifestToPackages — packages collection persistence', () => {
+  // F2.1 — the SP1 package stores its CONFIRMED pre-alert (the invoice sync hands it to SP2 by id).
+  it('stores preAlertId + preAlertSlCode when the pre-alert owner is the row customer', async () => {
+    await ingestManifestToPackages([makeRow({ preAlert: { found: true, slCode: 'SL245', sp2PreAlertId: 'TRK-1_SL245' } } as any)], 'MEGA-MAN-TEST', { manifestType: 'usa_air' });
+    const data = firestoreState.batchSetCalls[0].data;
+    expect(data.preAlertId).toBe('TRK-1_SL245');
+    expect(data.preAlertSlCode).toBe('SL245');
+  });
+
+  it('does NOT store a pre-alert of another customer (admin reassigned the package)', async () => {
+    await ingestManifestToPackages([makeRow({ preAlert: { found: true, slCode: 'SL999', sp2PreAlertId: 'TRK-1_SL999' } } as any)], 'MEGA-MAN-TEST', { manifestType: 'usa_air' });
+    const data = firestoreState.batchSetCalls[0].data;
+    expect(data.preAlertId).toBeUndefined();
+    expect(data.preAlertSlCode).toBeUndefined();
+  });
+
+  it('removes a stale link from an existing package when it no longer applies', async () => {
+    firestoreState.packagesDocsMap.set('TRK-1', { manifestNumber: 'MEGA-MAN-TEST', preAlertId: 'TRK-1_SL999', preAlertSlCode: 'SL999' });
+    await ingestManifestToPackages([makeRow()], 'MEGA-MAN-TEST', { manifestType: 'usa_air' });
+    firestoreState.packagesDocsMap.clear();
+    const data = firestoreState.batchSetCalls[0].data;
+    expect(data.preAlertId).toBe('__delete_field__');
+    expect(data.preAlertSlCode).toBe('__delete_field__');
+  });
+
   it('persists matchScore, matchSource, precioSin/ConPermiso and consolidation rounding fields', async () => {
     await ingestManifestToPackages([makeRow()], 'MEGA-MAN-TEST', {
       manifestType:    'usa_air',
@@ -637,6 +662,49 @@ describe('saveManifestRecord & loadMegaManFromFirestore — preAlert round-trip 
     expect(hydratedRow.hasPreAlert).toBe(true);
     expect(hydratedRow.preAlertSlCode).toBe('SL261320');
     expect(hydratedRow.preAlertKey).toBe('1Z1R054E0343790488_SL261320');
+  });
+
+  // F1.5 / "the P must always be visible": after "Guardar en BD" the package ALSO exists in the
+  // packages collection (without the pre-alert fields). Re-opening must still bring the saved
+  // pre-alert back from the manifest record — before, every merge path dropped it (no P).
+  it('keeps the saved pre-alert when the package also exists in the packages collection (real save)', async () => {
+    const preAlertData = { found: true, tracking: 'TBA330000000301', slCode: 'SL90002', clientName: 'Cliente Dos', sp2PreAlertId: 'TBA330000000301_SL90002' };
+    const row = makeRow({
+      tracking: 'TBA330000000301', slCode: 'SL90002', nombreCliente: 'Cliente Dos', matchSource: 'pre_alert',
+      hasPreAlert: true, preAlertSlCode: 'SL90002', preAlertKey: 'TBA330000000301_SL90002', preAlertId: 'TBA330000000301_SL90002', preAlert: preAlertData,
+    });
+    await saveManifestRecord([row], 'PREALERT-SCENARIOS');
+    const savedDoc = firestoreState.setDocCalls[firestoreState.setDocCalls.length - 1].data;
+    firestoreState.manifestDoc = { exists: () => true, data: () => savedDoc };
+    // What ingestManifestToPackages leaves in packages/{tracking}: no pre-alert fields.
+    firestoreState.packagesQuerySnap = { docs: [{ id: 'TBA330000000301', data: () => ({
+      tracking: 'TBA330000000301', trackingNumber: 'TBA330000000301', manifestNumber: 'PREALERT-SCENARIOS',
+      slCode: 'SL90002', customerName: 'Cliente Dos', ruta: '', weight: 0.8, price: 12, matchSource: 'pre_alert',
+    }) }] };
+    firestoreState.consolidationSnap = { docs: [] };
+
+    const loaded = await loadMegaManFromFirestore('PREALERT-SCENARIOS');
+    const hydrated = loaded!.rows.find((r) => r.tracking === 'TBA330000000301')!;
+    expect(hydrated.preAlert).toEqual(preAlertData);
+    expect(hydrated.hasPreAlert).toBe(true);
+    expect(hydrated.preAlertSlCode).toBe('SL90002');
+    expect(hydrated.preAlertId).toBe('TBA330000000301_SL90002');
+  });
+
+  it('a package that was never pre-alerted stays without pre-alert on reload', async () => {
+    const row = makeRow({ tracking: 'TBA330000000402', slCode: 'SL90001', matchSource: 'name' });
+    await saveManifestRecord([row], 'PREALERT-SCENARIOS');
+    const savedDoc = firestoreState.setDocCalls[firestoreState.setDocCalls.length - 1].data;
+    firestoreState.manifestDoc = { exists: () => true, data: () => savedDoc };
+    firestoreState.packagesQuerySnap = { docs: [{ id: 'TBA330000000402', data: () => ({
+      tracking: 'TBA330000000402', manifestNumber: 'PREALERT-SCENARIOS', slCode: 'SL90001', weight: 1.2, price: 20, matchSource: 'name',
+    }) }] };
+    firestoreState.consolidationSnap = { docs: [] };
+    const loaded = await loadMegaManFromFirestore('PREALERT-SCENARIOS');
+    const hydrated = loaded!.rows.find((r) => r.tracking === 'TBA330000000402')!;
+    expect(hydrated.preAlert).toBeUndefined();
+    expect(hydrated.hasPreAlert).toBeUndefined();
+    expect(hydrated.preAlertSlCode).toBeUndefined();
   });
 });
 
@@ -913,3 +981,61 @@ describe('Foreign Manifest Collision Guard & Cross-Manifest Invariant Protection
   });
 });
 
+
+// ── F-AUTOSAVE-SAFE (2026-09-26) ─────────────────────────────────────────────
+// The auto-save writes ONLY the rows / fields the admin changed in this tab since the baseline.
+// Before: it rewrote every existing row with the table state (route B save rewrote route A; a change made
+// outside the tab was overwritten — scripts/qa-emulator/e2e/sp1-nova-save-scope.cjs).
+describe('F-AUTOSAVE-SAFE — upsertManifestPackageOverrides with a baseline', () => {
+  const A = () => makeRow({ tracking: 'TRK-A', slCode: 'SL1', ruta: 'RUTA-A', nombreCliente: 'CLIENTE A' });
+  const B = () => makeRow({ tracking: 'TRK-B', slCode: 'SL2', ruta: 'RUTA-B', nombreCliente: 'CLIENTE B' });
+  const opts = { exchangeRate: 500 };
+  beforeEach(() => { firestoreState.packageDocExists = true; firestoreState.batchSetCalls = []; });
+
+  it('nothing changed → nothing written', async () => {
+    const baseline = snapshotAutosavePayloads([A(), B()], 'MEGA-MAN-TEST', opts);
+    const r = await upsertManifestPackageOverrides([A(), B()], 'MEGA-MAN-TEST', { ...opts, baseline });
+    expect(firestoreState.batchSetCalls).toHaveLength(0);
+    expect(r.updated).toBe(0);
+  });
+
+  it('the admin changes the route of B → only B, only the route (A untouched; other B fields untouched)', async () => {
+    const baseline = snapshotAutosavePayloads([A(), B()], 'MEGA-MAN-TEST', opts);
+    const b2 = { ...B(), ruta: 'RUTA-NUEVA' };
+    await upsertManifestPackageOverrides([A(), b2], 'MEGA-MAN-TEST', { ...opts, baseline });
+    expect(firestoreState.batchSetCalls).toHaveLength(1);
+    const call = firestoreState.batchSetCalls[0];
+    expect((call.ref as any).__doc).toBe('TRK-B');
+    expect(Object.keys(call.data).sort()).toEqual(['ruta', 'source', 'updatedAt']);
+    expect(call.data.ruta).toBe('RUTA-NUEVA');
+    expect(call.merge).toBe(true);
+  });
+
+  it('a row with no baseline (not edited in this tab) is never written', async () => {
+    const baseline = snapshotAutosavePayloads([A()], 'MEGA-MAN-TEST', opts);
+    await upsertManifestPackageOverrides([A(), { ...B(), ruta: 'X' }], 'MEGA-MAN-TEST', { ...opts, baseline });
+    expect(firestoreState.batchSetCalls).toHaveLength(0);
+  });
+
+  it('customer contacts loading late do not rewrite rows; a changed customer carries its contact data', async () => {
+    const baseline = snapshotAutosavePayloads([A()], 'MEGA-MAN-TEST', opts);
+    const contacts = new Map([['SL1', { slCode: 'SL1', email: 'a@x.com', dni: '1', fullName: 'A' }], ['SL9', { slCode: 'SL9', email: 'z@x.com', dni: '9', fullName: 'Z' }]]);
+    await upsertManifestPackageOverrides([A()], 'MEGA-MAN-TEST', { ...opts, baseline, customerContacts: contacts });
+    expect(firestoreState.batchSetCalls).toHaveLength(0);
+    await upsertManifestPackageOverrides([{ ...A(), slCode: 'SL9' }], 'MEGA-MAN-TEST', { ...opts, baseline, customerContacts: contacts });
+    expect(firestoreState.batchSetCalls).toHaveLength(1);
+    expect(firestoreState.batchSetCalls[0].data).toMatchObject({ slCode: 'SL9', customerEmail: 'z@x.com', customerDni: '9' });
+  });
+
+  it('what was written is returned so the caller updates its baseline', async () => {
+    const baseline = snapshotAutosavePayloads([A()], 'MEGA-MAN-TEST', opts);
+    const r = await upsertManifestPackageOverrides([{ ...A(), ruta: 'R2' }], 'MEGA-MAN-TEST', { ...opts, baseline });
+    expect(r.written.get('TRK-A')).toMatchObject({ ruta: 'R2' });
+  });
+
+  it('without a baseline (legacy callers) every existing row is written in full, as before', async () => {
+    await upsertManifestPackageOverrides([A(), B()], 'MEGA-MAN-TEST', opts);
+    expect(firestoreState.batchSetCalls).toHaveLength(2);
+    expect(firestoreState.batchSetCalls[0].data).toHaveProperty('customerName');
+  });
+});

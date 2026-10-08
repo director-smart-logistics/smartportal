@@ -34,6 +34,8 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { CustomerAutocomplete, type AutocompleteCustomer } from "../customer/CustomerAutocomplete";
+import { InvoiceSiblingsNotice } from "./InvoiceSiblingsNotice";
+import { findInvoiceSiblings, type InvoiceSibling } from "@/lib/services/invoice-siblings";
 
 const getStatusOptions = (t: any) => [
   { label: t("packages.statusPreAlerted") || "Pre-alertado", value: "pre_alerted" },
@@ -80,7 +82,8 @@ interface BulkPackagesUpdateModalProps {
   onConfirm: (
     updates: Record<string, any>,
     deliveredOptions: { updateInvoices: boolean; syncInvoicesSp2: boolean },
-    manifestNumber: string | null
+    manifestNumber: string | null,
+    siblingIds?: string[]
   ) => Promise<void>;
   updating: boolean;
   t: any;
@@ -112,9 +115,27 @@ export function BulkPackagesUpdateModal({
     manifestNumber: "",
   });
 
+  // Other packages of the same invoices (the customer's "Facturados" card is the invoice) — offered for the same status.
+  const [siblings, setSiblings] = useState<InvoiceSibling[]>([]);
+  const [siblingsChecked, setSiblingsChecked] = useState<Set<string>>(new Set());
+  const [siblingsLoading, setSiblingsLoading] = useState(false);
+  // The parent rebuilds selectedPackages on every render — key the lookup on the ids, not on the array.
+  const selectedKey = selectedPackages.map((p: any) => p.id).join(",");
+  useEffect(() => {
+    if (step !== "preview" || !bulkUpdateData.updateStatus || !bulkUpdateData.status) { setSiblings([]); setSiblingsChecked(new Set()); return; }
+    let alive = true;
+    setSiblingsLoading(true);
+    findInvoiceSiblings(selectedPackages, bulkUpdateData.status)
+      .then((list) => { if (alive) { setSiblings(list); setSiblingsChecked(new Set(list.map((s) => s.id))); } })
+      .catch(() => { if (alive) setSiblings([]); })
+      .finally(() => { if (alive) setSiblingsLoading(false); });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, bulkUpdateData.updateStatus, bulkUpdateData.status, selectedKey]);
+
   const [bulkDeliveredOptions, setBulkDeliveredOptions] = useState({
     updateInvoices: false,
-    syncInvoicesSp2: false,
+    syncInvoicesSp2: true,
   });
 
   // Reset steps and states when dialog is opened
@@ -134,7 +155,7 @@ export function BulkPackagesUpdateModal({
       });
       setBulkDeliveredOptions({
         updateInvoices: false,
-        syncInvoicesSp2: false,
+        syncInvoicesSp2: true,
       });
     }
   }, [isOpen]);
@@ -209,7 +230,7 @@ export function BulkPackagesUpdateModal({
       ? bulkUpdateData.manifestNumber.trim()
       : null;
 
-    await onConfirm(updates, bulkDeliveredOptions, manifestNumber);
+    await onConfirm(updates, bulkDeliveredOptions, manifestNumber, updates.status ? [...siblingsChecked] : []);
   };
 
   // Status mapping for title representation
@@ -560,6 +581,17 @@ export function BulkPackagesUpdateModal({
                 </ul>
               </div>
 
+              {bulkUpdateData.updateStatus && (
+                <InvoiceSiblingsNotice
+                  siblings={siblings}
+                  checked={siblingsChecked}
+                  onToggle={(id) => setSiblingsChecked((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+                  loading={siblingsLoading}
+                  statusLabel={getStatusOptions(t).find((o) => o.value === bulkUpdateData.status)?.label || bulkUpdateData.status}
+                  statusText={(st) => getStatusOptions(t).find((o) => o.value === st)?.label || st}
+                />
+              )}
+
               {/* Automatic SmartWeb Sync warning card */}
               {bulkUpdateData.updateStatus && SYNC_ELIGIBLE_STATUSES.has(bulkUpdateData.status) && (
                 <div className="flex items-start gap-2.5 rounded-lg border border-violet-200 bg-violet-50/50 dark:bg-violet-950/20 dark:border-violet-900/60 p-3.5 text-sm">
@@ -612,33 +644,7 @@ export function BulkPackagesUpdateModal({
                       </span>
                     </span>
                   </label>
-                  <label
-                    className={cn(
-                      "flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors select-none",
-                      !bulkDeliveredOptions.updateInvoices && "opacity-40 pointer-events-none",
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={bulkDeliveredOptions.syncInvoicesSp2}
-                      onChange={(e) =>
-                        setBulkDeliveredOptions((o) => ({
-                          ...o,
-                          syncInvoicesSp2: e.target.checked,
-                        }))
-                      }
-                      disabled={!bulkDeliveredOptions.updateInvoices}
-                      className="mt-0.5 h-4 w-4 rounded border-gray-400 accent-violet-650 cursor-pointer"
-                    />
-                    <span className="block">
-                      <span className="block text-xs font-semibold text-foreground leading-tight">
-                        Sincronizar facturas con SP2
-                      </span>
-                      <span className="block text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                        Envía el estado <em>paid</em> de cada factura a SmartWeb (SP2).
-                      </span>
-                    </span>
-                  </label>
+                  <div className="flex items-start gap-3 px-4 py-3 text-[11px] text-muted-foreground" data-testid="bulk-pkgs-sp2-always"><span className="text-emerald-600 font-bold">✓</span><span className="block"><span className="block text-xs font-semibold text-foreground leading-tight">Facturas sincronizadas con SP2</span><span className="block mt-0.5">Siempre activo: lo que SP1 decide se aplica en SP2 al instante.</span></span></div>
                 </div>
               )}
 

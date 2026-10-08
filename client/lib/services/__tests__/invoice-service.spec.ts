@@ -1610,6 +1610,36 @@ describe('annulInvoicesByTrackingsAndManifest', () => {
     expect(getDocs).not.toHaveBeenCalled();
   });
 
+  it('from Nova (keepPackagesInManifest): only annuls — packages stay in their manifest and status, never go to consolidation', async () => {
+    const mockInvoiceDoc = { id: 'inv-9', data: () => ({ status: 'sent', invoiceNumber: 'SL-009-INV', trackingNumber: 'TRK-NOVA', slCode: 'SL-009' }) };
+    const mockUpdate = vi.fn();
+    const mockCommit = vi.fn().mockResolvedValue(undefined);
+    const { writeBatch } = await import('firebase/firestore');
+    vi.mocked(writeBatch).mockReturnValue({ update: mockUpdate, set: vi.fn(), commit: mockCommit } as any);
+    let callCount = 0;
+    vi.mocked(getDocs).mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) return { docs: [mockInvoiceDoc] } as any;
+      if (callCount === 2) {
+        const pkgs = [{ id: 'pkg-9', data: () => ({ trackingNumber: 'TRK-NOVA', status: 'customs', manifestNumber: 'M-009', ruta: 'R1' }) }];
+        return { docs: pkgs, forEach: (cb: any) => pkgs.forEach(cb) } as any;
+      }
+      return { docs: [], forEach: () => {} } as any;
+    });
+
+    const result = await annulInvoicesByTrackingsAndManifest(['TRK-NOVA'], 'M-009', { keepPackagesInManifest: true, reason: 'Re-crear' });
+
+    expect(result.annulledIds).toEqual(['inv-9']);
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ status: 'annulled' });
+    const pkgWrite = mockUpdate.mock.calls[1][1];
+    expect(Object.keys(pkgWrite).sort()).toEqual(['invoiceId', 'invoiceNumber', 'invoiceStatus', 'statusHistory']);
+    expect(mockCommit).toHaveBeenCalledTimes(1);   // invoice + unlink in ONE commit
+    expect(JSON.stringify(mockUpdate.mock.calls)).not.toContain('consolidacion_transitoria');
+    const { syncPackagesToSmartWeb } = await import('.././sync-smartweb-service');
+    expect(syncPackagesToSmartWeb).toHaveBeenCalledWith([expect.objectContaining({ id: 'pkg-9', status: 'customs', manifestNumber: 'M-009' })]);
+  });
+
   it('queries invoices for the specified manifest and updates matching ones', async () => {
     const mockInvoiceDoc = {
       id: 'inv-123',
@@ -1652,13 +1682,12 @@ describe('annulInvoicesByTrackingsAndManifest', () => {
     
     expect(result.annulledIds).toContain('inv-123');
     expect(result.skippedPaid).toBe(0);
-    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(updateDoc).mock.calls[0][1]).toMatchObject({
-      status: 'annulled',
-    });
-    
-    expect(mockUpdate).toHaveBeenCalledTimes(1);
-    expect(mockCommit).toHaveBeenCalled();
+    // F10 ATOMIC: the invoice annulment and the package move are in the SAME batch (one commit).
+    expect(vi.mocked(updateDoc)).not.toHaveBeenCalled();
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ status: 'annulled' });
+    expect(mockUpdate.mock.calls[1][1]).toMatchObject({ manifestNumber: 'consolidacion_transitoria' });
+    expect(mockCommit.mock.invocationCallOrder[0]).toBeGreaterThan(mockUpdate.mock.invocationCallOrder[1]);
     
     const { deleteInvoiceFromSp2 } = await import('.././sync-invoices-service');
     expect(deleteInvoiceFromSp2).toHaveBeenCalledWith('inv-123', 'SL-001-INV');
@@ -1727,16 +1756,20 @@ describe('annulInvoicesByTrackingsAndManifest', () => {
       return { docs: [], forEach: () => {} } as any;
     });
 
+    const mockUpdate = vi.fn();
+    const { writeBatch } = await import('firebase/firestore');
+    vi.mocked(writeBatch).mockReturnValue({ update: mockUpdate, set: vi.fn(), commit: vi.fn().mockResolvedValue(undefined) } as any);
+
     const result = await annulInvoicesByTrackingsAndManifest(['TRK-MATCH'], 'M-001', {
       forceAnnulPaid: true,
     });
 
     expect(result.annulledIds).toContain('inv-paid-forced');
     expect(result.skippedPaid).toBe(0);
-    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(1);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
     // Even force-annulled, the write must still be a tombstone (status +
     // audit fields), never a delete — same contract as the normal path.
-    expect(vi.mocked(updateDoc).mock.calls[0][1]).toMatchObject({
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({
       status: 'annulled',
     });
   });
@@ -1863,6 +1896,9 @@ describe('BUG-I19: Eradication of "Cliente Pre-alertado" placeholder names in in
 // ── moveInvoiceToTransitoria ───────────────────────────────────────────────────
 
 describe('moveInvoiceToTransitoria', () => {
+  // F10: the invoice annulment and the package moves share ONE batch — tell them apart by payload.
+  const pkgCalls = (m: any) => m.mock.calls.filter((c: any[]) => c[1]?.manifestNumber === 'consolidacion_transitoria');
+  const invCalls = (m: any) => m.mock.calls.filter((c: any[]) => c[1]?.status === 'annulled' && 'annulledReason' in (c[1] || {}));
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -1992,14 +2028,43 @@ describe('moveInvoiceToTransitoria', () => {
     expect(updateDoc).not.toHaveBeenCalled();
 
     // But the orphaned PACKAGE still gets moved to transitoria.
-    expect(mockBatchUpdate).toHaveBeenCalledTimes(1);
-    expect(mockBatchUpdate.mock.calls[0][1]).toMatchObject({
+    expect(pkgCalls(mockBatchUpdate)).toHaveLength(1);
+    expect(pkgCalls(mockBatchUpdate)[0][1]).toMatchObject({
       manifestId: 'consolidacion_transitoria',
       manifestNumber: 'consolidacion_transitoria',
       status: 'consolidated',
       consolidacion: true,
     });
     expect(mockBatchCommit).toHaveBeenCalled();
+  });
+
+  it('F10 atomic: invoice annulment + every package to transitoria in ONE commit — the invoice' +
+    ' trigger can never leave a package behind unlinked', async () => {
+    vi.mocked(getDoc).mockResolvedValueOnce({ exists: () => true, data: () => ({ status: 'sent', invoiceNumber: 'FAC-RACE-001', invoiceDate: '2026-09-18' }) } as any);
+    const mockBatchUpdate = vi.fn();
+    // The trigger: once the annulment is committed, the package query by invoiceId no longer finds it.
+    let annulled = false;
+    let atFirstCommit: { inv: number; pkg: number } | null = null;
+    const mockCommit = vi.fn(async () => {
+      if (!atFirstCommit) atFirstCommit = { inv: invCalls(mockBatchUpdate).length, pkg: pkgCalls(mockBatchUpdate).length };
+      annulled = true;
+    });
+    vi.mocked(writeBatch).mockReturnValue({ update: mockBatchUpdate, set: vi.fn(), commit: mockCommit } as any);
+    const pkg = { trackingNumber: 'TRK-RACE-1', manifestNumber: 'MAN-OLD', invoiceId: 'inv-race' };
+    let calls = 0;
+    vi.mocked(getDocs).mockImplementation(async () => {
+      calls++;
+      if (calls === 1 && !annulled) return { docs: [{ id: 'pkg-race', data: () => pkg }], forEach: (cb: any) => cb({ id: 'pkg-race', data: () => pkg }) } as any;
+      return { docs: [], forEach: () => {} } as any;
+    });
+
+    const result = await moveInvoiceToTransitoria('inv-race');
+
+    expect(result.movedTrackings).toEqual(['TRK-RACE-1']);
+    // The FIRST commit already carries the invoice annulment AND the package move (atomic: both or nothing).
+    expect(atFirstCommit).toEqual({ inv: 1, pkg: 1 });
+    expect(vi.mocked(updateDoc)).not.toHaveBeenCalled();
+    expect(pkgCalls(mockBatchUpdate)[0][1]).toMatchObject({ manifestNumber: 'consolidacion_transitoria', annulledInvoiceNumber: 'FAC-RACE-001' });
   });
 
   it('annuls invoice and moves single linked package with exact transitoria stamping convention', async () => {
@@ -2060,9 +2125,10 @@ describe('moveInvoiceToTransitoria', () => {
       movedTrackings: ['TRK-SINGLE-1'],
     });
 
-    // Verify invoice annulment write
-    expect(vi.mocked(updateDoc)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(updateDoc).mock.calls[0][1]).toMatchObject({
+    // F10 ATOMIC: the invoice annulment is in the SAME batch (one commit) as the package moves.
+    expect(vi.mocked(updateDoc)).not.toHaveBeenCalled();
+    expect(invCalls(mockBatchUpdate)).toHaveLength(1);
+    expect(invCalls(mockBatchUpdate)[0][1]).toMatchObject({
       status: 'annulled',
       annulledBy: 'operator@smartlogistics.com',
       annulledReason: 'Prueba de anulación a transitoria',
@@ -2073,8 +2139,8 @@ describe('moveInvoiceToTransitoria', () => {
     expect(deleteInvoiceFromSp2).toHaveBeenCalledWith('inv-single', 'FAC-2026-001');
 
     // Verify batch update on package with exact stamping
-    expect(mockBatchUpdate).toHaveBeenCalledTimes(1);
-    const pkgUpdateArgs = mockBatchUpdate.mock.calls[0][1];
+    expect(pkgCalls(mockBatchUpdate)).toHaveLength(1);
+    const pkgUpdateArgs = pkgCalls(mockBatchUpdate)[0][1];
     expect(pkgUpdateArgs).toMatchObject({
       status: 'consolidated',
       consolidacion: true,
@@ -2152,7 +2218,7 @@ describe('moveInvoiceToTransitoria', () => {
     const result = await moveInvoiceToTransitoria('inv-multi');
     expect(result.success).toBe(true);
     expect(result.movedTrackings).toEqual(['TRK-1', 'TRK-2', 'TRK-3']);
-    expect(mockBatchUpdate).toHaveBeenCalledTimes(3);
+    expect(pkgCalls(mockBatchUpdate)).toHaveLength(3);
     expect(mockBatchCommit).toHaveBeenCalled();
   });
 
@@ -2200,9 +2266,9 @@ describe('moveInvoiceToTransitoria', () => {
 
     const result = await moveInvoiceToTransitoria('inv-idem');
     expect(result.success).toBe(true);
-    expect(mockBatchUpdate).toHaveBeenCalledTimes(1);
+    expect(pkgCalls(mockBatchUpdate)).toHaveLength(1);
 
-    const updateFields = mockBatchUpdate.mock.calls[0][1];
+    const updateFields = pkgCalls(mockBatchUpdate)[0][1];
     // originalManifestID should NOT be overwritten with INTERMEDIATE_MF
     expect(updateFields.originalManifestID).toBeUndefined();
   });

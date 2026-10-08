@@ -36,6 +36,7 @@ import { db, admin } from "../config/firebase";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import { sp2ProjectId } from "../config/sp2-target";
 
 interface RecreateRequest {
   slCode: string;
@@ -169,7 +170,8 @@ export const slRecreateCustomerBySlCode = onCall(
   },
 );
 
-const SP2_PROJECT_ID = "smart-portal-2";
+// Real SP2 in production; the emulated SP2 only inside the Firebase emulator (see config/sp2-target).
+const SP2_PROJECT_ID = sp2ProjectId();
 
 function getSp2Admin(): { sp2Db: FirebaseFirestore.Firestore; sp2Auth: any } {
   const appName = "smart-portal-2-recreate";

@@ -3,26 +3,29 @@ import { canonicalizeTracking } from '../../utils/tracking-canonicalizer';
 import { isEligiblePreAlert } from '../pre-alert-resolver';
 
 describe('Nova Table Live Manifest Image Emulation Suite', () => {
+  // Real SP2 pre-alerts always carry a creation date (every SP2 writer sets createdAt /
+  // preAlertDate). Since N5 an undated pre-alert is never eligible, so the mocks carry one.
+  const createdAt = new Date().toISOString();
   const mockSP2PreAlerts = new Map<string, any>([
     [
       'SPXMIA007982608040000996',
-      { slCode: 'SL261337', active: true, status: 'pending', customerName: 'GILBERTO JIMENEZ ESPINOZA' }
+      { slCode: 'SL261337', active: true, status: 'pending', createdAt, customerName: 'GILBERTO JIMENEZ ESPINOZA' }
     ],
     [
       '1195267030940003319500875424380611',
-      { slCode: 'SL261337', active: true, status: 'pending', customerName: 'GILBERTO JIMENEZ ESPINOZA' }
+      { slCode: 'SL261337', active: true, status: 'pending', createdAt, customerName: 'GILBERTO JIMENEZ ESPINOZA' }
     ],
     [
       'SPXMIA007982608030009344',
-      { slCode: 'SL261337', active: true, status: 'pending', customerName: 'GILBERTO JIMENEZ ESPINOZA' }
+      { slCode: 'SL261337', active: true, status: 'pending', createdAt, customerName: 'GILBERTO JIMENEZ ESPINOZA' }
     ],
     [
       '1Z1R054E0343790488',
-      { slCode: 'SL162', active: true, status: 'pending', customerName: 'JIMENA GAMBOA ABARCA' }
+      { slCode: 'SL162', active: true, status: 'pending', createdAt, customerName: 'JIMENA GAMBOA ABARCA' }
     ],
     [
       '9632080400208194694100875411686022',
-      { slCode: 'SL26363', active: true, status: 'pending', customerName: 'JIMENA SIBAJA' }
+      { slCode: 'SL26363', active: true, status: 'pending', createdAt, customerName: 'JIMENA SIBAJA' }
     ],
   ]);
 

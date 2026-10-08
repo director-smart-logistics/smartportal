@@ -25,6 +25,7 @@ import {
   ShippingLabelPrint,
 } from "@/components/nova/NovaShippingLabelModal";
 import { resolveEncomiendaName, initializeEncomiendaLookup, resolveCustomerEncomiendaService } from "@/lib/services/encomienda-lookup";
+import { activeAdminOverride, customerLabelAddressText } from "@/lib/customers/label-address";
 
 interface BulkResult {
   data: NovaShippingLabelData;
@@ -43,8 +44,8 @@ export function resolveAddress(
   c: CustomerInfo,
   encomiendaNameHint?: string,
 ): { deliveryAddress: string; courierService: string } {
-  // Use admin address override if it exists to preserve client information integrity in SP2
-  const adminOverride = (c as any).adminAddressOverride;
+  // F11: the admin's hand-typed address only while it is newer than the customer's address.
+  const adminOverride = activeAdminOverride(c as any);
   if (adminOverride?.deliveryAddress) {
     return {
       deliveryAddress: adminOverride.deliveryAddress,
@@ -52,46 +53,12 @@ export function resolveAddress(
     };
   }
 
-  // Find default/principal address first, falling back to the first address in the profile
-  const encomAddr = c.defaultAddress ?? c.addresses?.find((a) => a.isDefault && a.isActive !== false) ?? c.addresses?.[0];
-
   // 1. Resolve courier service name (with top-level fallback)
   const courierService = resolveCustomerEncomiendaService(c, encomiendaNameHint);
 
-  // 2. Resolve delivery address (with top-level fallback)
-  let deliveryAddress = "";
-  if (encomAddr) {
-    const parts = [];
-    if (encomAddr.streetAddress) parts.push(encomAddr.streetAddress);
-    if ((encomAddr as any).details) parts.push((encomAddr as any).details);
-    if (encomAddr.deliveryInstructions) parts.push(`Instrucciones: ${encomAddr.deliveryInstructions}`);
-    deliveryAddress = parts.join("\n");
-  }
-  
-  if (!deliveryAddress.trim()) {
-    const loc = (c as any).location || (c as any).direccion || (c as any).address;
-    if (loc && typeof loc === 'object') {
-      const parts = [];
-      const detail = loc.addressDetail || loc.direccionExacta || loc.detail || loc.streetAddress || (c as any).direccionExacta;
-      if (detail) parts.push(detail);
-      if (loc.district || loc.distrito) parts.push(loc.district || loc.distrito);
-      if (loc.canton) parts.push(loc.canton);
-      if (loc.province || loc.provincia) parts.push(loc.province || loc.provincia);
-      if (parts.length > 0) deliveryAddress = parts.join(", ");
-    }
-  }
-
-  if (!deliveryAddress.trim() && (c as any).direccionExacta) {
-    const parts = [(c as any).direccionExacta];
-    if ((c as any).distrito) parts.push((c as any).distrito);
-    if ((c as any).canton) parts.push((c as any).canton);
-    if ((c as any).provincia) parts.push((c as any).provincia);
-    deliveryAddress = parts.join(", ");
-  }
-
-  if (!deliveryAddress.trim()) {
-    deliveryAddress = c.ruta ? `Ruta: ${c.ruta}` : "";
-  }
+  // 2. The FULL, current address (street, details, district/canton/province, instructions) — same text
+  //    every label prints (label-address.ts customerLabelAddressText).
+  const deliveryAddress = customerLabelAddressText(c as any);
 
   return { deliveryAddress, courierService };
 }

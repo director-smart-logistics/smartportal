@@ -12,50 +12,6 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const ENABLE_GOOGLE_MAPS = false;
 
-// Helper functions for landmark/instruction deduplication
-function cleanStringForComparison(str: string): string {
-  if (!str) return '';
-  return str
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // remove accents
-    .replace(/[^a-z0-9\s]/g, "") // keep only alphanumeric and spaces
-    .trim();
-}
-
-function areStringsRedundant(str1: string, str2: string): boolean {
-  const c1 = cleanStringForComparison(str1);
-  const c2 = cleanStringForComparison(str2);
-  if (!c1 || !c2) return false;
-  if (c1 === c2) return true;
-
-  const stopWords = ['en', 'el', 'la', 'de', 'del', 'un', 'una', 'los', 'las', 'y', 'a', 'con', 'por', 'para', 'o', 'u', 'mini', 'super', 'instrucciones', 'detalles', 'señas', 'entregar'];
-  const words1 = c1.split(/\s+/).filter(Boolean);
-  const words2 = c2.split(/\s+/).filter(Boolean);
-
-  // Keep significant words of str2 that are not present in str1
-  const uniqueTo2 = words2.filter(w => !words1.includes(w) && !stopWords.includes(w));
-  return uniqueTo2.length === 0;
-}
-
-function deduplicateAddressLines(addressStr: string): string {
-  if (!addressStr) return "";
-  const lines = addressStr.split(/\n+/).map(l => l.trim()).filter(Boolean);
-  const uniqueLines: string[] = [];
-  
-  for (const line of lines) {
-    const cleanLine = line.replace(/^(instrucciones|detalles|señas):\s*/i, "");
-    const isRedundant = uniqueLines.some(existing => {
-      const cleanExisting = existing.replace(/^(instrucciones|detalles|señas):\s*/i, "");
-      return areStringsRedundant(cleanExisting, cleanLine);
-    });
-    if (!isRedundant) {
-      uniqueLines.push(line);
-    }
-  }
-  return uniqueLines.join("\n");
-}
-
 import {
   X,
   Tag,
@@ -82,9 +38,10 @@ import {
   updateTempCustomerEncomienda,
   type TempCustomerRecord,
 } from "@/lib/services/manifest-processor";
-import { updateCustomerEncomiendaService } from "@/lib/services/customer-sync";
+import { updateCustomerEncomiendaService, updateSp2AddressFromLabel } from "@/lib/services/customer-sync";
 import { shippingLabelsService, type ShippingLabel } from "@/lib/services/shipping-labels.service";
 import { useEncomiendaLookup, resolveEncomiendaName, resolveCustomerEncomiendaService } from "@/lib/services/encomienda-lookup";
+import { principalLabelAddress, activeAdminOverride, compareLabelAddresses, areStringsRedundant, deduplicateAddressLines, customerAddressText, reprintLabelAddressText } from "@/lib/customers/label-address";
 // ── Encomienda option (from /data/encomiendas.json) ─────────────────────────
 interface EncomiendaOption {
   id: string;
@@ -379,6 +336,11 @@ export function NovaShippingLabelModal({
   const [generating, setGenerating] = useState(false);
   const [useAdminOverride, setUseAdminOverride] = useState(false);
   const [saveToAdminOverride, setSaveToAdminOverride] = useState(true);
+  // F11.2: also make the corrected address the customer's principal address in SmartWeb (SP2).
+  // Checked by default (2026-09-26); only acts when the admin typed in the address field of THIS
+  // label (addressEdited) — never in bulk mode nor with the loaded text untouched.
+  const [updateSp2Address, setUpdateSp2Address] = useState(true);
+  const [addressEdited, setAddressEdited] = useState(false);
   const [clientAddress, setClientAddress] = useState("");
   const [clientCourier, setClientCourier] = useState("");
   const [parcelPreview, setParcelPreview] = useState<ParcelPreview | null>(
@@ -511,6 +473,8 @@ export function NovaShippingLabelModal({
     setNewPackageStatus("");
     setParcelPreview(null);
     setShowPreview(false);
+    setUpdateSp2Address(true);
+    setAddressEdited(false);
 
     firebaseApi.customers
       .getBySlCode(data.slCode)
@@ -519,7 +483,8 @@ export function NovaShippingLabelModal({
           const c = res.data as CustomerInfo;
           setCustomer(c);
 
-          const encomAddr = c.defaultAddress ?? c.addresses?.find((a) => a.isDefault && a.isActive !== false) ?? c.addresses?.[0];
+          // F11: the same principal address every label prints (docs/F11_LABEL_ADDRESS_AUDIT.md).
+          const encomAddr = principalLabelAddress(c as any) as CustomerAddress | null;
 
           // Smart encomienda service pre-fill resolver:
           // Checks defaultAddress, addresses, and top-level customer fields.
@@ -528,59 +493,21 @@ export function NovaShippingLabelModal({
 
           // Smart address resolver: extracts structured location fields (province, canton, district, detail)
           // entered by users in SP2 when map pin was removed.
-          const resolveFullAddress = (): string => {
-            if (encomAddr) {
-              const parts = [];
-              if (encomAddr.streetAddress) parts.push(encomAddr.streetAddress);
-              
-              const details = (encomAddr as any).details ? (encomAddr as any).details.trim() : "";
-              const instructions = encomAddr.deliveryInstructions ? encomAddr.deliveryInstructions.trim() : "";
-              
-              if (details) parts.push(details);
-              
-              if (instructions) {
-                const isRedundant = areStringsRedundant(details, instructions);
-                if (!isRedundant) {
-                  parts.push(`Instrucciones: ${instructions}`);
-                }
-              }
-              
-              if (parts.length > 0) return parts.join("\n");
-            }
-
-            const loc = (c as any).location || (c as any).direccion || (c as any).address;
-            if (loc && typeof loc === 'object') {
-              const parts = [];
-              const detail = loc.addressDetail || loc.direccionExacta || loc.detail || loc.streetAddress;
-              if (detail) parts.push(detail);
-              if (loc.district || loc.distrito) parts.push(loc.district || loc.distrito);
-              if (loc.canton) parts.push(loc.canton);
-              if (loc.province || loc.provincia) parts.push(loc.province || loc.provincia);
-              if (parts.length > 0) return parts.join(", ");
-            }
-            if ((c as any).direccionExacta) {
-              const parts = [(c as any).direccionExacta];
-              if ((c as any).distrito) parts.push((c as any).distrito);
-              if ((c as any).canton) parts.push((c as any).canton);
-              if ((c as any).provincia) parts.push((c as any).provincia);
-              return parts.join(", ");
-            }
-            const legacyAddr = (c as any).encomiendaAddress || (c as any).address;
-            if (legacyAddr?.deliveryInstructions) return legacyAddr.deliveryInstructions;
-            if (legacyAddr?.streetAddress) return legacyAddr.streetAddress;
-            if (c.ruta) return `Ruta: ${c.ruta}`;
-            return "";
-          };
+          // The FULL, current address (street, details, district/canton/province, instructions) — the same
+          // text every label prints (label-address.ts).
+          const resolveFullAddress = (): string => customerAddressText(c as any);
 
           const fullAddr = resolveFullAddress();
           setClientAddress(fullAddr);
 
           if (editingLabel) {
-            setDeliveryAddress(editingLabel.recipientAddress);
+            // Current full address when the customer's address changed after this label; else the saved text + location.
+            setDeliveryAddress(reprintLabelAddressText(c as any, editingLabel.recipientAddress, (editingLabel as any).updatedAt || (editingLabel as any).createdAt));
             setCourierService(editingLabel.notes?.replace(/^Courier:\s*/, "") || "");
             setUseAdminOverride(false);
           } else {
-            const override = (c as any).adminAddressOverride;
+            // F11: the hand-typed address only while it is newer than the customer's address.
+            const override = activeAdminOverride(c as any);
             if (override?.deliveryAddress) {
               setDeliveryAddress(deduplicateAddressLines(override.deliveryAddress));
               setCourierService(resolveEncomiendaName(override.courierService || ""));
@@ -814,13 +741,30 @@ export function NovaShippingLabelModal({
         console.warn("[NovaShippingLabelModal] Failed to write shipping label history record:", err);
       }
 
+      // F11.2: the corrected address → the customer's principal address in SP2 (SP2 pushes it back
+      // to SP1, so every label and the encomienda manifest print it).
+      let sp2Saved = false;
+      if (customer?.slCode && updateSp2Address && addressEdited && !autoGenerate) {
+        try {
+          const r = await updateSp2AddressFromLabel(customer.slCode, deliveryAddress.trim());
+          sp2Saved = true;
+          toast({
+            title: r.changed ? "Dirección actualizada en SmartWeb" : "SmartWeb ya tenía esta dirección",
+            description: r.changed ? "Se refleja en el perfil del cliente y en todas las etiquetas" : undefined,
+          });
+        } catch (e: any) {
+          toast({ title: "No se actualizó la dirección en SmartWeb", description: e?.message || String(e), variant: "destructive" });
+        }
+      }
+
       // Persist flat address + courier service back to the customer's adminAddressOverride field if checked
-      if (customer?.id && saveToAdminOverride) {
+      if (customer?.id && (saveToAdminOverride || sp2Saved)) {
         firebaseApi.customers
           .update(customer.id, {
             adminAddressOverride: {
               deliveryAddress: deliveryAddress.trim(),
               courierService: courierService.trim(),
+              savedAt: new Date().toISOString(),   // F11: valid while newer than the customer's address
             },
           })
           .catch((e) =>
@@ -876,6 +820,10 @@ export function NovaShippingLabelModal({
     deliveryAddress,
     courierService,
     newPackageStatus,
+    saveToAdminOverride,
+    updateSp2Address,
+    addressEdited,
+    autoGenerate,
     toast,
     onSuccess,
   ]);
@@ -1057,50 +1005,67 @@ export function NovaShippingLabelModal({
                   >
                     Dirección de Entrega *
                   </label>
-                  {!!(customer as any)?.adminAddressOverride?.deliveryAddress && (
-                    <div className="flex gap-1.5">
-                      <button
-                        type="button"
-                        className={cn(
-                          "px-2.5 py-0.5 text-[10px] font-bold rounded-full border transition-all",
-                          !useAdminOverride
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-background text-muted-foreground border-input hover:text-foreground"
-                        )}
-                        onClick={() => {
-                          setUseAdminOverride(false);
-                          setDeliveryAddress(clientAddress);
-                          setCourierService(clientCourier);
-                        }}
-                      >
-                        Cliente (SmartWeb)
-                      </button>
-                      <button
-                        type="button"
-                        className={cn(
-                          "px-2.5 py-0.5 text-[10px] font-bold rounded-full border transition-all",
-                          useAdminOverride
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-background text-muted-foreground border-input hover:text-foreground"
-                        )}
-                        onClick={() => {
-                          setUseAdminOverride(true);
-                          const override = (customer as any).adminAddressOverride;
-                          if (override) {
-                            setDeliveryAddress(override.deliveryAddress || "");
-                            setCourierService(resolveEncomiendaName(override.courierService || ""));
-                          }
-                        }}
-                      >
-                        Admin (Portal)
-                      </button>
-                    </div>
-                  )}
                 </div>
+                {/* 2026-10-07 (owner): when an admin typed an address for this customer, show BOTH with their dates so
+                    the admin sees which one is newer. Picking a card = the old "Cliente / Admin" buttons; the default
+                    choice is unchanged (activeAdminOverride). */}
+                {!!(customer as any)?.adminAddressOverride?.deliveryAddress && (() => {
+                  const override = (customer as any).adminAddressOverride;
+                  const cmp = compareLabelAddresses(customer as any);
+                  const fmt = (ms: number) => ms ? new Date(ms).toLocaleDateString("es-CR", { day: "numeric", month: "short", year: "numeric" }) : "";
+                  const card = (kind: "client" | "admin") => {
+                    const selected = kind === "admin" ? useAdminOverride : !useAdminOverride;
+                    const text = kind === "admin" ? deduplicateAddressLines(override.deliveryAddress || "") : clientAddress;
+                    const service = kind === "admin" ? resolveEncomiendaName(override.courierService || "") : clientCourier;
+                    const date = kind === "admin"
+                      ? (cmp.adminSavedAt ? `Escrita el ${fmt(cmp.adminSavedAt)}` : "Sin fecha (escrita antes del 27 sep 2026)")
+                      : (cmp.clientUpdatedAt ? `Actualizada el ${fmt(cmp.clientUpdatedAt)}` : "Sin fecha");
+                    return (
+                      <button
+                        type="button"
+                        data-testid={`label-address-option-${kind}`}
+                        aria-pressed={selected}
+                        className={cn(
+                          "flex-1 min-w-0 text-left rounded-lg border-2 p-2.5 transition-all",
+                          selected ? "border-primary bg-primary/5" : "border-input bg-background hover:border-primary/40"
+                        )}
+                        onClick={() => {
+                          setUseAdminOverride(kind === "admin");
+                          setDeliveryAddress(text);
+                          setCourierService(service);
+                        }}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-[11px] font-bold text-foreground">{kind === "admin" ? "Escrita por admin (Portal)" : "Cliente (SmartWeb)"}</span>
+                          {cmp.newer === kind && (
+                            <span className="px-1.5 py-px rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-bold" data-testid={`label-address-newer-${kind}`}>Más reciente</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mb-1">{date}{service ? ` · ${service}` : ""}</div>
+                        <div className="text-[11px] text-foreground whitespace-pre-line break-words line-clamp-4">{text || "—"}</div>
+                      </button>
+                    );
+                  };
+                  return (
+                    <div className="mb-2 space-y-1.5" data-testid="label-address-compare">
+                      <div className="flex gap-2">{card("client")}{card("admin")}</div>
+                      {cmp.newer === "unknown" && (
+                        <p className="text-[10px] font-semibold text-amber-700" data-testid="label-address-warning">
+                          La dirección escrita por el admin no tiene fecha: no se sabe cuál es más reciente. Revisa cuál es la correcta antes de generar.
+                        </p>
+                      )}
+                      {cmp.clientChangedAfter && (
+                        <p className="text-[10px] font-semibold text-amber-700" data-testid="label-address-warning">
+                          El cliente actualizó su dirección después de la escrita por el admin.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
                 <textarea
                   id="nova-label-address"
                   value={deliveryAddress}
-                  onChange={(e) => setDeliveryAddress(e.target.value)}
+                  onChange={(e) => { setDeliveryAddress(e.target.value); setAddressEdited(true); }}
                   placeholder="Ingresa la dirección completa de entrega..."
                   rows={3}
                   className="w-full px-3 py-2.5 border-2 border-input rounded-lg focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all resize-none bg-background text-foreground text-sm"
@@ -1190,6 +1155,20 @@ export function NovaShippingLabelModal({
                   />
                   <label htmlFor="saveToAdminOverride" className="text-[11px] font-semibold text-muted-foreground cursor-pointer select-none leading-none">
                     Guardar cambios como dirección de administración preferida (no altera el perfil del cliente en SmartWeb)
+                  </label>
+                </div>
+              )}
+              {customer?.slCode && (
+                <div className="flex items-center space-x-2 bg-accent/40 px-3 py-2 rounded-lg border border-border">
+                  <input
+                    type="checkbox"
+                    id="updateSp2Address"
+                    checked={updateSp2Address}
+                    onChange={(e) => setUpdateSp2Address(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-input text-primary focus:ring-primary/20 accent-primary cursor-pointer"
+                  />
+                  <label htmlFor="updateSp2Address" className="text-[11px] font-semibold text-muted-foreground cursor-pointer select-none leading-none">
+                    Actualizar también la dirección principal del cliente en SmartWeb (SP2)
                   </label>
                 </div>
               )}

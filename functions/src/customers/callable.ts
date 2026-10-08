@@ -384,16 +384,8 @@ export const slDeleteCustomer = onCall(
       throw new HttpsError("invalid-argument", "Customer ID is required");
     }
 
-    const customerDoc = await db.collection("customers").doc(customerId).get();
-    if (!customerDoc.exists) {
-      throw new HttpsError("not-found", "Customer not found");
-    }
-
-    // Hard delete — remove the doc entirely. Operators rely on the customer
-    // row disappearing from the list; soft-deactivation is achieved via a
-    // status update, not this callable.
-    await db.collection("customers").doc(customerId).delete();
-
-    return { success: true, id: customerId, deleted: true };
+    // 2026-09-29: deleting only the SP1 ficha left the SP2 account alive (accounts in one system and not in the
+    // other). Accounts are deleted only through slDeleteCustomerAccount (both systems, history check, log).
+    throw new HttpsError("failed-precondition", `Usa "Eliminar cliente" (slDeleteCustomerAccount): elimina en SP1 y SP2 a la vez y guarda registro. ${customerId} no se eliminó.`);
   }
 );

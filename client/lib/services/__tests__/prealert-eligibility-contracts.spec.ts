@@ -59,8 +59,8 @@ describe('PRE-ALERT ELIGIBILITY & LIFECYCLE CONTRACTS', () => {
     expect(isEligiblePreAlert({ active: false, tracking: '123' })).toBe(false);
   });
 
-  it('5. should REJECT pre-alerts older than 60 days (Temporal Window Protection)', () => {
-    const seventyDaysAgo = new Date(Date.now() - 70 * 24 * 60 * 60 * 1000).toISOString();
+  it('5. should REJECT pre-alerts older than 90 days (Temporal Window Protection)', () => {
+    const seventyDaysAgo = new Date(Date.now() - 95 * 24 * 60 * 60 * 1000).toISOString(); // 95 days (window = 90, decision 2026-09-25)
     const oldPreAlert = {
       tracking: 'TBA123456789012',
       slCode: 'SL100',
@@ -70,7 +70,7 @@ describe('PRE-ALERT ELIGIBILITY & LIFECYCLE CONTRACTS', () => {
     expect(isEligiblePreAlert(oldPreAlert)).toBe(false);
   });
 
-  it('6. should ACCEPT valid, fresh, unmanifested pre-alerts within 60 days', () => {
+  it('6. should ACCEPT valid, fresh, unmanifested pre-alerts within 90 days', () => {
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
     const validPreAlert = {
       tracking: 'TBA333418271432',

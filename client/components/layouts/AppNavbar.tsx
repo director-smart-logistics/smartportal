@@ -279,7 +279,8 @@ function AppNavbarInner() {
 
   const initials = useMemo(
     () =>
-      user?.fullName
+      // A staff account without a name (e.g. a Google account with no display name) must not crash the navbar.
+      (user?.fullName || user?.email || "U")
         .split(" ")
         .map((p) => p[0])
         .join("")
@@ -1052,7 +1053,7 @@ function AppNavbarInner() {
                     </AvatarFallback>
                   </Avatar>
                   <span className="hidden lg:block text-sm font-medium max-w-[120px] truncate">
-                    {user.fullName.split(" ")[0]}
+                    {(user.fullName || user.email || "").split(" ")[0]}
                   </span>
                   <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                 </Button>

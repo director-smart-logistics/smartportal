@@ -127,5 +127,14 @@ describe("resolveCustomerEncomiendaService - Cobertura Exhaustiva", () => {
     const customer = null;
     expect(resolveCustomerEncomiendaService(customer, "Correos de Costa Rica")).toBe("Correos de Costa Rica");
   });
-});
 
+  it("Caso 10 (F8.2): servicio propuesto por el cliente en SP2 cuando no hay uno oficial", () => {
+    const customer = { defaultAddress: { encomienda: null, encomiendaSuggestedName: "Transportes Tico" } };
+    expect(resolveCustomerEncomiendaService(customer, "Hint del manifiesto")).toBe("Transportes Tico");
+  });
+
+  it("Caso 11 (F8.2): el oficial (asignado por el admin en SP1) gana sobre el propuesto", () => {
+    const customer = { encomiendaServiceName: "Correos de Costa Rica", defaultAddress: { encomiendaSuggestedName: "Transportes Tico" } };
+    expect(resolveCustomerEncomiendaService(customer)).toBe("Correos de Costa Rica");
+  });
+});

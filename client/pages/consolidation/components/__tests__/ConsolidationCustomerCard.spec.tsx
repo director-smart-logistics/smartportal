@@ -405,7 +405,7 @@ describe('ConsolidationCustomerCard — Timing and Storage Charges', () => {
     expect(screen.getByText(/Día 1: 19\/08\/2026/i)).toBeTruthy();
   });
 
-  it('correctly extracts LATEST consolidation date from statusHistory audit trail (post-fix 2026-09-23: multi-annul resets the cycle to the most recent invoice)', () => {
+  it('correctly extracts the FIRST invoice date from the statusHistory audit trail (rule 2026-09-28: a re-invoice never restarts the count)', () => {
     const sectionWithAuditTrail: CustomerSection = {
       ...mockCustomerSection,
       lookupPackages: [
@@ -483,12 +483,10 @@ describe('ConsolidationCustomerCard — Timing and Storage Charges', () => {
       />
     );
 
-    // Package was invoiced+annulled twice: 08/08/2026, then re-invoiced+annulled
-    // 19/08/2026. Per the 2026-09-23 fix (Math.min -> Math.max), the CURRENT
-    // billing cycle starts at the most recent annul, 19/08/2026 — NOT the
-    // stale 08/08/2026 from the closed first cycle.
+    // Package was invoiced+annulled twice: 08/08/2026, then re-invoiced+annulled 19/08/2026.
+    // Rule 2026-09-28 (user): "Día 1" is the date of its FIRST invoice, 08/08/2026.
     expect(screen.getByText(/GFUS01069999999999/i)).toBeTruthy();
-    expect(screen.getByText(/Día 1: 19\/08\/2026/i)).toBeTruthy();
+    expect(screen.getByText(/Día 1: 08\/08\/2026/i)).toBeTruthy();
   });
 
   it('renders package from an annulled invoice as unblocked and movable', () => {
@@ -597,6 +595,29 @@ describe('ConsolidationCustomerCard — Timing and Storage Charges', () => {
     expect(screen.getByText('Días: 3')).toBeTruthy();
     // Card header should show 11d remaining
     expect(screen.getByText(/11d/i)).toBeTruthy();
+  });
+
+  it('F10: every package line shows its "Día 1" and the invoice it comes from (annulled / never invoiced)', () => {
+    const section: CustomerSection = {
+      customer: { id: 'cust-f10', slCode: 'SL900', fullName: 'CLIENTE F10', ruta: 'San Jose' },
+      lookupPackages: [],
+      manifestGroups: [{
+        manifestNumber: 'consolidacion_transitoria',
+        packages: [
+          { id: 'p1', trackingNumber: 'TRK-ANULADA-3', status: 'consolidated', weight: 1, price: 5,
+            annulledInvoiceNumber: 'SL900-20260918100003-C', annulledInvoiceDate: '2026-09-18T12:00:00-06:00', invoicedAt: '2026-09-18T12:00:00-06:00',
+            firstConsolidatedAt: '2026-07-02T12:00:00-06:00',
+            statusHistory: [{ status: 'consolidated', changedBy: 'invoice-annulled', note: 'Factura SL900-20260702100001-C anulada — movido a consolidación transitoria' }] } as any,
+          { id: 'p2', trackingNumber: 'TRK-SIN-FACTURA', status: 'consolidated', weight: 1, price: 5, firstConsolidatedAt: '2026-09-20T12:00:00-06:00' } as any,
+        ],
+        invoices: [],
+      }],
+      totalPackages: 2, totalWeight: 2, totalAmount: 10, manifestCount: 1,
+    };
+    render(<ConsolidationCustomerCard section={section} gracePeriodDays={14} dailyStorageCharge={1} defaultOpen={true} />);
+    const badges = screen.getAllByTestId('day-one-badge').map((b) => b.textContent || '');
+    expect(badges.some((t) => t.includes('02/07/2026') && t.includes('anulada SL900-20260702100001-C'))).toBe(true);   // FIRST invoice (#1), not the last (#3)
+    expect(badges.some((t) => t.includes('20/09/2026') && t.includes('sin factura'))).toBe(true);
   });
 });
 

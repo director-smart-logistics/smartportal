@@ -21,12 +21,18 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.slForceSyncCustomerFromSP2 = exports.slSyncCustomerFromSp2 = exports.slUpdateCustomerProfile = exports.triggerCustomerSync = void 0;
 exports.resolveCustomerFullNameHelper = resolveCustomerFullNameHelper;
 exports.transformUserToCustomer = transformUserToCustomer;
+exports.guardNewSp1Customer = guardNewSp1Customer;
 // import { onSchedule } from "firebase-functions/v2/scheduler";
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
 const app_1 = require("firebase-admin/app");
+const sp2_target_1 = require("../config/sp2-target");
+const address_freshness_1 = require("./address-freshness");
+const encomienda_suggestion_1 = require("./encomienda-suggestion");
+const route_review_1 = require("./route-review");
 // SP2 Firebase project configuration
-const SP2_PROJECT_ID = "smart-portal-2";
+// Real SP2 in production; the emulated SP2 only inside the Firebase emulator (see config/sp2-target).
+const SP2_PROJECT_ID = (0, sp2_target_1.sp2ProjectId)();
 // Initialize SP2 Firestore (secondary app)
 let sp2Db = null;
 /**
@@ -95,8 +101,11 @@ function transformPaymentMethodToCustomerPaymentMethod(sp2PaymentMethod) {
  * addresses without ids.
  */
 function preserveSp1AddressFields(sp2Addresses, existingAddresses) {
+    // F8.2 (G7): `requiresEncomienda` stays undefined from the transform when SP2 does not state it
+    // (legacy address documents) — only then is SP1's previous address encomienda preserved.
+    const normalized = (a) => ({ ...a, requiresEncomienda: a.requiresEncomienda ?? false });
     if (!existingAddresses || existingAddresses.length === 0)
-        return sp2Addresses;
+        return sp2Addresses.map(normalized);
     const byId = new Map();
     const byShape = new Map();
     const shape = (a) => [
@@ -113,12 +122,16 @@ function preserveSp1AddressFields(sp2Addresses, existingAddresses) {
     return sp2Addresses.map(addr => {
         const existing = (addr.id && byId.get(addr.id)) || byShape.get(shape(addr));
         if (!existing)
-            return addr;
+            return normalized(addr);
+        // A current SP2 address states requiresEncomienda: then SP2 is the truth for the address
+        // encomienda (none needed, or a proposed service instead of the old one). The SP1 admin's
+        // choice lives in the top-level encomiendaServiceName, not here.
+        const sp2States = typeof addr.requiresEncomienda === 'boolean';
         return {
             ...addr,
-            // Preserve SP1-managed encomienda when SP2 has none
-            encomienda: addr.encomienda ?? existing.encomienda ?? null,
-            requiresEncomienda: addr.requiresEncomienda || existing.requiresEncomienda || false,
+            // Legacy SP2 document (does not state it) → keep the previous encomienda as before
+            encomienda: addr.encomienda ?? (sp2States ? null : existing.encomienda ?? null),
+            requiresEncomienda: addr.requiresEncomienda ?? existing.requiresEncomienda ?? false,
             // Preserve SP1-validated coordinates when SP2 hasn't validated them
             coordinates: addr.coordinates?.validated
                 ? addr.coordinates
@@ -146,7 +159,9 @@ function transformAddressToCustomerAddress(sp2Address) {
         recipientPhone: sp2Address.recipientPhone || sp2Address.contactPhone || null,
         deliveryInstructions: sp2Address.deliveryInstructions || sp2Address.deliveryNotes || null,
         encomienda: sp2Address.encomienda || null,
-        requiresEncomienda: sp2Address.requiresEncomienda || false,
+        // undefined when SP2 does not state it (legacy) — resolved in preserveSp1AddressFields (G7)
+        requiresEncomienda: (typeof sp2Address.requiresEncomienda === 'boolean' ? sp2Address.requiresEncomienda : undefined),
+        encomiendaSuggestedName: (0, encomienda_suggestion_1.suggestedEncomiendaName)(sp2Address),
         status: sp2Address.status || 'active',
         isDefault: sp2Address.isDefault ?? sp2Address.isPrimary ?? false,
         isActive: sp2Address.isActive !== false,
@@ -511,7 +526,7 @@ async function processUserDoc(doc, sp2Firestore, stats) {
     // Preserve SP1-only address fields (encomienda, requiresEncomienda,
     // validated coordinates) BEFORE transforming — otherwise the scheduled
     // sync would wipe SP1 admin's encomienda assignment every 30 minutes.
-    const mergedAddresses = preserveSp1AddressFields(addresses, existingCustomer?.addresses ?? undefined);
+    const mergedAddresses = preserveSp1AddressFields(addresses, existingCustomer?.addresses ?? undefined).map(encomienda_suggestion_1.applyEncomiendaSuggestion);
     const mergedDefaultAddress = defaultAddress
         ? (mergedAddresses.find(a => a.id === defaultAddress.id) ?? defaultAddress)
         : null;
@@ -563,8 +578,17 @@ async function processUserDoc(doc, sp2Firestore, stats) {
         const lastToUse = sp1IsNewer ? existingCustomer.lastName : cleanCustomer.lastName;
         const rawFullNameToUse = sp1IsNewer ? existingCustomer.fullName : cleanCustomer.fullName;
         const fullNameToUse = resolveCustomerFullNameHelper(firstToUse, lastToUse, rawFullNameToUse);
+        // "Revisar ruta" also from the scheduled sync (a missed push must not skip the alert).
+        const rrNow = new Date().toISOString();
+        const rr = (0, route_review_1.nextRouteReviewState)({
+            existing: existingCustomer.routeReview ?? null, routeHistory: existingCustomer.routeHistory,
+            prevAddress: existingCustomer.defaultAddress, nextAddress: (mergedDefaultAddress || null), ruta: rutaToUse,
+            incomingSp2: sp2User.routeReview ?? null, changedBy: String(sp2User.profileLastUpdatedBy || 'client'), now: rrNow,
+            sp2RouteSet: sp2User.syncRutaToSp1 === true && sp2User.ruta ? { ruta: sp2User.ruta, at: toISOString(sp2User.rutaSetByAdminAt), by: sp2User.rutaLastUpdatedBy } : null,
+        });
         const updatedData = removeUndefined({
             ...cleanCustomer,
+            ...(rr.events.length ? { routeReview: rr.review } : {}),
             ruta: rutaToUse,
             isRutaAdminLocked: isRutaAdminLocked,
             rutaSetByAdminAt: rutaSetByAdminAt,
@@ -599,7 +623,12 @@ async function processUserDoc(doc, sp2Firestore, stats) {
             }
         }
         if (hasDiff) {
-            await customerRef.update(updatedData);
+            await sp1Db.runTransaction(async (tx) => {
+                tx.update(customerRef, updatedData);
+                logRouteReviewEvents(tx, sp2User.slCode, rr.events, rrNow);
+            });
+            if (rr.events.length)
+                await mirrorRouteReviewToSp2(sp2User.uid, sp2User.slCode, rr.review);
             stats.updated++;
         }
         else {
@@ -607,9 +636,49 @@ async function processUserDoc(doc, sp2Firestore, stats) {
         }
     }
     else {
+        const skip = await guardNewSp1Customer(sp1Db, sp2User);
+        if (skip) {
+            stats.skipped++;
+            return;
+        }
         await customerRef.set(cleanCustomer);
         stats.created++;
     }
+}
+/**
+ * Identity guard before CREATING an SP1 ficha from an SP2 account (2026-09-29).
+ *  - An account that arrives as deleted/inactive never creates a ficha (that is how "deleted" fichas that
+ *    only existed in SP1 appeared).
+ *  - If this SP2 account (uid) already has an SP1 ficha under ANOTHER code, a second ficha is NOT created:
+ *    that is how 16 customers ended with one code in SP1 and another in SP2 (packages and pre-alerts split,
+ *    Nova unsure which account to use). An alert is logged for the admin instead.
+ * Returns null when creating is fine, else the reason it was skipped.
+ */
+async function guardNewSp1Customer(sp1Db, sp2User) {
+    const st = String(sp2User.status || '').toLowerCase();
+    if (st === 'deleted' || st === 'inactive')
+        return 'account-deleted';
+    if (!/^SL\d+$/.test(String(sp2User.slCode || '')))
+        return 'invalid-sl-code';
+    // Deleted with "Eliminar cuenta" (account_deletions_log): a late push (e.g. the profile-created trigger that
+    // arrives after the deletion) must not bring the ficha back.
+    const deleted = await sp1Db.collection('account_deletions_log').where('slCode', '==', sp2User.slCode).limit(10).get();
+    if (deleted.docs.some((d) => d.get('status') === 'deleted' || d.get('status') === 'pending'))
+        return 'account-deleted';
+    const uid = sp2User.uid && sp2User.uid !== sp2User.slCode ? sp2User.uid : null;
+    if (!uid)
+        return null;
+    const same = await sp1Db.collection('customers').where('firebaseUid', '==', uid).limit(5).get();
+    const other = same.docs.find((d) => d.id !== sp2User.slCode);
+    if (!other)
+        return null;
+    await sp1Db.collection('sync_identity_alerts').add({
+        type: 'code-mismatch', at: new Date().toISOString(), uid, sp2SlCode: sp2User.slCode, sp1SlCode: other.id,
+        email: sp2User.email || null, status: 'open',
+        message: `La cuenta SP2 ${uid} llegó con ${sp2User.slCode} pero en SP1 ya tiene la ficha ${other.id}. No se creó otra ficha: unificar los códigos (scripts/audit/unify-sl-codes.cjs).`,
+    });
+    console.warn(`[sync-guard] code-mismatch uid=${uid} SP2=${sp2User.slCode} SP1=${other.id} — no se crea una segunda ficha`);
+    return 'code-mismatch';
 }
 /**
  * Perform the actual sync operation
@@ -874,6 +943,23 @@ exports.slUpdateCustomerProfile = (0, https_1.onCall)({ cors: true }, async (req
  * Body:   { user: SP2UserProfile }
  * Method: POST
  */
+/** route_reviews log: every "Revisar ruta" event (created / replaced / resolved), in the same transaction. */
+function logRouteReviewEvents(tx, slCode, events, at) {
+    for (const e of events) {
+        tx.set(sp1Db.collection('route_reviews').doc(), removeUndefined({
+            slCode, event: e.event, at, reviewId: e.review.id, review: e.review, previous: e.previous ?? null, source: 'slSyncCustomerFromSp2',
+        }));
+    }
+}
+/** The review is shown in SP2 too (admin user card): mirrored to users/{uid}.routeReview. */
+async function mirrorRouteReviewToSp2(uid, slCode, review) {
+    try {
+        await getSp2Firestore().collection('users').doc(uid).update({ routeReview: review });
+    }
+    catch (err) {
+        console.error(`[route-review] SP2 mirror failed for ${slCode} (SP1 keeps the review)`, err?.message);
+    }
+}
 exports.slSyncCustomerFromSp2 = (0, https_1.onRequest)({ cors: false, invoker: 'public', memory: '256MiB', timeoutSeconds: 30 }, async (req, res) => {
     res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type, x-sync-secret');
@@ -903,9 +989,34 @@ exports.slSyncCustomerFromSp2 = (0, https_1.onRequest)({ cors: false, invoker: '
         const customerRef = sp1Db.collection('customers').doc(sp2User.slCode);
         const existingDoc = await customerRef.get();
         const existingCustomer = existingDoc.exists ? existingDoc.data() : undefined;
+        // F8.1/F12: the addresses come from SP2 AS THEY ARE NOW (source of truth) — the users doc for
+        // single-address customers, else the `addresses` collection — not from the pushed snapshot:
+        // several pushes race for one save. `addressesReadAtMs` orders
+        // the write below so an older read never overwrites a newer one.
+        const addressesReadAtMs = Date.now();
+        let sp2AddressDocs = null;
+        try {
+            const sp2Firestore = getSp2Firestore();
+            // F12: single-address model — the ONE principal address lives in users/{uid}.defaultAddress.
+            const userDoc = await sp2Firestore.collection('users').doc(sp2User.uid).get();
+            if (userDoc.exists && userDoc.get('addressModel') === 'single-v1') {
+                const principal = userDoc.get('defaultAddress');
+                // No address (the customer removed it) → the pushed snapshot, which is empty as well.
+                sp2AddressDocs = principal ? [principal] : null;
+            }
+            else {
+                // Not migrated yet: the `addresses` collection (legacy source).
+                const byUid = await sp2Firestore.collection('addresses').where('userId', '==', sp2User.uid).get();
+                sp2AddressDocs = byUid.docs.map((d) => ({ ...d.data(), id: d.id }));
+            }
+        }
+        catch (readErr) {
+            console.warn('[slSyncCustomerFromSp2] SP2 addresses read failed — using the pushed snapshot', { slCode: sp2User.slCode, error: readErr?.message });
+        }
+        const picked = (0, address_freshness_1.pickSp2Addresses)(sp2AddressDocs, sp2User.addresses);
         // Check if incoming user object contains denormalized addresses/payment methods
         let addresses = [];
-        const rawAddresses = sp2User.addresses;
+        const rawAddresses = picked.addresses;
         if (Array.isArray(rawAddresses)) {
             for (const addrData of rawAddresses) {
                 addresses.push(transformAddressToCustomerAddress(addrData));
@@ -924,7 +1035,7 @@ exports.slSyncCustomerFromSp2 = (0, https_1.onRequest)({ cors: false, invoker: '
         else {
             paymentMethods = (existingCustomer?.paymentMethods ?? []).filter((p) => p.id);
         }
-        const mergedAddresses = preserveSp1AddressFields(addresses, existingCustomer?.addresses ?? undefined);
+        const mergedAddresses = preserveSp1AddressFields(addresses, existingCustomer?.addresses ?? undefined).map(encomienda_suggestion_1.applyEncomiendaSuggestion);
         const defaultAddress = mergedAddresses.find((a) => a.isDefault && a.isActive) ?? mergedAddresses[0] ?? createEmptyAddressSchema();
         const defaultPaymentMethod = paymentMethods.find((p) => p.isDefault && p.isActive) ?? paymentMethods[0] ?? createEmptyPaymentMethodSchema();
         const customer = transformUserToCustomer(sp2User, existingCustomer, mergedAddresses.length ? mergedAddresses : [createEmptyAddressSchema()], defaultAddress, paymentMethods.length ? paymentMethods : [createEmptyPaymentMethodSchema()], defaultPaymentMethod);
@@ -966,8 +1077,18 @@ exports.slSyncCustomerFromSp2 = (0, https_1.onRequest)({ cors: false, invoker: '
                     }
                 }
             }
+            // "Revisar ruta": the address moved → the admin must confirm the route (never assigned by itself).
+            const nowIso = new Date().toISOString();
+            const rr = (0, route_review_1.nextRouteReviewState)({
+                existing: existingCustomer.routeReview ?? null, routeHistory: existingCustomer.routeHistory,
+                prevAddress: existingCustomer.defaultAddress, nextAddress: defaultAddress, ruta: rutaToUse,
+                incomingSp2: sp2User.routeReview ?? null,
+                changedBy: String(sp2User.profileLastUpdatedBy || 'client'), now: nowIso,
+                sp2RouteSet: sp2User.syncRutaToSp1 === true && sp2User.ruta ? { ruta: sp2User.ruta, at: toISOString(sp2User.rutaSetByAdminAt), by: sp2User.rutaLastUpdatedBy } : null,
+            });
             const updatedData = removeUndefined({
                 ...cleanCustomer,
+                ...(rr.events.length ? { routeReview: rr.review } : {}),
                 ruta: rutaToUse,
                 isRutaAdminLocked: isRutaAdminLocked,
                 rutaSetByAdminAt: rutaSetByAdminAt,
@@ -1000,8 +1121,20 @@ exports.slSyncCustomerFromSp2 = (0, https_1.onRequest)({ cors: false, invoker: '
                 }
             }
             if (hasDiff) {
-                await customerRef.update(updatedData);
-                console.log(`[slSyncCustomerFromSp2] Updated: ${sp2User.slCode}`);
+                // F8.1: ordered write — a push whose SP2 read is older than the saved one is dropped.
+                const written = await sp1Db.runTransaction(async (tx) => {
+                    const current = await tx.get(customerRef);
+                    if ((0, address_freshness_1.isOlderAddressSnapshot)(current.get('sp2AddressesReadAt'), addressesReadAtMs))
+                        return false;
+                    tx.update(customerRef, { ...updatedData, sp2AddressesReadAt: addressesReadAtMs, sp2AddressesSource: picked.source });
+                    logRouteReviewEvents(tx, sp2User.slCode, rr.events, nowIso);
+                    return true;
+                });
+                if (written && rr.events.length)
+                    await mirrorRouteReviewToSp2(sp2User.uid, sp2User.slCode, rr.review);
+                console.log(written
+                    ? `[slSyncCustomerFromSp2] Updated: ${sp2User.slCode} (addresses from ${picked.source})`
+                    : `[slSyncCustomerFromSp2] Older push for ${sp2User.slCode} dropped — a newer SP2 read is already saved.`);
             }
             else {
                 console.log(`[slSyncCustomerFromSp2] No changes detected for ${sp2User.slCode}. Skipping update.`);
@@ -1009,7 +1142,21 @@ exports.slSyncCustomerFromSp2 = (0, https_1.onRequest)({ cors: false, invoker: '
             res.status(200).json({ success: true, slCode: sp2User.slCode, action: 'updated' });
         }
         else {
-            await customerRef.set(cleanCustomer);
+            const skip = await guardNewSp1Customer(sp1Db, sp2User);
+            if (skip) {
+                console.warn(`[slSyncCustomerFromSp2] No se crea ficha para ${sp2User.slCode}: ${skip}`);
+                res.status(200).json({ success: true, slCode: sp2User.slCode, action: 'skipped', reason: skip });
+                return;
+            }
+            // New customer with an address → "Revisar ruta" (first address): the route is still to be confirmed.
+            const nowIso = new Date().toISOString();
+            const rr = (0, route_review_1.nextRouteReviewState)({ existing: null, prevAddress: null, nextAddress: defaultAddress, ruta: cleanCustomer.ruta, incomingSp2: null, changedBy: String(sp2User.profileLastUpdatedBy || 'client'), now: nowIso });
+            await sp1Db.runTransaction(async (tx) => {
+                tx.set(customerRef, rr.events.length ? { ...cleanCustomer, routeReview: rr.review } : cleanCustomer);
+                logRouteReviewEvents(tx, sp2User.slCode, rr.events, nowIso);
+            });
+            if (rr.events.length)
+                await mirrorRouteReviewToSp2(sp2User.uid, sp2User.slCode, rr.review);
             console.log(`[slSyncCustomerFromSp2] Created: ${sp2User.slCode}`);
             res.status(201).json({ success: true, slCode: sp2User.slCode, action: 'created' });
         }

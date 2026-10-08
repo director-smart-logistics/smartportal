@@ -11,6 +11,7 @@ import {
   type MatchResult,
 } from '../customer-matcher';
 import { batchResolvePreAlerts } from '../pre-alert-resolver';
+import { repeatedTrackingIndices } from '../prealert-match-keys';
 import { detectPermit, detectPermitFromManifestId, detectPermitFromDescription } from '../permit-detector';
 import { 
   loadUnmatchedRouteCache, 
@@ -718,6 +719,11 @@ export async function processManifestFile(
           })
         );
 
+        // F1.6: the same tracking 2+ times in this manifest is never assigned by a pre-alert —
+        // the table shows a RED "P" and the admin decides (NOVA_PREALERT_MATCH_SCENARIOS.md B7).
+        const repeatedRows = repeatedTrackingIndices(namesNeedingMatchWithIndex.map(n => n.tracking));
+        const repeatedRowIndex = new Set([...repeatedRows].map(i => namesNeedingMatchWithIndex[i].index));
+
         // Build per-row override map keyed by row index
         for (const { tracking, slCode, customer } of preAlertCustomerEntries) {
           const info = preAlertMap.get(tracking);
@@ -732,6 +738,10 @@ export async function processManifestFile(
           namesNeedingMatchWithIndex
             .filter(n => n.tracking === tracking)
             .forEach(n => {
+              if (repeatedRowIndex.has(n.index)) {
+                console.warn(`[ManifestProcessor] [P] Row ${n.index + 2}: tracking ${tracking} appears more than once in the manifest — pre-alert NOT applied (admin decides)`);
+                return;
+              }
               const fallbackName = customer?.fullName || customer?.name || info?.clientName || `Cliente Pre-alertado (${slCode})`;
               preAlertOverrideMap.set(n.index, {
                 slCode,

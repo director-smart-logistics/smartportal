@@ -141,7 +141,12 @@ export function resolveCustomerEncomiendaService(c: any, hint?: string): string 
 
   if (service) return resolveEncomiendaName(service);
 
-  // 4. Prioridad: Hint/Respaldo del manifiesto
+  // 4. F8.2: servicio que el cliente propuso en SP2 (aún no está en la lista) — la etiqueta lo
+  //    muestra hasta que el admin asigne uno oficial.
+  service = getStr(c.defaultAddress?.encomiendaSuggestedName);
+  if (service) return service;
+
+  // 5. Prioridad: Hint/Respaldo del manifiesto
   return resolveEncomiendaName(hint);
 }
 

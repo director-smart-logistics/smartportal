@@ -558,6 +558,7 @@ export default function EncomiendaDispatch() {
             })),
           streetAddress: section.customer.streetAddress || undefined,
           details: section.customer.details || undefined,
+          geo: section.customer.geo || undefined,
           deliveryInstructions: section.customer.deliveryInstructions || undefined,
         });
       }

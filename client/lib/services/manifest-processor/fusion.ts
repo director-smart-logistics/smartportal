@@ -75,6 +75,22 @@ export async function backfillMegaManFusedSources(
  * MUST BE EXCLUDED when loading regular non-ENC manifests.
  * DO NOT REMOVE THIS EXCLUSION GUARD — IT PREVENTS ENCOMIENDA PACKAGES FROM RE-APPEARING IN AIR CARGO VIEWS.
  */
+/**
+ * The pre-alert saved with a package. "Guardar en BD" stores it in the manifest record
+ * (manifests/{mn}.packages[], saveManifestRecord); the packages collection does not have it.
+ * Every merge below must carry it, or a re-opened manifest loses its "P" (a manifest opened
+ * from Firestore is never re-validated — its saved data is the truth, F1.5).
+ */
+const SAVED_PREALERT_FIELDS = ['preAlert', 'hasPreAlert', 'preAlertSlCode', 'preAlertCreatedAt', 'preAlertKey', 'preAlertId'] as const;
+export function savedPreAlertFields(pkg: any, embedded: any): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of SAVED_PREALERT_FIELDS) {
+    const value = embedded?.[key] ?? pkg?.[key];
+    if (value !== undefined && value !== null && value !== '') out[key] = value;
+  }
+  return out;
+}
+
 export async function loadMegaManFromFirestore(megaManId: string): Promise<ProcessingResult | null> {
   try {
     // ── 1. Manifest metadata (manifestType, shippingType, etc.) ──────────────
@@ -204,6 +220,7 @@ export async function loadMegaManFromFirestore(megaManId: string): Promise<Proce
         pesoConsolidacion:  p.pesoConsolidacion  ?? ed?.pesoConsolidacion,
         ajustePrecio:       p.ajustePrecio       ?? ed?.ajustePrecio       ?? null,
         precioAjustado:     p.ajustePrecio?.precioAjustado ?? ed?.ajustePrecio?.precioAjustado ?? null,
+        ...savedPreAlertFields(p, ed),
       };
     }).filter((p: any) => {
       const tracking = String(p.tracking || p.trackingNumber || '').toUpperCase().trim();
@@ -301,6 +318,7 @@ export async function loadMegaManFromFirestore(megaManId: string): Promise<Proce
           pesoConsolidacion:   p.pesoConsolidacion  ?? ed?.pesoConsolidacion,
           ajustePrecio:        p.ajustePrecio       ?? ed?.ajustePrecio       ?? null,
           precioAjustado:      p.ajustePrecio?.precioAjustado ?? ed?.ajustePrecio?.precioAjustado ?? null,
+          ...savedPreAlertFields(p, ed),
         };
       });
 
@@ -338,6 +356,7 @@ export async function loadMegaManFromFirestore(megaManId: string): Promise<Proce
             pesoRedondeo:       p.pesoRedondeo       ?? ed?.pesoRedondeo,
             diferenciaRedondeo: p.diferenciaRedondeo ?? ed?.diferenciaRedondeo,
             pesoConsolidacion:  p.pesoConsolidacion  ?? ed?.pesoConsolidacion,
+            ...savedPreAlertFields(p, ed),
           });
         }
       });

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onCustomerWritten = exports.slRecreateSp2UserAccount = exports.slRecreateCustomerBySlCode = exports.slLookupCustomerByEmail = exports.slForceSyncCustomerFromSP2 = exports.slSyncCustomerFromSp2 = exports.slUpdateCustomerProfile = exports.triggerCustomerSync = exports.slDeleteCustomer = exports.slUpdateCustomer = exports.slCreateCustomer = exports.slGetCustomerBySlCode = exports.slGetCustomer = exports.slListCustomers = void 0;
+exports.slDeleteAccountFromSp2 = exports.slDeleteCustomerAccount = exports.slCheckRouteIntegrity = exports.slMovePackagesToCustomerRoute = exports.slResolveRouteReview = exports.slUpdateSp2AddressFromLabel = exports.onCustomerWritten = exports.slRecreateSp2UserAccount = exports.slRecreateCustomerBySlCode = exports.slLookupCustomerByEmail = exports.slForceSyncCustomerFromSP2 = exports.slSyncCustomerFromSp2 = exports.slUpdateCustomerProfile = exports.triggerCustomerSync = exports.slDeleteCustomer = exports.slUpdateCustomer = exports.slCreateCustomer = exports.slGetCustomerBySlCode = exports.slGetCustomer = exports.slListCustomers = void 0;
 var callable_1 = require("./callable");
 Object.defineProperty(exports, "slListCustomers", { enumerable: true, get: function () { return callable_1.slListCustomers; } });
 Object.defineProperty(exports, "slGetCustomer", { enumerable: true, get: function () { return callable_1.slGetCustomer; } });
@@ -26,4 +26,14 @@ Object.defineProperty(exports, "slRecreateSp2UserAccount", { enumerable: true, g
 // Firestore trigger — canonical SP1 → SP2 propagation point.
 var triggers_1 = require("./triggers");
 Object.defineProperty(exports, "onCustomerWritten", { enumerable: true, get: function () { return triggers_1.onCustomerWritten; } });
+// F11.2 — Nova label: the corrected address also becomes the customer's principal address in SP2.
+var label_address_sp2_callable_1 = require("./label-address-sp2-callable");
+Object.defineProperty(exports, "slUpdateSp2AddressFromLabel", { enumerable: true, get: function () { return label_address_sp2_callable_1.slUpdateSp2AddressFromLabel; } });
+var route_review_callable_1 = require("./route-review-callable");
+Object.defineProperty(exports, "slResolveRouteReview", { enumerable: true, get: function () { return route_review_callable_1.slResolveRouteReview; } });
+Object.defineProperty(exports, "slMovePackagesToCustomerRoute", { enumerable: true, get: function () { return route_review_callable_1.slMovePackagesToCustomerRoute; } });
+Object.defineProperty(exports, "slCheckRouteIntegrity", { enumerable: true, get: function () { return route_review_callable_1.slCheckRouteIntegrity; } });
+var account_delete_1 = require("./account-delete");
+Object.defineProperty(exports, "slDeleteCustomerAccount", { enumerable: true, get: function () { return account_delete_1.slDeleteCustomerAccount; } });
+Object.defineProperty(exports, "slDeleteAccountFromSp2", { enumerable: true, get: function () { return account_delete_1.slDeleteAccountFromSp2; } });
 //# sourceMappingURL=index.js.map

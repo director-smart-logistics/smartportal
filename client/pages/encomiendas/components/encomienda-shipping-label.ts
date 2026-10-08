@@ -42,6 +42,8 @@ export interface ShippingLabelData {
   }[];
   streetAddress?: string;
   details?: string;
+  /** district, canton, province (F11) */
+  geo?: string;
   deliveryInstructions?: string;
 }
 
@@ -155,6 +157,7 @@ function buildLabelPage(label: ShippingLabelData, index: number, total: number):
         <div class="delivery-address" style="font-size:12.5pt; font-weight:800; color:#000; line-height:1.4;">
           ${esc(label.streetAddress)}
           ${label.details ? `<div style="font-size:10.5pt; font-weight:600; color:#333; margin-top:4px;"><strong>Detalles:</strong> ${esc(label.details)}</div>` : ''}
+          ${label.geo ? `<div style="font-size:10.5pt; font-weight:600; color:#333; margin-top:2px;">${esc(label.geo)}</div>` : ''}
         </div>
         ` : deliveryAddress ? `
         <div class="delivery-address">${esc(deliveryAddress)}</div>

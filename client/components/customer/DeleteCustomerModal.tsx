@@ -87,6 +87,7 @@ export function DeleteCustomerModal({
   const [understood, setUnderstood] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
 
   // Reset state on open
   const handleOpenChange = useCallback(
@@ -113,7 +114,7 @@ export function DeleteCustomerModal({
       return;
     setError(null);
     try {
-      await deleteCustomer(customer.id);
+      await deleteCustomer({ id: customer.slCode || customer.id, reason: reason.trim() });
       onDeleted();
       onClose();
     } catch (err: any) {
@@ -276,10 +277,9 @@ export function DeleteCustomerModal({
                   Consecuencias de la eliminación
                 </p>
                 {[
-                  "El cliente perderá acceso a su cuenta inmediatamente",
-                  "El historial de paquetes e invoices permanecerá en el sistema",
-                  "Los datos de perfil se eliminarán de la colección de clientes",
-                  "Esta acción puede revertirse contactando al soporte técnico",
+                  "Se elimina en SP1 y en SP2 a la vez (ficha, cuenta, login, direcciones)",
+                  "Solo si la cuenta no tiene paquetes, facturas, envíos ni pre-alertas; si tiene historial, el sistema no la elimina y te dice por qué",
+                  "Queda un registro con quién, cuándo, el motivo y una copia completa para recuperarla",
                 ].map((c) => (
                   <div
                     key={c}
@@ -434,6 +434,7 @@ export function DeleteCustomerModal({
                 onKeyDown={(e) => {
                   if (
                     e.key === "Enter" &&
+                    reason.trim().length >= 5 &&
                     confirmText.toLowerCase() === expectedConfirm.toLowerCase()
                   ) {
                     handleDelete();
@@ -441,8 +442,18 @@ export function DeleteCustomerModal({
                 }}
                 aria-label={`Escribe ${expectedConfirm} para confirmar la eliminación`}
               />
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Motivo <span className="text-red-500">*</span></label>
+                <Input
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Ej.: cuenta de prueba, duplicada, solicitud del cliente"
+                  className="h-9 text-sm"
+                  data-testid="delete-customer-reason"
+                />
+              </div>
               {error && (
-                <p className="text-xs text-red-600 flex items-center gap-1.5">
+                <p className="text-xs text-red-600 flex items-center gap-1.5" role="alert" data-testid="delete-customer-error">
                   <AlertTriangle className="w-3 h-3 shrink-0" />
                   {error}
                 </p>
@@ -463,6 +474,7 @@ export function DeleteCustomerModal({
                 size="sm"
                 disabled={
                   confirmText.toLowerCase() !== expectedConfirm.toLowerCase() ||
+                  reason.trim().length < 5 ||
                   deleting
                 }
                 onClick={handleDelete}

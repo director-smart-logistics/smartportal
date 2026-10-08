@@ -26,6 +26,7 @@ import {
   getDocs,
   where,
   deleteField,
+  serverTimestamp,
 } from "firebase/firestore";
 import {
   movePackagesBetweenManifestDocs,
@@ -42,6 +43,8 @@ import { NovaInvoicePreview,
 import { SyncSmartWebModal } from "@/components/packages/SyncSmartWebModal";
 import { SyncOrphansSmartWebModal } from "@/components/packages/SyncOrphansSmartWebModal";
 import { BulkPackagesUpdateModal } from "@/components/packages/BulkPackagesUpdateModal";
+import { InvoiceSiblingsNotice } from "@/components/packages/InvoiceSiblingsNotice";
+import { findInvoiceSiblings, type InvoiceSibling } from "@/lib/services/invoice-siblings";
 import { syncPackagesToSmartWeb } from "@/lib/services/sync-smartweb-service";
 import { pushStatusToSp2, deleteInvoiceFromSp2, syncInvoicesToSp2, syncInvoicePackagesToSp2 } from "@/lib/services/sync-invoices-service";
 import { motion, AnimatePresence } from "framer-motion";
@@ -447,6 +450,9 @@ export function PackagesDataTable({
     return unsub;
   }, [packages]);
 
+  const [inlineSiblings, setInlineSiblings] = useState<InvoiceSibling[]>([]);
+  const [inlineSiblingsChecked, setInlineSiblingsChecked] = useState<Set<string>>(new Set());
+  const [inlineSiblingsLoading, setInlineSiblingsLoading] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
     packageId: string | null;
@@ -1115,19 +1121,18 @@ export function PackagesDataTable({
       
       const invoiceNumber = targetInvoice.invoiceNumber || invoiceId;
       
-      // 1. Update invoice status to 'annulled' in Firestore
-      await firestoreApi.invoices.update(invoiceId, {
+      // ATOMIC (F10, 2026-09-26): locate the packages first, then annul the invoice and update them in
+      // ONE commit (both or nothing) — the SP1 invoice trigger cannot race it and the UI never shows an
+      // intermediate state. Same fields as before; SP2 is updated after the commit.
+      const annulBatch = writeBatch(db);
+      annulBatch.update(doc(db, "invoices", invoiceId), {
         status: "annulled",
         annulledAt: new Date().toISOString(),
         annulledReason: "Anulado desde el modal de facturas del paquete",
+        updatedAt: serverTimestamp(),
       });
-      
-      // 2. Delete from SP2 (SmartWeb)
-      await deleteInvoiceFromSp2(invoiceId, invoiceNumber).catch((err) => {
-        console.warn("[handleAnnulInvoiceFromModal] SP2 deletion failed:", err);
-      });
-      
-      // 3. Clear package invoice association in Firestore for all packages linked to this invoice
+
+      // Packages linked to this invoice (by its trackings)
       const trackings: string[] = [
         ...((targetInvoice.trackingNumbers as string[]) || []),
         targetInvoice.trackingNumber as string,
@@ -1150,10 +1155,9 @@ export function PackagesDataTable({
         const invoiceEmissionDate = extractInvoiceEmissionDate(targetInvoice) || now;
 
         if (validDocs.length > 0) {
-          const pkgBatch = writeBatch(db);
           validDocs.forEach((pkgDoc) => {
             const pData = pkgDoc.data() as any;
-            pkgBatch.update(doc(db, "packages", pkgDoc.id), {
+            annulBatch.update(doc(db, "packages", pkgDoc.id), {
               invoiceId: deleteField(),
               invoiceNumber: deleteField(),
               annulledInvoiceId: invoiceId,
@@ -1169,9 +1173,16 @@ export function PackagesDataTable({
               status: "consolidated",
             });
           });
-          await pkgBatch.commit();
         }
       }
+
+      // The single atomic commit: invoice annulled + its packages updated.
+      await annulBatch.commit();
+
+      // Delete from SP2 (SmartWeb), once the annulment is committed.
+      await deleteInvoiceFromSp2(invoiceId, invoiceNumber).catch((err) => {
+        console.warn("[handleAnnulInvoiceFromModal] SP2 deletion failed:", err);
+      });
       
       toast({
         title: "Factura anulada",
@@ -2098,10 +2109,26 @@ export function PackagesDataTable({
     }
   };
 
+  /** Same status for the other packages of the invoice the admin kept ticked (server: SP1 + SP2 + log). */
+  const applyToInvoiceSiblings = async (ids: string[], status: string) => {
+    if (!ids.length || !status) return;
+    try {
+      const res: any = await firebaseApi.packages.bulkUpdateStatus(ids, status, {}, true);
+      const data = res?.data ?? res;
+      toast({
+        title: "Otros paquetes de la factura",
+        description: `${ids.length} paquete${ids.length !== 1 ? "s" : ""} de la misma factura también ${ids.length !== 1 ? "quedaron" : "quedó"} en ${getTranslatedValue("status", status)}${data?.sp2 ? ` · SP2: ${data.sp2.updated} actualizados${data.sp2.skipped ? `, ${data.sp2.skipped} omitidos` : ""}` : ""}.`,
+      });
+    } catch (err: any) {
+      toast({ title: "No se pudieron actualizar los otros paquetes de la factura", description: err?.message || String(err), variant: "destructive" });
+    }
+  };
+
   const handleConfirmBulkUpdate = async (
     updates: Record<string, any>,
     deliveredOptions: { updateInvoices: boolean; syncInvoicesSp2: boolean },
     manifestNumber: string | null,
+    siblingIds: string[] = [],
   ) => {
     setUpdating(true);
     try {
@@ -2112,6 +2139,8 @@ export function PackagesDataTable({
             : Promise.resolve(),
         ),
       );
+
+      if (updates.status && siblingIds.length) await applyToInvoiceSiblings(siblingIds, updates.status);
 
       // ── SmartWeb (SP2) sync — runs only for customer-visible milestone statuses ──
       if (
@@ -2680,6 +2709,23 @@ export function PackagesDataTable({
     }
   };
 
+  // Status change of one package → offer the other packages of its invoice (the SP2 "Facturados" card is the invoice).
+  useEffect(() => {
+    if (!confirmDialog.open || confirmDialog.field !== "status" || !confirmDialog.packageId || typeof confirmDialog.newValue !== "string") {
+      setInlineSiblings([]); setInlineSiblingsChecked(new Set()); return;
+    }
+    const pkg = packages.find((p) => p.id === confirmDialog.packageId);
+    if (!pkg) return;
+    let alive = true;
+    setInlineSiblingsLoading(true);
+    findInvoiceSiblings([pkg as any], confirmDialog.newValue)
+      .then((list) => { if (alive) { setInlineSiblings(list); setInlineSiblingsChecked(new Set(list.map((x) => x.id))); } })
+      .catch(() => { if (alive) setInlineSiblings([]); })
+      .finally(() => { if (alive) setInlineSiblingsLoading(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmDialog.open, confirmDialog.field, confirmDialog.packageId, confirmDialog.newValue]);
+
   const handleConfirmSave = async () => {
     if (
       !confirmDialog.packageId ||
@@ -2708,6 +2754,9 @@ export function PackagesDataTable({
           confirmDialog.field,
           confirmDialog.newValue,
         );
+      }
+      if (confirmDialog.field === "status" && typeof confirmDialog.newValue === "string" && inlineSiblingsChecked.size) {
+        await applyToInvoiceSiblings([...inlineSiblingsChecked], confirmDialog.newValue);
       }
       // SP2 sync for individual eligible status changes (fire-and-forget)
       if (
@@ -4455,6 +4504,16 @@ export function PackagesDataTable({
               <strong>{confirmDialog.newValue !== null ? getTranslatedValue(confirmDialog.field || "", confirmDialog.newValue) : "vacío"}</strong>?
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {confirmDialog.field === "status" && (
+            <InvoiceSiblingsNotice
+              siblings={inlineSiblings}
+              checked={inlineSiblingsChecked}
+              onToggle={(id) => setInlineSiblingsChecked((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+              loading={inlineSiblingsLoading}
+              statusLabel={getTranslatedValue("status", confirmDialog.newValue)}
+              statusText={(st) => getTranslatedValue("status", st)}
+            />
+          )}
           <div className="flex justify-end gap-2 mt-4">
             <AlertDialogCancel disabled={updating}>
               Cancelar

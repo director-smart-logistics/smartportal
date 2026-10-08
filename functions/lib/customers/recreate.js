@@ -39,6 +39,7 @@ const firebase_1 = require("../config/firebase");
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
 const firestore_1 = require("firebase-admin/firestore");
+const sp2_target_1 = require("../config/sp2-target");
 function trim(s) {
     return typeof s === "string" ? s.trim() : "";
 }
@@ -133,7 +134,8 @@ exports.slRecreateCustomerBySlCode = (0, https_1.onCall)({ cors: true, memory: "
         customer: { id: slCode, slCode, email, fullName },
     };
 });
-const SP2_PROJECT_ID = "smart-portal-2";
+// Real SP2 in production; the emulated SP2 only inside the Firebase emulator (see config/sp2-target).
+const SP2_PROJECT_ID = (0, sp2_target_1.sp2ProjectId)();
 function getSp2Admin() {
     const appName = "smart-portal-2-recreate";
     const existing = (0, app_1.getApps)().find((a) => a.name === appName);

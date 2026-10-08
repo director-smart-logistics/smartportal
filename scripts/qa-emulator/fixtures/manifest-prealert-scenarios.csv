@@ -1,0 +1,14 @@
+Tracking Number,Weight,Description,Customer Name
+9632001960806794376300877098560696,2.1,M1 FedEx barcode vs 12 pre-alertados,Cliente Uno
+420331959405511899223197428491,1.4,M2 USPS 420 vs 22 pre-alertados,Cliente Dos
+TBA330000000301,0.8,M3 TBA exacto de SL90002 (nombre dice Cliente Uno),Cliente Uno
+TBA330000000401,1.0,M4 gemelas SL90001 y SL90002,Cliente Uno
+TBA330000000402,1.2,M5 legacy sin slCode userId 2429,Cliente Uno
+TBA330000000403,0.6,M6 fantasma solo en la copia de SP1,Cliente Uno
+TBA330000000404,0.9,M7 pre-alerta sin fecha,Cliente Uno
+TBA330000000405,1.1,M8 marcada needsReview,Cliente Dos
+TBA330000000406,1.3,M9 paquete SP2 ya entregado,Cliente Dos
+TBA330000000407,0.7,M10 cancelada,Cliente Uno
+TBA330000000408,0.5,M11 de hace 200 dias,Cliente Dos
+TBA330000000409,1.5,M13 usada en otro manifiesto,Cliente Uno
+TBA330000000499,2.0,M12 sin pre-alerta,Cliente Dos

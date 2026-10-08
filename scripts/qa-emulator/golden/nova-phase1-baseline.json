@@ -1,0 +1,135 @@
+{
+ "note": "Nova (SP1) baseline BEFORE Phase 1 (single real-time source), after fixes N1–N16 and the N13 close script. nova-upload.cjs + seed-nova-scenarios.cjs + close-prealerts-of-finished-shipments.cjs --apply + fixtures/manifest-prealert-scenarios.csv. 2026-09-25. Updated by F1.6 (decision 2026-09-25): several matches = RED P (M4).",
+ "rows": [
+  {
+   "case": "M1",
+   "tracking": "9632001960806794376300877098560696",
+   "manifestName": "Cliente Uno",
+   "badge": "P verde",
+   "P": "Pre-alerta: SL90001 — Cliente Uno",
+   "slInRow": [],
+   "row": "7 sin ruta CLIENTE UNO 9632001960806794376300877098560696 P 2.10 — $32.00 ₡15 584",
+   "assignedByPreAlert": "SL90001"
+  },
+  {
+   "case": "M2",
+   "tracking": "420331959405511899223197428491",
+   "manifestName": "Cliente Dos",
+   "badge": "P verde",
+   "P": "Pre-alerta: SL90002 — Cliente Dos",
+   "slInRow": [],
+   "row": "1 sin ruta CLIENTE DOS 420331959405511899223197428491 P 1.40 — $20.00 ₡9 740",
+   "assignedByPreAlert": "SL90002"
+  },
+  {
+   "case": "M3",
+   "tracking": "TBA330000000301",
+   "manifestName": "Cliente Uno",
+   "badge": "P verde",
+   "P": "Pre-alerta: SL90002 — Cliente Dos",
+   "slInRow": [],
+   "row": "2 sin ruta CLIENTE UNO TBA330000000301 P 0.80 — $12.00 ₡5 844",
+   "assignedByPreAlert": "SL90002"
+  },
+  {
+   "case": "M4",
+   "tracking": "TBA330000000401",
+   "manifestName": "Cliente Uno",
+   "badge": "P roja: varias cuentas",
+   "P": null,
+   "slInRow": [],
+   "row": "8 sin ruta CLIENTE UNO TBA330000000401 P 1.00 — $12.00 ₡5 844",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M5",
+   "tracking": "TBA330000000402",
+   "manifestName": "Cliente Uno",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "9 sin ruta CLIENTE UNO TBA330000000402 1.20 — $20.00 ₡9 740",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M6",
+   "tracking": "TBA330000000403",
+   "manifestName": "Cliente Uno",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "10 sin ruta CLIENTE UNO TBA330000000403 0.60 — $12.00 ₡5 844",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M7",
+   "tracking": "TBA330000000404",
+   "manifestName": "Cliente Uno",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "11 sin ruta CLIENTE UNO TBA330000000404 0.90 — $12.00 ₡5 844",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M8",
+   "tracking": "TBA330000000405",
+   "manifestName": "Cliente Dos",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "3 sin ruta CLIENTE DOS TBA330000000405 1.10 — $20.00 ₡9 740",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M9",
+   "tracking": "TBA330000000406",
+   "manifestName": "Cliente Dos",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "4 sin ruta CLIENTE DOS TBA330000000406 1.30 — $20.00 ₡9 740",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M10",
+   "tracking": "TBA330000000407",
+   "manifestName": "Cliente Uno",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "12 sin ruta CLIENTE UNO TBA330000000407 0.70 — $12.00 ₡5 844",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M11",
+   "tracking": "TBA330000000408",
+   "manifestName": "Cliente Dos",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "5 sin ruta CLIENTE DOS TBA330000000408 0.50 — $12.00 ₡5 844",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M13",
+   "tracking": "TBA330000000409",
+   "manifestName": "Cliente Uno",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "13 sin ruta CLIENTE UNO TBA330000000409 1.50 — $24.00 ₡11 688",
+   "assignedByPreAlert": null
+  },
+  {
+   "case": "M12",
+   "tracking": "TBA330000000499",
+   "manifestName": "Cliente Dos",
+   "badge": "",
+   "P": null,
+   "slInRow": [],
+   "row": "6 sin ruta CLIENTE DOS TBA330000000499 2.00 — $24.00 ₡11 688",
+   "assignedByPreAlert": null
+  }
+ ]
+}

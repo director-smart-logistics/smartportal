@@ -84,11 +84,11 @@ describe('Consolidación Transitoria — Regression Invariants', () => {
       expect(startDate).toContain('2026-07-01');
     });
 
-    it('uses the LATEST invoice date when multiple annul events exist (Caso Esteban multi-annul)', () => {
-      // Simulates the Esteban Chacón Murillo (SL261393) scenario:
+    it('uses the FIRST invoice date when multiple annul events exist (rule 2026-09-28, multi-annul)', () => {
+      // Multi-annul scenario:
       // - First invoice created Jul 2 → annulled → packages return to transitoria
       // - Second invoice created Sep 18 → annulled → packages return to transitoria
-      // The counter MUST show ~5 days (from Sep 18), NOT ~83 days (from Jul 2)
+      // User decision 2026-09-28: the count starts at the FIRST invoice (Jul 2) and never restarts on a re-invoice.
       const pkgMultiAnnul = {
         id: 'pkg-esteban-1',
         trackingNumber: 'SPXMIA015242609020008898',
@@ -118,12 +118,9 @@ describe('Consolidación Transitoria — Regression Invariants', () => {
 
       const startDate = getConsolidationStartDate(pkgMultiAnnul);
       expect(startDate).not.toBeNull();
-      // Must extract 2026-09-18 (LATEST invoice), NOT 2026-07-02 (earliest)
-      expect(startDate).toContain('2026-09-18');
-
-      // Verify the day count is reasonable (not 80+ days)
+      // Must extract 2026-07-02 (FIRST invoice), NOT 2026-09-18 (the latest)
+      expect(startDate).toContain('2026-07-02');
       const days = daysSince(startDate!);
-      expect(days).toBeLessThan(30); // Sep 18 → today should be < 30 days
       expect(days).toBeGreaterThanOrEqual(0);
     });
   });

@@ -62,8 +62,10 @@ const firestore_1 = require("firebase-admin/firestore");
 const app_1 = require("firebase-admin/app");
 const https = __importStar(require("https"));
 const querystring = __importStar(require("querystring"));
+const sp2_target_1 = require("../config/sp2-target");
 // ── Constants ─────────────────────────────────────────────────────────────────
-const SP2_PROJECT_ID = "smart-portal-2";
+// Real SP2 in production; the emulated SP2 only inside the Firebase emulator (see config/sp2-target).
+const SP2_PROJECT_ID = (0, sp2_target_1.sp2ProjectId)();
 const MLCARGO_API_USER = "spedi";
 const MLCARGO_API_PASS = "nshop1_045#$1";
 const PORTAL_HOST = "mayoristas.milocker.net";

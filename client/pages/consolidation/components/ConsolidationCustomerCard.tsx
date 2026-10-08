@@ -49,7 +49,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn, extractInvoiceEmissionDate, extractDateIsoFromInvoiceNumber } from '@/lib/utils';
+import { cn, extractInvoiceEmissionDate } from '@/lib/utils';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,7 +63,8 @@ import {
 import type { CustomerSection, ManifestGroup, PackageDragPayload, ConsolidationPackage } from './types';
 import { PACKAGE_DND_TYPE, isPackageDraggable } from './types';
 import type { ComplianceResult } from '@/lib/services/consolidation-rules-service';
-import { daysSince, oldestPackageDate } from '@/lib/services/consolidation-carry-on-service';
+import { daysSince } from '@/lib/services/consolidation-carry-on-service';
+import { packageDayOne, customerDayOne, sortByDayOne } from '@/lib/consolidation/day-one';
 import { getRouteColor } from '@/lib/utils/route-colors';
 import { CopyButton } from '@/components/ui/copy-button';
 import { firebaseApi } from '@/lib/firebase/callable';
@@ -132,112 +133,11 @@ const LOCK_REASONS: Record<string, string> = {
 };
 
 /**
- * Calculates the consolidation start date ("Día 1") for an individual package's CURRENT billing cycle.
- *
- * BUSINESS RULE (post-fix 2026-09-23):
- *   When a package goes through multiple invoice→annul cycles, the "Día 1" counter MUST
- *   reflect the MOST RECENT (latest) invoice emission date — NOT the earliest historical one.
- *
- *   Example: Package facturado Jul 2 → anulado → re-facturado Sep 18 → anulado
- *   → Día 1 = Sep 18 (NOT Jul 2). Each annul+re-invoice resets the cycle.
- *
- * PRIORITY CHAIN (highest to lowest):
- *   1. Latest invoice emission date extracted from statusHistory notes (most recent cycle)
- *   2. Direct invoiceDate / annulledInvoiceDate / annulledInvoiceNumber on the package doc
- *   3. firstConsolidatedAt (only if no invoice history exists — virgin consolidation)
- *   4. Earliest consolidation event timestamp from statusHistory (fallback)
- *   5. manifestUpdatedAt / createdAt / savedAt (last resort)
- *
- * IMPORTANT: This function is called both at card-header level (via the `oldest` useMemo)
- * and per-package row level (L1071). Both usages benefit from this fix identically.
- *
- * @param pkg - A consolidation package document (from Firestore `packages` collection)
- * @returns ISO date string representing the start of the current consolidation cycle, or null
+ * "Día 1" of a package's consolidation — rule in @/lib/consolidation/day-one (date of its FIRST
+ * invoice; never invoiced → the day it entered consolidation). Kept as an export for existing callers.
  */
 export function getConsolidationStartDate(pkg: any): string | null {
-  if (!pkg) return null;
-
-  // ── Step 1: Direct invoice emission date from package-level fields ──────
-  // This captures the invoice date when the package still has invoiceDate/annulledInvoiceDate
-  // set directly on the document (before statusHistory is the only source).
-  const directInvoiceDate =
-    extractInvoiceEmissionDate({
-      invoiceDate: pkg.invoiceDate || pkg.annulledInvoiceDate,
-      invoicedAt: pkg.invoicedAt,
-      annulledInvoiceNumber: pkg.annulledInvoiceNumber,
-      invoiceNumber: !pkg.isTransitoria ? pkg.invoiceNumber : undefined,
-    }) ||
-    (pkg.annulledInvoiceNumber ? extractDateIsoFromInvoiceNumber(pkg.annulledInvoiceNumber) : null) ||
-    (pkg.invoiceNumber && !pkg.isTransitoria ? extractDateIsoFromInvoiceNumber(pkg.invoiceNumber) : null) ||
-    pkg.invoicedAt ||
-    null;
-
-  // ── Step 2: Scan statusHistory for the LATEST invoice date (most recent cycle) ──
-  // KEY FIX: Previous code used Math.min (earliest). Now uses Math.max (latest).
-  // This ensures multi-annul scenarios reset the counter to the last billing cycle.
-  let latestInvoiceDateFromHistory: string | null = null;
-  let latestInvoiceDateMs = 0;
-  let earliestConsolidationEventDate: string | null = null;
-
-  if (pkg.statusHistory && Array.isArray(pkg.statusHistory) && pkg.statusHistory.length > 0) {
-    const invRegex = /(?:Factura|invoice)\s+([A-Z0-9-]{6,}\d{6,}(?:-C)?)/i;
-
-    for (const h of pkg.statusHistory) {
-      const status = (h.status || '').toLowerCase();
-      const note = h.note || h.notes || '';
-      const changedBy = (h.changedBy || '').toLowerCase();
-
-      const isConsolidationEvent =
-        status === 'consolidated' ||
-        changedBy.includes('annulled') ||
-        changedBy.includes('unlocked') ||
-        note.toLowerCase().includes('anulad') ||
-        note.toLowerCase().includes('consolidac');
-
-      if (isConsolidationEvent) {
-        // Extract invoice number from the audit note (e.g. "Factura SL261393-20260918143000-C anulada")
-        const match = note.match(invRegex);
-        if (match) {
-          const fromNote = extractDateIsoFromInvoiceNumber(match[1]);
-          if (fromNote) {
-            const fromNoteMs = new Date(fromNote).getTime();
-            // KEY CHANGE: `>` instead of `<` — take the LATEST invoice, not the earliest
-            if (!isNaN(fromNoteMs) && fromNoteMs > latestInvoiceDateMs) {
-              latestInvoiceDateFromHistory = fromNote;
-              latestInvoiceDateMs = fromNoteMs;
-            }
-          }
-        }
-
-        // Track the earliest consolidation event as a fallback (for packages with no invoice refs)
-        if (!earliestConsolidationEventDate) {
-          const hTime = h.changedAt || h.timestamp;
-          if (hTime) {
-            earliestConsolidationEventDate = hTime;
-          }
-        }
-      }
-    }
-  }
-
-  // ── Step 3: Priority-based resolution (NOT Math.min across all candidates) ──────
-  // The highest-priority non-null value wins. This replaces the old "pool all dates
-  // and take the minimum" approach that caused the multi-annul bug.
-
-  // Priority 1: Latest invoice from statusHistory (most recent billing cycle)
-  if (latestInvoiceDateFromHistory) return latestInvoiceDateFromHistory;
-
-  // Priority 2: Direct invoice date from package fields
-  if (directInvoiceDate) return directInvoiceDate;
-
-  // Priority 3: firstConsolidatedAt (only meaningful if no invoice history exists)
-  if (pkg.firstConsolidatedAt) return pkg.firstConsolidatedAt;
-
-  // Priority 4: Earliest consolidation event timestamp
-  if (earliestConsolidationEventDate) return earliestConsolidationEventDate;
-
-  // Priority 5: Last-resort fallbacks
-  return pkg.manifestUpdatedAt || pkg.createdAt || pkg.savedAt || null;
+  return packageDayOne(pkg).date;
 }
 
 export function ConsolidationCustomerCard({
@@ -346,32 +246,15 @@ export function ConsolidationCustomerCard({
   }, [manifestGroups, resolvedUsers]);
 
   // ── Grace period computation ───────────────────────────────────────────────
-  // NOTE (2026-09-23 fix): The grace period "Día 1" for the customer card header
-  // is the MOST RECENT consolidation cycle start date across all packages.
-  // Previously used Math.min (earliest date), which caused multi-annul packages
-  // to show stale day counts from closed billing cycles (e.g. 79 days from July
-  // when the current cycle started in September).
+  // The customer counter ("Consolida desde", grace period, "Más de 90 días") follows the OLDEST
+  // "Día 1" among the customer's packages; each package's "Día 1" is the date of its FIRST invoice
+  // (@/lib/consolidation/day-one — same rule as SP2's "En Consolidación").
   const allPackages = useMemo(
     () => manifestGroups.flatMap(g => g.packages),
     [manifestGroups]
   );
-  const latestCycleStart = useMemo(() => {
-    let latestDate: string | null = null;
-    let latestMs: number | null = null;
-    for (const pkg of allPackages) {
-      const d = getConsolidationStartDate(pkg) || oldestPackageDate([pkg]);
-      if (d) {
-        const ms = new Date(d).getTime();
-        // KEY CHANGE: `>` instead of `<` — use the most recent cycle, not the oldest
-        if (!isNaN(ms) && (latestMs === null || ms > latestMs)) {
-          latestDate = d;
-          latestMs = ms;
-        }
-      }
-    }
-    return latestDate;
-  }, [allPackages]);
-  const daysInStorage = daysSince(latestCycleStart);
+  const cycleStart = useMemo(() => customerDayOne(allPackages).date, [allPackages]);
+  const daysInStorage = daysSince(cycleStart);
   const daysRemaining = gracePeriodDays - daysInStorage;
   const graceExpired = daysInStorage >= 0 && daysRemaining <= 0;
   const graceWarning = daysInStorage >= 0 && daysRemaining > 0 && daysRemaining <= 3;
@@ -383,11 +266,11 @@ export function ConsolidationCustomerCard({
   // ── "Consolida desde" badge ───────────────────────────────────────────────
   /** Format the latest-cycle-start date as a short locale string */
   const consolidaSinceLabel = useMemo(() => {
-    if (!latestCycleStart) return null;
-    const d = new Date(latestCycleStart);
+    if (!cycleStart) return null;
+    const d = new Date(cycleStart);
     if (isNaN(d.getTime())) return null;
     return d.toLocaleDateString('es-CR', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'America/Costa_Rica' });
-  }, [latestCycleStart]);
+  }, [cycleStart]);
 
   const consolidaBadgeClass = useMemo(() => {
     if (daysInStorage < 0) return null; // no date
@@ -988,7 +871,8 @@ export function ConsolidationCustomerCard({
       {isOpen && (
         <div className="px-4 py-3 space-y-4">
           {manifestGroups.map(group => {
-            const uninvoiced = getUninvoicedPackages(group);
+            // Oldest "Día 1" first, then to the most recent (full timestamp; ties by tracking) — user 2026-09-28.
+            const uninvoiced = sortByDayOne(getUninvoicedPackages(group));
             const isDragOver = dragOverManifest === group.manifestNumber;
 
             return (
@@ -1094,7 +978,16 @@ export function ConsolidationCustomerCard({
                           const draggable = isPackageDraggable(pkg);
 
                           // Isolated per-package consolidation start date ("Día 0 / Día 1")
-                          const startConsolDate = getConsolidationStartDate(pkg);
+                          // F10: "Día 1" and the invoice it comes from (shown on every package line).
+                          const dayOne = packageDayOne(pkg);
+                          const startConsolDate = dayOne.date;
+                          const dayOneIsCurrent = !!dayOne.invoiceNumber && dayOne.invoiceNumber === pkg.invoiceNumber && !!pkg.invoiceId;
+                          const dayOneSource = dayOne.scenario === 'primera-factura'
+                            ? `${dayOneIsCurrent ? 'factura' : 'anulada'} ${dayOne.invoiceNumber || ''}`.trim()
+                            : 'sin factura';
+                          const dayOneTitle = dayOne.scenario === 'primera-factura'
+                            ? `Día 1 = fecha de la primera factura del paquete${dayOne.invoiceNumber ? ` (${dayOne.invoiceNumber}${dayOneIsCurrent ? ', vigente' : ', anulada'})` : ''}`
+                            : 'Día 1 = día en que el paquete entró a consolidación (nunca se facturó)';
 
                           let formattedStartConsolDate = '';
                           let daysInConsolidation = 0;
@@ -1252,10 +1145,12 @@ export function ConsolidationCustomerCard({
                                 <Badge
                                   variant="outline"
                                   className="text-[9px] h-4.5 px-1.5 gap-0.5 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-900/50 shrink-0 hover:bg-blue-50"
-                                  title="Fecha en que se facturó / inició consolidación"
+                                  title={dayOneTitle}
+                                  data-testid="day-one-badge"
                                 >
                                   <Calendar className="h-2.5 w-2.5 text-blue-500/70" aria-hidden />
                                   Día 1: {formattedStartConsolDate}
+                                  <span className="opacity-70 font-normal">· {dayOneSource}</span>
                                 </Badge>
                               )}
 

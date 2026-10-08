@@ -17,6 +17,7 @@ import {
   getCountFromServer,
   runTransaction
 } from 'firebase/firestore';
+import { confirmedPreAlertLink } from '@/lib/nova/prealert-link';
 import { db } from '@/lib/firebase/config';
 import { logAction, getManifestMoveHistory, type ManifestMoveEvent } from '../audit-service';
 import { removeManyFromConsolidation } from '../manifest-consolidation-service';
@@ -450,6 +451,112 @@ export function checkPreAlertIntegrity(
   return conflicts;
 }
 
+/** The fields the Nova auto-save writes for one row (pure — same computation it always did). */
+export function buildAutosavePackagePayload(
+  row: ManifestRow,
+  idx: number,
+  trackingId: string,
+  targetManifestNumber: string,
+  options: Parameters<typeof upsertManifestPackageOverrides>[2],
+  tc: number,
+): Record<string, unknown> {
+  const adjustment = options?.priceAdjustments?.[trackingId]
+    ?? options?.priceAdjustments?.[idx]
+    ?? row.ajustePrecio;
+
+  const priceOverride = (options?.priceOverrides as any)?.[trackingId] ?? options?.priceOverrides?.[idx];
+  const effectivePrice = priceOverride?.precio
+    ?? options?.computedPrices?.[idx]
+    ?? row.precio;
+  const effectivePesoRedondeo = priceOverride?.pesoRedondeo
+    ?? row.pesoRedondeo
+    ?? Math.ceil(row.peso);
+  const rawSlCode = options?.slCodeOverrides?.[idx]?.slCode
+    ?? options?.matchOverrides?.[idx]?.slCode
+    ?? (row.slCode || '');
+  const effectiveSlCode = (rawSlCode && rawSlCode.toUpperCase().startsWith('SL')) ? rawSlCode : '';
+  const effectiveCustomerName = options?.matchOverrides?.[idx]?.fullName
+    ?? (row.nombreCliente || row.nombre);
+  const effectiveRuta = options?.slCodeOverrides?.[idx]?.ruta
+    ?? options?.matchOverrides?.[idx]?.ruta
+    ?? (row.ruta || '');
+  const contact = options?.customerContacts?.get(effectiveSlCode);
+
+  return {
+    // Tracking variants — searchable index for the public scanner.
+    // See `client/lib/utils/tracking-variants.ts` for format coverage.
+    trackingVariants: buildTrackingVariants(trackingId),
+    // Identity + billing + route (everything the operator can mutate in the table)
+    slCode:         effectiveSlCode,
+    userId:         effectiveSlCode,
+    customerId:     effectiveSlCode,
+    customerName:   effectiveCustomerName,
+    customerEmail:  contact?.email || '',
+    customerDni:    contact?.dni || '',
+    ruta:     effectiveRuta,
+    description:    row.descripcion || '',
+    descripcion:    row.descripcion || '',
+    weight:         row.peso,
+    cost:     effectivePrice,
+    price:    effectivePrice,
+    ...(tc > 0 ? { costCRC: Math.round(effectivePrice * tc), exchangeRate: tc } : {}),
+    // Consolidation + permit flags — operator-controlled
+    isConsolidated: row.consolidacion || false,
+    consolidacion:  row.consolidacion || false,
+    requiresPermit: row.permisos || false,
+    permisos:       row.permisos || false,
+    // Manifest reassignment support — keep all 4 manifest fields atomically in sync
+    manifestNumber:  targetManifestNumber,
+    manifestId:      targetManifestNumber,
+    manifiesto:      targetManifestNumber,
+    updatedManifest: targetManifestNumber,
+    // Round-trip fidelity fields (so reloads see the full row shape)
+    pesoRedondeo:       effectivePesoRedondeo ?? row.pesoRedondeo ?? null,
+    matchSource:        row.matchSource ?? '',
+    matchScore:         Number.isFinite(row.matchScore) ? row.matchScore : (effectiveSlCode ? 1 : 0),
+    precioSinPermiso:   Number.isFinite(row.precioSinPermiso) ? row.precioSinPermiso : effectivePrice,
+    precioConPermiso:   Number.isFinite(row.precioConPermiso) ? row.precioConPermiso : effectivePrice,
+    diferenciaRedondeo: row.diferenciaRedondeo ?? Math.max(0, Math.round(((row.pesoRedondeo ?? Math.ceil(row.peso)) - row.peso) * 1000) / 1000),
+    pesoConsolidacion:  row.pesoConsolidacion ?? (row.consolidacion ? (row.pesoRedondeo ?? Math.ceil(row.peso)) : 0),
+    ...(adjustment ? { ajustePrecio: adjustment } : {}),
+    ...(adjustment ? { ajustePrecio: adjustment } : {}),
+  };
+}
+
+/**
+ * Fields whose value differs from the baseline (JSON compare). Contact fields (email / cédula) follow the
+ * customer: they count only when the customer (slCode) itself changed — contacts loading late must not
+ * rewrite every row.
+ */
+export function changedAutosaveFields(prev: Record<string, unknown> | undefined, next: Record<string, unknown>): string[] {
+  if (!prev) return [];   // no baseline for this row → the admin did not edit it in this tab
+  const keys = Object.keys(next).filter((k) => JSON.stringify(prev[k]) !== JSON.stringify(next[k]));
+  const slChanged = keys.includes('slCode');
+  return keys.filter((k) => slChanged || (k !== 'customerEmail' && k !== 'customerDni'));
+}
+
+/** Baseline for the auto-save: what each row looks like now (tracking → payload). */
+export function snapshotAutosavePayloads(
+  rows: ManifestRow[],
+  manifestNumber: string,
+  options?: Parameters<typeof upsertManifestPackageOverrides>[2],
+): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>();
+  const tc = options?.exchangeRate ?? 0;
+  // Same row set and numbering as upsertManifestPackageOverrides (pre-alert conflicts excluded there too).
+  const conflicting = new Set<string>();
+  if (!options?.bypassIntegrity && options?.dataOriginPolicy?.origin !== 'firestore' && options?.preAlertsMap) {
+    checkPreAlertIntegrity(rows, options.preAlertsMap, { slCodeOverrides: options.slCodeOverrides, matchOverrides: options.matchOverrides })
+      .forEach((c) => { if (c.tracking) conflicting.add(c.tracking.toUpperCase().trim()); });
+  }
+  rows.filter((r) => !!r.tracking).filter((r) => !conflicting.has(r.tracking.toUpperCase().trim())).forEach((row, idx) => {
+    const trackingId = row.tracking.toUpperCase();
+    const target = ((options?.rowManifestOverrides?.[trackingId] ?? manifestNumber) || row.manifiesto || '').trim();
+    out.set(trackingId, buildAutosavePackagePayload(row, idx, trackingId, target, options, tc));
+  });
+  return out;
+}
+
 export async function upsertManifestPackageOverrides(
   rows: ManifestRow[],
   manifestNumber: string,
@@ -466,9 +573,12 @@ export async function upsertManifestPackageOverrides(
     preAlertsMap?: Map<string, any>;
     dataOriginPolicy?: { origin: string; [key: string]: any };
     bypassIntegrity?: boolean;
+    /** F-AUTOSAVE-SAFE: tracking → payload last written/loaded by this tab. Only changed fields are written. */
+    baseline?: Map<string, Record<string, unknown>>;
   },
-): Promise<{ updated: number; skippedNew: number; errors: number }> {
-  const result = { updated: 0, skippedNew: 0, errors: 0 };
+): Promise<{ updated: number; skippedNew: number; errors: number; written: Map<string, Record<string, unknown>> }> {
+  const written = new Map<string, Record<string, unknown>>();
+  const result = { updated: 0, skippedNew: 0, errors: 0, written };
   if (!manifestNumber || !rows.length) return result;
 
   let conflictingTrackings = new Set<string>();
@@ -530,6 +640,7 @@ export async function upsertManifestPackageOverrides(
     let batchUpdated = 0;
     let batchSkipped = 0;
     const reclaimedTrackings: string[] = [];
+    const writtenPayloads = new Map<string, Record<string, unknown>>();
 
     for (const { row, idx } of chunk) {
       const trackingId = row.tracking.toUpperCase();
@@ -592,68 +703,26 @@ export async function upsertManifestPackageOverrides(
         reclaimedTrackings.push(trackingId);
       }
 
-      const adjustment = options?.priceAdjustments?.[trackingId]
-        ?? options?.priceAdjustments?.[idx]
-        ?? row.ajustePrecio;
+      const data = buildAutosavePackagePayload(row, idx, trackingId, targetManifestNumber, options, tc);
 
-      const priceOverride = (options?.priceOverrides as any)?.[trackingId] ?? options?.priceOverrides?.[idx];
-      const effectivePrice = priceOverride?.precio
-        ?? options?.computedPrices?.[idx]
-        ?? row.precio;
-      const effectivePesoRedondeo = priceOverride?.pesoRedondeo
-        ?? row.pesoRedondeo
-        ?? Math.ceil(row.peso);
-      const rawSlCode = options?.slCodeOverrides?.[idx]?.slCode
-        ?? options?.matchOverrides?.[idx]?.slCode
-        ?? (row.slCode || '');
-      const effectiveSlCode = (rawSlCode && rawSlCode.toUpperCase().startsWith('SL')) ? rawSlCode : '';
-      const effectiveCustomerName = options?.matchOverrides?.[idx]?.fullName
-        ?? (row.nombreCliente || row.nombre);
-      const effectiveRuta = options?.slCodeOverrides?.[idx]?.ruta
-        ?? options?.matchOverrides?.[idx]?.ruta
-        ?? (row.ruta || '');
-      const contact = options?.customerContacts?.get(effectiveSlCode);
+      // F-AUTOSAVE-SAFE (2026-09-26): with a baseline, write ONLY the fields the admin changed in this tab since
+      // the baseline — never untouched rows, never untouched fields. Without it: the full row (legacy).
+      let toWrite: Record<string, unknown> = data;
+      if (options?.baseline) {
+        const changed = changedAutosaveFields(options.baseline.get(trackingId), data);
+        if (changed.length === 0) {
+          batchSkipped += 1;
+          continue;
+        }
+        toWrite = Object.fromEntries(changed.map((k) => [k, data[k]]));
+      }
+      writtenPayloads.set(trackingId, data);
 
       const docRef = doc(packagesRef, trackingId);
       batch.set(
         docRef,
         {
-          // Tracking variants — searchable index for the public scanner.
-          // See `client/lib/utils/tracking-variants.ts` for format coverage.
-          trackingVariants: buildTrackingVariants(trackingId),
-          // Identity + billing + route (everything the operator can mutate in the table)
-          slCode:         effectiveSlCode,
-          userId:         effectiveSlCode,
-          customerId:     effectiveSlCode,
-          customerName:   effectiveCustomerName,
-          customerEmail:  contact?.email || '',
-          customerDni:    contact?.dni || '',
-          ruta:           effectiveRuta,
-          description:    row.descripcion || '',
-          descripcion:    row.descripcion || '',
-          weight:         row.peso,
-          cost:           effectivePrice,
-          price:          effectivePrice,
-          ...(tc > 0 ? { costCRC: Math.round(effectivePrice * tc), exchangeRate: tc } : {}),
-          // Consolidation + permit flags — operator-controlled
-          isConsolidated: row.consolidacion || false,
-          consolidacion:  row.consolidacion || false,
-          requiresPermit: row.permisos || false,
-          permisos:       row.permisos || false,
-          // Manifest reassignment support — keep all 4 manifest fields atomically in sync
-          manifestNumber:  targetManifestNumber,
-          manifestId:      targetManifestNumber,
-          manifiesto:      targetManifestNumber,
-          updatedManifest: targetManifestNumber,
-          // Round-trip fidelity fields (so reloads see the full row shape)
-          pesoRedondeo:       effectivePesoRedondeo ?? row.pesoRedondeo ?? null,
-          matchSource:        row.matchSource ?? '',
-          matchScore:         Number.isFinite(row.matchScore) ? row.matchScore : (effectiveSlCode ? 1 : 0),
-          precioSinPermiso:   Number.isFinite(row.precioSinPermiso) ? row.precioSinPermiso : effectivePrice,
-          precioConPermiso:   Number.isFinite(row.precioConPermiso) ? row.precioConPermiso : effectivePrice,
-          diferenciaRedondeo: row.diferenciaRedondeo ?? Math.max(0, Math.round(((row.pesoRedondeo ?? Math.ceil(row.peso)) - row.peso) * 1000) / 1000),
-          pesoConsolidacion:  row.pesoConsolidacion ?? (row.consolidacion ? (row.pesoRedondeo ?? Math.ceil(row.peso)) : 0),
-          ...(adjustment ? { ajustePrecio: adjustment } : {}),
+          ...toWrite,
           // Metadata
           source:    'nova_autosave',
           updatedAt: serverTimestamp(),
@@ -667,6 +736,7 @@ export async function upsertManifestPackageOverrides(
       await batch.commit();
       result.updated += batchUpdated;
       result.skippedNew += batchSkipped;
+      writtenPayloads.forEach((v, k) => written.set(k, v));
       if (reclaimedTrackings.length > 0) {
         try {
           await removeManyFromConsolidation(reclaimedTrackings);
@@ -768,7 +838,7 @@ export async function ingestManifestToPackages(
   for (const chunk of chunks) {
     // Pre-check which trackingIds already exist so we can preserve their
     // status/statusHistory and protect manifestNumber updates (e.g. transitory consolidation).
-    const existingPackagesMap = new Map<string, { manifestNumber?: string; status?: string; isPaid?: boolean; paymentStatus?: string; invoiceReady?: boolean; invoiceId?: string | null }>();
+    const existingPackagesMap = new Map<string, { manifestNumber?: string; status?: string; isPaid?: boolean; paymentStatus?: string; invoiceReady?: boolean; invoiceId?: string | null; preAlertId?: string; preAlertSlCode?: string }>();
     await Promise.all(
       chunk
         .filter(({ row }) => Boolean(row.tracking))
@@ -785,6 +855,8 @@ export async function ingestManifestToPackages(
                   paymentStatus: data?.paymentStatus,
                   invoiceReady: data?.invoiceReady,
                   invoiceId: data?.invoiceId,
+                  preAlertId: data?.preAlertId,
+                  preAlertSlCode: data?.preAlertSlCode,
                 });
               }
             })
@@ -1017,6 +1089,18 @@ export async function ingestManifestToPackages(
         coreFields.pesoConsolidacion = ripPesoConsolidacion;
         coreFields.matchSource = ripMatchSource;
         coreFields.matchScore = ripMatchScore;
+      }
+
+      // F2.1: the CONFIRMED pre-alert of this package (client/lib/nova/prealert-link.ts). The invoice
+      // sync hands it to SP2 by id — no tracking search there. Removed when it no longer applies
+      // (e.g. the admin gave the package to another customer), so a stale link never travels.
+      const preAlertLink = confirmedPreAlertLink(row, effectiveSlCode);
+      if (preAlertLink) {
+        coreFields.preAlertId = preAlertLink.preAlertId;
+        coreFields.preAlertSlCode = preAlertLink.preAlertSlCode;
+      } else if (isExisting && (existingPkg?.preAlertId || existingPkg?.preAlertSlCode)) {
+        coreFields.preAlertId = deleteField();
+        coreFields.preAlertSlCode = deleteField();
       }
 
       if (isExisting) {

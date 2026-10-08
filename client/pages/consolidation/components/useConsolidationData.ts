@@ -33,6 +33,7 @@ import type {
   ManifestGroup,
 } from './types';
 import { normalizeManifest, TRANSITORIA_MANIFEST, isPackageTransitoria } from './normalize-manifest';
+import { firstInvoiceFromInvoices } from '@/lib/consolidation/day-one';
 
 const CUSTOMERS_COLLECTION = 'customers';
 const PACKAGES_COLLECTION  = 'packages';
@@ -113,6 +114,9 @@ export function useConsolidationData(): UseConsolidationDataResult {
         annulledAt:       data.annulledAt || '',
         firstConsolidatedAt: data.firstConsolidatedAt || '',
         statusHistory:    data.statusHistory || [],
+        // "Día 1" (2026-09-28): the package's FIRST invoice, stored once by the SP1 server.
+        firstInvoiceNumber: data.firstInvoiceNumber || '',
+        firstInvoiceDate:   data.firstInvoiceDate || '',
       };
     };
 
@@ -384,6 +388,9 @@ export function useConsolidationData(): UseConsolidationDataResult {
       createdAt:       data.createdAt || '',
       updatedAt:       data.updatedAt || '',
       invoiceItems:    data.invoiceItems || [],
+      // Only for the "Día 1" rule (first invoice of each tracking): emission date and the legacy items list.
+      invoiceDate:     data.invoiceDate || '',
+      items:           Array.isArray(data.items) ? data.items : [],
       // Soft-delete support
       isDeleted:       data.isDeleted === true,
       deletedAt:       data.deletedAt || null,
@@ -628,7 +635,11 @@ export function useConsolidationData(): UseConsolidationDataResult {
         }
 
         // ── Enrich packages with price + invoice data ───────────────────────
-        const enrichedPkgs: ConsolidationPackage[] = pkgs.map(pkg => {
+        const enrichedPkgs: ConsolidationPackage[] = pkgs.map(p => (p.firstInvoiceDate ? p : {
+          // "Día 1" = FIRST invoice: the customer's SP1 invoices (any status, incl. annulled) that list this tracking.
+          // Only when the package does not carry its stored firstInvoice* yet (@/lib/consolidation/day-one).
+          ...p, invoiceHistoryFirst: firstInvoiceFromInvoices(p.trackingNumber, allInvs) || undefined,
+        })).map(pkg => {
           const tn    = (pkg.trackingNumber || '').toUpperCase();
           const entry = trackingInvMap.get(tn);
           if (!entry) return pkg;

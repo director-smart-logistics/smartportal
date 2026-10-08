@@ -46,6 +46,8 @@ import {
 } from 'firebase/firestore';
 import { db, dbSP2 } from '@/lib/firebase/config';
 import { canonicalizeTracking, type CanonicalTrackingResult } from '@/lib/utils/tracking-canonicalizer';
+import { preAlertMatchKeys, repeatedTrackingIndices } from './prealert-match-keys';
+export { preAlertMatchKeys, repeatedTrackingIndices };
 
 /**
  * Resolved pre-alert matching entity.
@@ -85,29 +87,91 @@ export interface PreAlertInfo {
   syncedAt?: any;
   /** Underlying SP2 document ID */
   sp2PreAlertId?: string;
+  /**
+   * N2: the tracking is pre-alerted by 2+ different accounts. found is false (no P, no automatic
+   * assignment) and these are the slCodes in conflict, so the operator can decide.
+   */
+  ambiguousSlCodes?: string[];
+  /**
+   * Saved with the manifest: the tracking appeared 2+ times in it when the admin saved (RED "P").
+   * The packages collection keeps one package per tracking, so a re-opened manifest can no longer
+   * see the repetition — this flag keeps the RED "P" faithful to what was saved.
+   */
+  repeatedInManifest?: boolean;
 }
 
 /**
- * Returns the authoritative Firestore database instance for pre-alerts (SP2 SSOT).
- * Falls back to local db if dbSP2 is not initialized.
+ * The only source of pre-alerts: SP2 `pre_alerts` (Phase 1). There is no fallback to SP1's
+ * database — its `pre_alerts` copy produced ghost matches (N3).
  *
  * @returns {Firestore} The Firestore instance pointing to SP2 pre-alerts
  */
 export function getPreAlertsDatabase(): Firestore {
-  return dbSP2 || db;
+  return dbSP2;
+}
+
+/**
+ * Owner of a resolved pre-alert: only the slCode stored on the pre-alert (N1). Never derived
+ * from the document id or anything else. null when not found.
+ */
+export function preAlertInfoOwner(info: PreAlertInfo | undefined | null): string | null {
+  if (!info?.found || !info.slCode) return null;
+  return storedPreAlertSlCode({ slCode: info.slCode });
+}
+
+/** What a live result says about one tracking: one owner, several accounts, or nothing. */
+function livePreAlertSignature(info: PreAlertInfo | undefined): string {
+  if (info?.found) return `P:${preAlertInfoOwner(info) ?? ''}`;
+  if (info?.ambiguousSlCodes?.length) return `S:${[...info.ambiguousSlCodes].sort().join(',')}`;
+  return '-';
+}
+
+/**
+ * F1.3 — compares a new live result with the previous one (and updates `lastSeen`):
+ * - changed:   normalized trackings whose pre-alert result changed (the first result: all);
+ * - withdrawn: trackings that HAD one owner and no longer do (cancelled, changed, now several
+ *              accounts) — the admin must be told; nothing is reverted automatically.
+ */
+export function diffLivePreAlerts(
+  lastSeen: Map<string, string>,
+  map: Map<string, PreAlertInfo>,
+): { changed: Set<string>; withdrawn: string[] } {
+  const changed = new Set<string>();
+  const withdrawn: string[] = [];
+  map.forEach((info, t) => {
+    const key = t.toUpperCase().trim();
+    const sig = livePreAlertSignature(info);
+    const before = lastSeen.get(key);
+    if (before !== sig) {
+      changed.add(key);
+      if (before?.startsWith('P:') && !sig.startsWith('P:')) withdrawn.push(t);
+    }
+    lastSeen.set(key, sig);
+  });
+  return { changed, withdrawn };
 }
 
 /**
  * Validates whether a Firestore pre-alert document is active, non-terminal,
- * unconsumed by previous manifests/invoices, not delivered, and within the valid temporal window (<= 60 days).
+ * unconsumed by previous manifests/invoices, not delivered, and within the temporal window (PREALERT_MATCH_WINDOW_DAYS).
  *
  * @param {any} data The raw Firestore document data
  * @param {string} [currentManifestNumber] Optional manifest number currently being edited/re-verified
  * @returns {boolean} True if the pre-alert is eligible to match incoming manifests
  */
+/**
+ * How long a pre-alert can match a manifest row (decision 2026-09-25: 90 days, same in SP2).
+ * Real gap pre-alert → manifest (audit 2026-09-24): median 12 days, p99 42, max 86.
+ */
+export const PREALERT_MATCH_WINDOW_DAYS = 90;
+
 export function isEligiblePreAlert(data: any, currentManifestNumber?: string): boolean {
   if (!data) return false;
   if (data.active === false) return false;
+
+  // N6: SP2 flags a pre-alert it could not tie to a valid account (invalid slCode, slCode of
+  // another account...). Such a pre-alert must never decide Nova's customer.
+  if (data.needsReview === true) return false;
 
   // 1. Invoices and Payments are strictly immutable / terminal
   if (
@@ -152,26 +216,57 @@ export function isEligiblePreAlert(data: any, currentManifestNumber?: string): b
   }
 
   // If status is 'manifested' or 'processed', only allow if currentManifestNumber matches
+  // N4: a consumed pre-alert (manifested/processed) only counts again inside ITS OWN manifest
+  // (re-verifying that manifest). Before, any manifest number was enough: re-verifying
+  // manifest B reassigned a pre-alert already used in manifest A.
   if (status === 'manifested' || status === 'processed') {
-    if (!currentManifestNumber) return false;
+    const ownManifest = String(data.manifestNumber || data.manifestId || '').trim();
+    if (!currentManifestNumber || !ownManifest || ownManifest !== String(currentManifestNumber).trim()) return false;
   }
 
-  // 5. Temporal window: discard declarations older than 60 days
+  // 5. Temporal window (N5): only pre-alerts declared in the last PREALERT_MATCH_WINDOW_DAYS.
+  //    A pre-alert WITHOUT a readable date is not eligible: before, it matched forever and a
+  //    recycled carrier number could be assigned to a customer from seasons ago.
   const dateField = data.preAlertDate || data.createdAt || data.submittedAt;
-  if (dateField) {
-    let dateObj: Date | null = null;
-    if (typeof dateField.toDate === 'function') {
-      dateObj = dateField.toDate();
-    } else if (typeof dateField === 'string' || typeof dateField === 'number') {
-      dateObj = new Date(dateField);
-    }
-    if (dateObj && !isNaN(dateObj.getTime())) {
-      const ageDays = (Date.now() - dateObj.getTime()) / (1000 * 60 * 60 * 24);
-      if (ageDays > 60) return false;
-    }
+  let dateObj: Date | null = null;
+  if (dateField && typeof dateField.toDate === 'function') {
+    dateObj = dateField.toDate();
+  } else if (typeof dateField === 'string' || typeof dateField === 'number') {
+    dateObj = new Date(dateField);
   }
+  if (!dateObj || isNaN(dateObj.getTime())) return false;
+  const ageDays = (Date.now() - dateObj.getTime()) / (1000 * 60 * 60 * 24);
+  if (ageDays > PREALERT_MATCH_WINDOW_DAYS) return false;
 
   return true;
+}
+
+/**
+ * Owner of a pre-alert FOR MATCHING (Nova's P badge and automatic customer assignment):
+ * ONLY the slCode stored on the pre-alert itself ('SL' + digits; digits alone are accepted as
+ * 'SL' + digits). Never derived from userId or from the document id: users/2429 is SL1854 and
+ * SL2429 is another person. No valid stored slCode → the pre-alert cannot assign a customer.
+ */
+export function storedPreAlertSlCode(data: any): string | null {
+  const raw = String(data?.slCode ?? '').toUpperCase().replace(/\s+/g, '');
+  const sl = /^\d+$/.test(raw) ? `SL${raw}` : raw;
+  return /^SL\d+$/.test(sl) ? sl : null;
+}
+
+/**
+ * N2 — the pre-alerts matching ONE tracking must belong to ONE account.
+ * - 2+ different stored slCodes → no document, and those slCodes (ambiguous: nobody is guessed).
+ * - one slCode (possibly several documents of the same account) → the one with a customer name
+ *   first, as before.
+ * - no stored slCode at all → the first candidate; the caller rejects it (N1: no owner, no P).
+ */
+export function pickSingleOwner(candidates: any[]): { doc: any | null; ambiguousSlCodes?: string[] } {
+  const owned = candidates.filter((d) => storedPreAlertSlCode(d));
+  const owners = [...new Set(owned.map((d) => storedPreAlertSlCode(d) as string))].sort();
+  if (owners.length > 1) return { doc: null, ambiguousSlCodes: owners };
+  if (owned.length === 0) return { doc: candidates[0] ?? null };
+  const byName = [...owned].sort((a, b) => (b.displayName ? 1 : 0) - (a.displayName ? 1 : 0));
+  return { doc: byName[0] };
 }
 
 /**
@@ -363,227 +458,120 @@ export async function resolveCustomerFullProfile(
   return info;
 }
 
+/** Fields of `pre_alerts` that hold the tracking. Every path (load, live, button) queries all three. */
+export const PREALERT_TRACKING_FIELDS = ['tracking', 'canonicalTracking', 'trackingNumber'] as const;
+
+/** Whether a pre-alert document is stored under one of the keys of this manifest tracking. */
+export function preAlertDocMatches(docData: any, analysis: CanonicalTrackingResult, keys = preAlertMatchKeys(analysis)): boolean {
+  const fields = PREALERT_TRACKING_FIELDS.map((f) => String(docData?.[f] || '').toUpperCase().trim());
+  if (fields.some((v) => v && keys.has(v))) return true;
+  const docId = String(docData?._id || '').toUpperCase().trim();
+  return !!analysis.canonicalTracking && docId.startsWith(`${analysis.canonicalTracking.toUpperCase()}_`);
+}
+
+function preAlertInfoFromDoc(raw: string, matchedDoc: any, slCode: string): PreAlertInfo {
+  return {
+    found: true,
+    tracking: raw,
+    canonicalTracking: matchedDoc.canonicalTracking || matchedDoc.tracking || undefined,
+    slCode,
+    clientName: matchedDoc.displayName || matchedDoc.fullName || matchedDoc.name || undefined,
+    userId: matchedDoc.userId ?? undefined,
+    email: matchedDoc.email ?? undefined,
+    phone: matchedDoc.phone ?? undefined,
+    status: matchedDoc.status ?? undefined,
+    description: matchedDoc.description || matchedDoc.notes || matchedDoc.itemDescription || matchedDoc.declaracion || undefined,
+    declaredValue: typeof matchedDoc.declaredValue === 'number' ? matchedDoc.declaredValue : (typeof matchedDoc.value === 'number' ? matchedDoc.value : (matchedDoc.monto ? Number(matchedDoc.monto) : undefined)),
+    courier: matchedDoc.courier || matchedDoc.carrier || undefined,
+    hasInvoice: !!(matchedDoc.invoiceUrl || matchedDoc.hasInvoice || matchedDoc.invoiceUploaded || matchedDoc.invoiceName),
+    invoiceUrl: matchedDoc.invoiceUrl || undefined,
+    preAlertCreatedAt: matchedDoc.preAlertDate || matchedDoc.createdAt || undefined,
+    syncedAt: matchedDoc.updatedAt || undefined,
+    sp2PreAlertId: matchedDoc._id ?? undefined,
+  };
+}
+
 /**
- * Batch resolves pre-alerts for an array of tracking numbers in real-time.
- * Uses canonical carrier analysis and deterministic matching to prevent ghost collisions.
+ * THE match rule (Phase 1, F1.2), shared by the manifest load, the live listener and the
+ * "Corregir por Pre-Alertas" button so they can never disagree:
+ * - a document counts only if it is eligible (isEligiblePreAlert, with the current manifest) and
+ *   has a stored owner (slCode);
+ * - candidates come from ALL keys at once (exact + reverse variants): owner A exact and owner B
+ *   by the end of the barcode is "several matches", never A silently;
+ * - 2+ owners → not found + ambiguousSlCodes; one owner → that pre-alert.
+ */
+export function resolvePreAlertMatches(
+  analyses: Map<string, CanonicalTrackingResult>,
+  docs: Iterable<any>,
+  currentManifestNumber?: string,
+): Map<string, PreAlertInfo> {
+  const owned = [...docs].filter((d) => isEligiblePreAlert(d, currentManifestNumber) && storedPreAlertSlCode(d));
+  const result = new Map<string, PreAlertInfo>();
+  for (const [raw, analysis] of analyses.entries()) {
+    const keys = preAlertMatchKeys(analysis);
+    const candidates = owned.filter((d) => preAlertDocMatches(d, analysis, keys));
+    if (candidates.length === 0) {
+      result.set(raw, { found: false, tracking: raw });
+      continue;
+    }
+    const { doc, ambiguousSlCodes } = pickSingleOwner(candidates);
+    if (ambiguousSlCodes) {
+      console.warn(`[pre-alerts] ${raw} is pre-alerted by several accounts (${ambiguousSlCodes.join(', ')}). No automatic assignment.`);
+      result.set(raw, { found: false, tracking: raw, ambiguousSlCodes });
+      continue;
+    }
+    result.set(raw, preAlertInfoFromDoc(raw, doc, storedPreAlertSlCode(doc) as string));
+  }
+  return result;
+}
+
+/** Canonical analysis of each manifest tracking + every key to query. */
+function analyzeTrackings(trackingNumbers: string[]): { analyses: Map<string, CanonicalTrackingResult>; tokens: string[] } {
+  const analyses = new Map<string, CanonicalTrackingResult>();
+  const tokens = new Set<string>();
+  for (const raw of trackingNumbers) {
+    const analysis = canonicalizeTracking(raw);
+    if (!analysis.normalized) continue;
+    analyses.set(raw, analysis);
+    preAlertMatchKeys(analysis).forEach((k) => tokens.add(k));
+  }
+  return { analyses, tokens: [...tokens] };
+}
+
+const PREALERT_QUERY_CHUNK = 10;
+
+/**
+ * Resolves pre-alerts for the manifest trackings (one read of SP2 `pre_alerts`).
+ * Same rule as the live listener: resolvePreAlertMatches.
  *
  * @param {string[]} trackingNumbers Array of tracking numbers to resolve
  * @returns {Promise<Map<string, PreAlertInfo>>} Map from queried tracking to resolved PreAlertInfo
  */
 export async function batchResolvePreAlerts(
   trackingNumbers: string[],
-  currentManifestNumber?: string
+  currentManifestNumber?: string,
+  /** A query failed: the result may be incomplete — the caller must say so (E6). */
+  onError?: (err: unknown) => void,
 ): Promise<Map<string, PreAlertInfo>> {
-  const result = new Map<string, PreAlertInfo>();
-  if (!trackingNumbers || trackingNumbers.length === 0) return result;
+  if (!trackingNumbers || trackingNumbers.length === 0) return new Map();
+  const { analyses, tokens } = analyzeTrackings(trackingNumbers);
+  if (analyses.size === 0) return new Map();
 
-  const targetDb = getPreAlertsDatabase();
-  const preAlertsRef = collection(targetDb, 'pre_alerts');
-  const CHUNK_SIZE = 10;
-
-  // 1. Analyze and canonicalize all input trackings
-  const analyses = new Map<string, CanonicalTrackingResult>();
-  const searchTokens = new Set<string>();
-
-  for (const raw of trackingNumbers) {
-    const analysis = canonicalizeTracking(raw);
-    if (!analysis.normalized) continue;
-    analyses.set(raw, analysis);
-    analysis.trackingVariants.forEach((t) => searchTokens.add(t));
-    if (analysis.canonicalTracking) searchTokens.add(analysis.canonicalTracking);
-  }
-
-  if (analyses.size === 0) return result;
-
-  const tokensList = Array.from(searchTokens);
-  const matchedDocsMap = new Map<string, any>();
-
-  // 2. Fetch pre-alerts matching canonical tokens
-  const queryPromises: Promise<void>[] = [];
-
-  for (let i = 0; i < tokensList.length; i += CHUNK_SIZE) {
-    const chunk = tokensList.slice(i, i + CHUNK_SIZE);
-
-    // Search by 'tracking'
-    queryPromises.push(
-      getDocs(query(preAlertsRef, where('tracking', 'in', chunk)))
-        .then((snap) => {
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            if (isEligiblePreAlert(data, currentManifestNumber)) {
-              matchedDocsMap.set(d.id, { ...data, _id: d.id });
-            }
-          });
-        })
-        .catch((err) => {
-          console.warn('[batchResolvePreAlerts] tracking in query failed:', err);
-        })
-    );
-
-    // Search by 'canonicalTracking'
-    queryPromises.push(
-      getDocs(query(preAlertsRef, where('canonicalTracking', 'in', chunk)))
-        .then((snap) => {
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            if (isEligiblePreAlert(data, currentManifestNumber)) {
-              matchedDocsMap.set(d.id, { ...data, _id: d.id });
-            }
-          });
-        })
-        .catch((err) => {
-          console.warn('[batchResolvePreAlerts] canonicalTracking in query failed:', err);
-        })
-    );
-
-    // Search by legacy 'trackingNumber'
-    queryPromises.push(
-      getDocs(query(preAlertsRef, where('trackingNumber', 'in', chunk)))
-        .then((snap) => {
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            if (isEligiblePreAlert(data, currentManifestNumber)) {
-              matchedDocsMap.set(d.id, { ...data, _id: d.id });
-            }
-          });
-        })
-        .catch((err) => {
-          console.warn('[batchResolvePreAlerts] trackingNumber in query failed:', err);
-        })
-    );
-  }
-
-  await Promise.all(queryPromises);
-
-  // Resilient fallback: if targetDb was dbSP2 and returned 0 matches, query db
-  if (matchedDocsMap.size === 0 && targetDb !== db) {
-    const localRef = collection(db, 'pre_alerts');
-    const fallbackPromises: Promise<void>[] = [];
-    for (let i = 0; i < tokensList.length; i += CHUNK_SIZE) {
-      const chunk = tokensList.slice(i, i + CHUNK_SIZE);
-      fallbackPromises.push(
-        getDocs(query(localRef, where('tracking', 'in', chunk)))
-          .then((snap) => {
-            snap.docs.forEach((d) => {
-              const data = d.data();
-              if (isEligiblePreAlert(data, currentManifestNumber)) {
-                matchedDocsMap.set(d.id, { ...data, _id: d.id });
-              }
-            });
-          })
-          .catch(() => {}),
-        getDocs(query(localRef, where('canonicalTracking', 'in', chunk)))
-          .then((snap) => {
-            snap.docs.forEach((d) => {
-              const data = d.data();
-              if (isEligiblePreAlert(data, currentManifestNumber)) {
-                matchedDocsMap.set(d.id, { ...data, _id: d.id });
-              }
-            });
-          })
-          .catch(() => {}),
-        getDocs(query(localRef, where('trackingNumber', 'in', chunk)))
-          .then((snap) => {
-            snap.docs.forEach((d) => {
-              const data = d.data();
-              if (isEligiblePreAlert(data, currentManifestNumber)) {
-                matchedDocsMap.set(d.id, { ...data, _id: d.id });
-              }
-            });
-          })
-          .catch(() => {})
+  const preAlertsRef = collection(getPreAlertsDatabase(), 'pre_alerts');
+  const docsById = new Map<string, any>();
+  const queries: Promise<void>[] = [];
+  for (let i = 0; i < tokens.length; i += PREALERT_QUERY_CHUNK) {
+    const chunk = tokens.slice(i, i + PREALERT_QUERY_CHUNK);
+    for (const field of PREALERT_TRACKING_FIELDS) {
+      queries.push(
+        getDocs(query(preAlertsRef, where(field, 'in', chunk)))
+          .then((snap) => { snap.docs.forEach((d) => docsById.set(d.id, { ...d.data(), _id: d.id })); })
+          .catch((err) => { console.warn(`[batchResolvePreAlerts] ${field} in query failed:`, err); onError?.(err); }),
       );
     }
-    await Promise.all(fallbackPromises);
   }
-
-  // 3. Match each input tracking deterministically
-  for (const [raw, analysis] of analyses.entries()) {
-    let matchedDoc: any = null;
-
-    // Direct Exact match on canonicalTracking or composite docId
-    const candidates: any[] = [];
-    for (const docData of matchedDocsMap.values()) {
-      const docT = (docData.tracking || docData.trackingNumber || '').toUpperCase().trim();
-      const docC = (docData.canonicalTracking || '').toUpperCase().trim();
-      const docId = String(docData._id || '').toUpperCase().trim();
-
-      if (
-        docT === analysis.canonicalTracking ||
-        docC === analysis.canonicalTracking ||
-        docT === analysis.normalized ||
-        docId.startsWith(`${analysis.canonicalTracking}_`)
-      ) {
-        candidates.push(docData);
-      }
-    }
-
-    if (candidates.length > 0) {
-      // Prioritize candidate with explicit slCode and full customer profile
-      candidates.sort((a, b) => {
-        const scoreA = (a.slCode ? 2 : 0) + (a.displayName ? 1 : 0);
-        const scoreB = (b.slCode ? 2 : 0) + (b.displayName ? 1 : 0);
-        return scoreB - scoreA;
-      });
-      matchedDoc = candidates[0];
-    }
-
-    // Postal composite fallback (USPS / FedEx only)
-    if (!matchedDoc && analysis.carrierType === 'POSTAL_COMPOSITE') {
-      const postalCandidates: any[] = [];
-      for (const docData of matchedDocsMap.values()) {
-        const docT = (docData.tracking || docData.trackingNumber || '').toUpperCase().trim();
-        const docC = (docData.canonicalTracking || '').toUpperCase().trim();
-        if (analysis.trackingVariants.includes(docT) || analysis.trackingVariants.includes(docC)) {
-          postalCandidates.push(docData);
-        }
-      }
-      if (postalCandidates.length > 0) {
-        postalCandidates.sort((a, b) => {
-          const scoreA = (a.slCode ? 2 : 0) + (a.displayName ? 1 : 0);
-          const scoreB = (b.slCode ? 2 : 0) + (b.displayName ? 1 : 0);
-          return scoreB - scoreA;
-        });
-        matchedDoc = postalCandidates[0];
-      }
-    }
-
-    if (matchedDoc) {
-      const slCode = await resolveCustomerSlCode(targetDb, matchedDoc);
-      // AI-GUARD: A pre-alert without a valid SL code (e.g. unverified/orphan user)
-      // must NEVER hijack a manifest row or overwrite a customer match.
-      if (!slCode || !slCode.startsWith('SL') || slCode.length < 3) {
-        console.warn(
-          `[batchResolvePreAlerts] Ineligible pre-alert: missing valid slCode for tracking ${raw} (userId: ${matchedDoc.userId}). Skipping auto-association.`
-        );
-        result.set(raw, { found: false, tracking: raw });
-      } else {
-        result.set(raw, {
-          found: true,
-          tracking: raw,
-          canonicalTracking: matchedDoc.canonicalTracking || matchedDoc.tracking || undefined,
-          slCode,
-          clientName: matchedDoc.displayName || matchedDoc.fullName || matchedDoc.name || undefined,
-          userId: matchedDoc.userId ?? undefined,
-          email: matchedDoc.email ?? undefined,
-          phone: matchedDoc.phone ?? undefined,
-          status: matchedDoc.status ?? undefined,
-          description: matchedDoc.description || matchedDoc.notes || matchedDoc.itemDescription || matchedDoc.declaracion || undefined,
-          declaredValue: typeof matchedDoc.declaredValue === 'number' ? matchedDoc.declaredValue : (typeof matchedDoc.value === 'number' ? matchedDoc.value : (matchedDoc.monto ? Number(matchedDoc.monto) : undefined)),
-          courier: matchedDoc.courier || matchedDoc.carrier || undefined,
-          hasInvoice: !!(matchedDoc.invoiceUrl || matchedDoc.hasInvoice || matchedDoc.invoiceUploaded || matchedDoc.invoiceName),
-          invoiceUrl: matchedDoc.invoiceUrl || undefined,
-          preAlertCreatedAt: matchedDoc.preAlertDate || matchedDoc.createdAt || undefined,
-          syncedAt: matchedDoc.updatedAt || undefined,
-          sp2PreAlertId: matchedDoc._id ?? undefined,
-        });
-      }
-    } else {
-      result.set(raw, { found: false, tracking: raw });
-    }
-  }
-
-  return result;
+  await Promise.all(queries);
+  return resolvePreAlertMatches(analyses, docsById.values(), currentManifestNumber);
 }
 
 /**
@@ -603,138 +591,59 @@ export async function resolvePreAlert(trackingNumber: string): Promise<PreAlertI
 }
 
 /**
- * Real-time reactive listener for pre-alerts on an array of tracking numbers.
- * Establishes chunked `onSnapshot` listeners to SP2 `pre_alerts`.
+ * Real-time listener on SP2 `pre_alerts` for the manifest trackings. Same rule as
+ * batchResolvePreAlerts (resolvePreAlertMatches, with the current manifest). Each query keeps its
+ * own set of documents, so a pre-alert that stops matching (tracking changed, deleted) is dropped.
  *
  * @param {string[]} trackingNumbers List of trackings to monitor
  * @param {(map: Map<string, PreAlertInfo>) => void} onChange Callback invoked with latest matches
+ * @param {string} currentManifestNumber Manifest being reviewed (a pre-alert consumed by it still counts)
+ * @param {(err: unknown) => void} onError A listener failed (SP2 unreachable, permissions): the
+ *   result may be incomplete — the caller must say so, never stay silent (E6)
  * @returns {() => void} Unsubscribe cleanup function
+ *
+ * F1.3: the first onChange comes only once EVERY query delivered its first snapshot (never a
+ * partial result); afterwards each snapshot calls onChange with the full, current result.
  */
 export function watchPreAlerts(
   trackingNumbers: string[],
-  onChange: (map: Map<string, PreAlertInfo>) => void
+  onChange: (map: Map<string, PreAlertInfo>) => void,
+  currentManifestNumber?: string,
+  onError?: (err: unknown) => void,
 ): () => void {
-  const CHUNK_SIZE = 10;
-  const targetDb = getPreAlertsDatabase();
-  const preAlertsRef = collection(targetDb, 'pre_alerts');
-
-  const analyses = new Map<string, CanonicalTrackingResult>();
-  const searchTokens = new Set<string>();
-
-  for (const raw of trackingNumbers) {
-    const analysis = canonicalizeTracking(raw);
-    if (!analysis.normalized) continue;
-    analyses.set(raw, analysis);
-    analysis.trackingVariants.forEach((t) => searchTokens.add(t));
-    if (analysis.canonicalTracking) searchTokens.add(analysis.canonicalTracking);
-  }
-
+  const { analyses, tokens } = analyzeTrackings(trackingNumbers || []);
   if (analyses.size === 0) {
     onChange(new Map());
     return () => {};
   }
 
-  const tokensList = Array.from(searchTokens);
-  const liveDocsMap = new Map<string, any>();
-  const unsubs: (() => void)[] = [];
-
-  const triggerFlush = () => {
-    const result = new Map<string, PreAlertInfo>();
-
-    for (const [raw, analysis] of analyses.entries()) {
-      let matchedDoc: any = null;
-
-      for (const docData of liveDocsMap.values()) {
-        const docT = (docData.tracking || docData.trackingNumber || '').toUpperCase().trim();
-        const docC = (docData.canonicalTracking || '').toUpperCase().trim();
-        const docId = String(docData._id || '').toUpperCase().trim();
-
-        if (
-          docT === analysis.canonicalTracking ||
-          docC === analysis.canonicalTracking ||
-          docT === analysis.normalized ||
-          docId.startsWith(`${analysis.canonicalTracking}_`)
-        ) {
-          matchedDoc = docData;
-          break;
-        }
-      }
-
-      if (!matchedDoc && analysis.carrierType === 'POSTAL_COMPOSITE') {
-        for (const docData of liveDocsMap.values()) {
-          const docT = (docData.tracking || docData.trackingNumber || '').toUpperCase().trim();
-          const docC = (docData.canonicalTracking || '').toUpperCase().trim();
-          if (analysis.trackingVariants.includes(docT) || analysis.trackingVariants.includes(docC)) {
-            matchedDoc = docData;
-            break;
-          }
-        }
-      }
-
-      if (matchedDoc) {
-        result.set(raw, {
-          found: true,
-          tracking: raw,
-          canonicalTracking: matchedDoc.canonicalTracking || matchedDoc.tracking || undefined,
-          slCode: matchedDoc.slCode ? (matchedDoc.slCode.startsWith('SL') ? matchedDoc.slCode : `SL${matchedDoc.slCode}`) : undefined,
-          clientName: matchedDoc.displayName || matchedDoc.fullName || matchedDoc.name || undefined,
-          userId: matchedDoc.userId ?? undefined,
-          email: matchedDoc.email ?? undefined,
-          phone: matchedDoc.phone ?? undefined,
-          status: matchedDoc.status ?? undefined,
-          description: matchedDoc.description || matchedDoc.notes || matchedDoc.itemDescription || matchedDoc.declaracion || undefined,
-          declaredValue: typeof matchedDoc.declaredValue === 'number' ? matchedDoc.declaredValue : (typeof matchedDoc.value === 'number' ? matchedDoc.value : (matchedDoc.monto ? Number(matchedDoc.monto) : undefined)),
-          courier: matchedDoc.courier || matchedDoc.carrier || undefined,
-          hasInvoice: !!(matchedDoc.invoiceUrl || matchedDoc.hasInvoice || matchedDoc.invoiceUploaded || matchedDoc.invoiceName),
-          invoiceUrl: matchedDoc.invoiceUrl || undefined,
-          preAlertCreatedAt: matchedDoc.preAlertDate || matchedDoc.createdAt || undefined,
-          syncedAt: matchedDoc.updatedAt || undefined,
-          sp2PreAlertId: matchedDoc._id ?? undefined,
-        });
-      } else {
-        result.set(raw, { found: false, tracking: raw });
-      }
-    }
-
-    onChange(result);
+  const preAlertsRef = collection(getPreAlertsDatabase(), 'pre_alerts');
+  const docsByQuery = new Map<string, Map<string, any>>();
+  const totalQueries = Math.ceil(tokens.length / PREALERT_QUERY_CHUNK) * PREALERT_TRACKING_FIELDS.length;
+  const flush = () => {
+    if (docsByQuery.size < totalQueries) return;   // F1.3: act only on the complete first result
+    const docsById = new Map<string, any>();
+    docsByQuery.forEach((docs) => docs.forEach((d, id) => docsById.set(id, d)));
+    onChange(resolvePreAlertMatches(analyses, docsById.values(), currentManifestNumber));
   };
 
-  for (let i = 0; i < tokensList.length; i += CHUNK_SIZE) {
-    const chunk = tokensList.slice(i, i + CHUNK_SIZE);
-
-    const unsubTracking = onSnapshot(
-      query(preAlertsRef, where('tracking', 'in', chunk)),
-      (snap) => {
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          if (isEligiblePreAlert(data)) {
-            liveDocsMap.set(d.id, { ...data, _id: d.id });
-          } else {
-            liveDocsMap.delete(d.id);
-          }
-        });
-        triggerFlush();
-      },
-      () => {}
-    );
-    unsubs.push(unsubTracking);
-
-    const unsubCanonical = onSnapshot(
-      query(preAlertsRef, where('canonicalTracking', 'in', chunk)),
-      (snap) => {
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          if (isEligiblePreAlert(data)) {
-            liveDocsMap.set(d.id, { ...data, _id: d.id });
-          } else {
-            liveDocsMap.delete(d.id);
-          }
-        });
-        triggerFlush();
-      },
-      () => {}
-    );
-    unsubs.push(unsubCanonical);
+  const unsubs: (() => void)[] = [];
+  for (let i = 0; i < tokens.length; i += PREALERT_QUERY_CHUNK) {
+    const chunk = tokens.slice(i, i + PREALERT_QUERY_CHUNK);
+    for (const field of PREALERT_TRACKING_FIELDS) {
+      const key = `${field}:${i}`;
+      unsubs.push(onSnapshot(
+        query(preAlertsRef, where(field, 'in', chunk)),
+        (snap) => {
+          docsByQuery.set(key, new Map(snap.docs.map((d) => [d.id, { ...d.data(), _id: d.id }])));
+          flush();
+        },
+        (err) => {
+          console.warn(`[watchPreAlerts] ${field} listener failed:`, err);
+          onError?.(err);
+        },
+      ));
+    }
   }
 
   return () => {
@@ -744,6 +653,8 @@ export function watchPreAlerts(
 
 /**
  * Consumes (manifests/invoices) one or more pre-alerts in SP2 Firestore.
+ * NOTE (2026-09-25): not called anywhere today. Kept safe (N9): only the billed customer's own
+ * pre-alert is consumed, never another account's pre-alert of the same tracking.
  * Updates status to 'manifested' or 'invoiced', sets manifestId, invoiceNumber,
  * and sets manifestedAt / invoicedAt timestamps.
  *
@@ -780,11 +691,16 @@ export async function batchConsumePreAlerts(
         getDocs(query(preAlertsRef, where('trackingNumber', 'in', tokensArray), fsLimit(5))),
       ]);
 
+      // N9: consume ONLY the pre-alert of the customer being billed. Before, every pre-alert with
+      // this tracking was marked manifested/invoiced — including other customers' legitimate ones.
+      // Without a valid slCode on the item nothing is consumed.
+      const ownerSl = storedPreAlertSlCode({ slCode: item.slCode });
+      if (!ownerSl) continue;
       const seenDocIds = new Set<string>();
       const allMatchingDocs = [...snapTracking.docs, ...snapCanonical.docs, ...snapLegacy.docs].filter((d) => {
         if (seenDocIds.has(d.id)) return false;
         seenDocIds.add(d.id);
-        return true;
+        return storedPreAlertSlCode(d.data()) === ownerSl;
       });
 
       const updatePromises = allMatchingDocs.map(async (docSnap) => {

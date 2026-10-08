@@ -37,6 +37,7 @@ import {
   where,
   getDocs,
   setDoc,
+  updateDoc,
   getDoc,
   doc,
   serverTimestamp,
@@ -525,6 +526,25 @@ async function searchSP2UserByName(manifestName: string): Promise<{
   }
 }
 
+// ─── Integrity guard (2026-09-29) ──────────────────────────────────────────────
+// Route / consolidation / encomienda edits used to setDoc(..., { merge: true }) on customers/{code}: when the
+// ficha did not exist (a route name typed as code, a code that only exists in SP2, a deleted customer) a ghost
+// ficha with only that field was CREATED — 60+ fichas without SL code or customer data. These edits now only
+// UPDATE an existing ficha with a valid SL code; otherwise nothing is written and a warning is logged.
+const VALID_SL = /^SL\d+$/;
+async function existingCustomerSnap(slCode: string, what: string) {
+  if (!VALID_SL.test(slCode)) {
+    console.warn(`[CustomerSync] ${what}: "${slCode}" no es un código SL válido — no se escribe en customers.`);
+    return null;
+  }
+  const snap = await getDoc(doc(db, 'customers', slCode));
+  if (!snap.exists()) {
+    console.warn(`[CustomerSync] ${what}: customers/${slCode} no existe en SP1 — no se crea una ficha vacía.`);
+    return null;
+  }
+  return snap;
+}
+
 // ─── SP1 write ────────────────────────────────────────────────────────────────
 
 async function syncCustomerToSP1(
@@ -704,10 +724,11 @@ export async function updateCustomerRuta(
   try {
     const sp1Ref = doc(db, 'customers', slCode);
 
-    // Read previous ruta before overwriting (for audit trail)
-    const prevSnap = await getDoc(sp1Ref);
-    const previousRuta: string | null = prevSnap.exists() ? (prevSnap.data()?.ruta ?? null) : null;
-    const customerName: string = prevSnap.exists() ? (prevSnap.data()?.fullName ?? slCode) : slCode;
+    // Read previous ruta before overwriting (for audit trail). No ficha → nothing is written (no ghost ficha).
+    const prevSnap = await existingCustomerSnap(slCode, 'ruta');
+    if (!prevSnap) return;
+    const previousRuta: string | null = prevSnap.data()?.ruta ?? null;
+    const customerName: string = prevSnap.data()?.fullName ?? slCode;
 
     // Skip write + log if route is already the same (no-op)
     if (previousRuta === ruta) {
@@ -729,13 +750,13 @@ export async function updateCustomerRuta(
       // Auth app not initialized in test/server context
     }
 
-    await setDoc(sp1Ref, { 
+    await updateDoc(sp1Ref, { 
       ruta, 
       rutaSetByAdminAt: now,
       updatedAt: serverTimestamp(), 
       sp1AdminUpdatedAt: serverTimestamp(),
       rutaLastUpdatedBy: changedBy
-    }, { merge: true });
+    });
 
     console.log(
       `[RouteHistory] ${slCode} "${customerName}": "${previousRuta ?? '(sin ruta)'}" → "${ruta}"\n` +
@@ -830,6 +851,7 @@ export async function updateCustomerConsolidation(slCode: string, consolidationE
   // ── SP1 update ──────────────────────────────────────────────────────────────
   try {
     const sp1Ref = doc(db, 'customers', slCode);
+    if (!(await existingCustomerSnap(slCode, 'consolidación'))) return;
     const sp1Payload = {
       consolidationEnabled,
       consolidationEnabledAt: consolidationEnabled ? now : null,
@@ -837,7 +859,7 @@ export async function updateCustomerConsolidation(slCode: string, consolidationE
       updatedAt: serverTimestamp(),
       sp1AdminUpdatedAt: serverTimestamp(),
     };
-    await setDoc(sp1Ref, sp1Payload, { merge: true });
+    await updateDoc(sp1Ref, sp1Payload);
     console.log(`[CustomerSync] ✅ SP1 customers/${slCode}.consolidationEnabled → ${consolidationEnabled}`);
     patchCustomerConsolidationInCache(slCode, consolidationEnabled);
     window.dispatchEvent(new CustomEvent('customer-consolidation-updated', { detail: { slCode, consolidationEnabled } }));
@@ -892,8 +914,9 @@ export async function updateCustomerEncomiendaService(slCode: string, encomienda
   // ── SP1 update ──────────────────────────────────────────────────────────────
   try {
     const sp1Ref = doc(db, 'customers', slCode);
-    const snap = await getDoc(sp1Ref);
-    const existingData = snap.exists() ? snap.data() : null;
+    const snap = await existingCustomerSnap(slCode, 'encomienda');
+    if (!snap) return;
+    const existingData = snap.data() ?? null;
 
     const encomiendaObj = encomiendaServiceName ? { name: encomiendaServiceName } : null;
 
@@ -929,7 +952,7 @@ export async function updateCustomerEncomiendaService(slCode: string, encomienda
     if (updatedAddresses) sp1Payload.addresses = updatedAddresses;
     if (updatedDefaultAddress) sp1Payload.defaultAddress = updatedDefaultAddress;
 
-    await setDoc(sp1Ref, sp1Payload, { merge: true });
+    await updateDoc(sp1Ref, sp1Payload);
     console.log(`[CustomerSync] ✅ SP1 customers/${slCode}.encomiendaServiceName → "${encomiendaServiceName}"`);
     window.dispatchEvent(new CustomEvent('customer-encomienda-updated', { detail: { slCode, encomiendaServiceName } }));
   } catch (err) {
@@ -1536,3 +1559,17 @@ export async function updateCustomerDeliveryAddress(
   }
 }
 
+
+/**
+ * F11.2 — the address corrected on the Nova label becomes the customer's principal address in SP2
+ * (server: functions/src/customers/label-address-sp2-callable.ts). SP2 then pushes it back to SP1,
+ * so every label and the encomienda manifest print it. Throws with the server's message.
+ */
+export async function updateSp2AddressFromLabel(slCode: string, deliveryAddress: string): Promise<{ changed: boolean }> {
+  const { getFunctions, httpsCallable } = await import('firebase/functions');
+  const { app } = await import('@/lib/firebase/config');
+  const call = httpsCallable<{ slCode: string; deliveryAddress: string }, { success: boolean; changed: boolean }>(
+    getFunctions(app, 'us-central1'), 'slUpdateSp2AddressFromLabel');
+  const res = await call({ slCode, deliveryAddress });
+  return { changed: !!res.data?.changed };
+}

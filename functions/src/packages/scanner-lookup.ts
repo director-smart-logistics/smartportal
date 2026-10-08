@@ -131,26 +131,15 @@ export const slScannerLookup = onCall<ScannerLookupRequest, Promise<ScannerLooku
 
     logger.info("[slScannerLookup] match", { upper, matchedBy });
 
-    // Securely update package status to 'received' and scannedAt directly inside Cloud Function
+    // The warehouse scanner only sorts packages (user 2026-09-28): it NEVER changes the package status in SP1 — and
+    // therefore never in SP2 (SP1 status changes are pushed to SP2 by onPackageStatusToSp2). Only the internal scan
+    // time is kept for the warehouse.
     if (matchedDocRef) {
       try {
-        const currentStatus = String(docData.status || "");
-        const protectedStatuses = ["delivered", "processed", "returned", "pickup"];
-        if (!protectedStatuses.includes(currentStatus)) {
-          await matchedDocRef.update({
-            status: "received",
-            scannedAt: Date.now(),
-            updatedAt: new Date().toISOString(),
-          });
-          logger.info("[slScannerLookup] successfully updated status to received", { path: matchedDocRef.path });
-          // Mutate local data so returned payload has the updated received state
-          docData.status = "received";
-          docData.scannedAt = Date.now();
-        } else {
-          logger.info("[slScannerLookup] package status is protected, skipping received update", { path: matchedDocRef.path, status: currentStatus });
-        }
+        await matchedDocRef.update({ scannedAt: Date.now() });
+        docData.scannedAt = Date.now();
       } catch (err) {
-        logger.error("[slScannerLookup] failed to update package status in firestore", { path: matchedDocRef.path, err });
+        logger.error("[slScannerLookup] failed to record scannedAt", { path: matchedDocRef.path, err });
       }
     }
 

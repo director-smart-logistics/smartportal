@@ -584,3 +584,74 @@ describe('useNovaResolvedRows — preAlert propagation', () => {
     expect(out[0].preAlert).toEqual(existingPreAlert);
   });
 });
+
+describe('R1 — the SAVED route is the route of the row\'s CURRENT customer', () => {
+  const contacts = new Map<string, any>([['SL100', { ruta: 'Ruta de SL100' }], ['SL200', { ruta: 'Ruta de SL200' }]]);
+
+  it('row reassigned SL100 → SL200: never SL100\'s route (nor its override)', () => {
+    const out = buildResolved(
+      [makeRow({ tracking: 'T1', slCode: 'SL100', ruta: 'Ruta de SL100', nombre: 'JUAN' })],
+      { slCodeOverrides: { 0: { slCode: 'SL200', ruta: 'Ruta de SL200' } }, rutaOverrides: { SL100: 'Cambiada para SL100' }, customerContactMap: contacts },
+    );
+    expect(out[0].slCode).toBe('SL200');
+    expect(out[0].ruta).toBe('Ruta de SL200');
+  });
+
+  it('row that had no customer and got one (pre-alert): the customer\'s route, not the name-learned route', () => {
+    const out = buildResolved(
+      [makeRow({ tracking: 'T2', slCode: '', ruta: 'Ruta aprendida', nombre: 'PEDRO' })],
+      { matchOverrides: { 0: { slCode: 'SL200', fullName: 'Pedro', ruta: 'Ruta de SL200' } }, rutaOverrides: { __unmatched__PEDRO: 'Ruta aprendida' }, customerContactMap: contacts },
+    );
+    expect(out[0].slCode).toBe('SL200');
+    expect(out[0].ruta).toBe('Ruta de SL200');
+  });
+
+  it('a route the admin chose for the NEW customer group still wins', () => {
+    const out = buildResolved(
+      [makeRow({ tracking: 'T3', slCode: 'SL100', ruta: 'Ruta de SL100' })],
+      { slCodeOverrides: { 0: { slCode: 'SL200', ruta: 'Ruta de SL200' } }, rutaOverrides: { SL200: 'Elegida por el admin' }, customerContactMap: contacts },
+    );
+    expect(out[0].ruta).toBe('Elegida por el admin');
+  });
+
+  it('re-loaded manifest, row not touched: the SAVED route (immunity unchanged)', () => {
+    const out = buildResolved(
+      [makeRow({ tracking: 'T4', slCode: 'SL100', ruta: 'Ruta guardada' })],
+      { customerContactMap: contacts, loadedFromFirestore: true },
+    );
+    expect(out[0].ruta).toBe('Ruta guardada');
+  });
+});
+
+describe('RED "P" is saved (several accounts) — visible after re-opening', () => {
+  it('live result "several accounts" → saved as preAlert {found:false, ambiguousSlCodes}', () => {
+    const preAlertsMap = new Map([['T9', { found: false, tracking: 'T9', ambiguousSlCodes: ['SL1', 'SL2'] }]]);
+    const out = buildResolved([makeRow({ tracking: 'T9', slCode: 'SL1' })], { preAlertsMap });
+    expect(out[0].preAlert).toEqual({ found: false, tracking: 'T9', ambiguousSlCodes: ['SL1', 'SL2'] });
+  });
+  it('re-saving a re-opened manifest keeps it (no live data)', () => {
+    const saved = { found: false, tracking: 'T9', ambiguousSlCodes: ['SL1', 'SL2'] };
+    const out = buildResolved([makeRow({ tracking: 'T9', slCode: 'SL1', preAlert: saved } as any)], { loadedFromFirestore: true });
+    expect(out[0].preAlert).toEqual(saved);
+  });
+  it('nothing pre-alerted → nothing saved', () => {
+    const out = buildResolved([makeRow({ tracking: 'T8', slCode: 'SL1' })], { preAlertsMap: new Map([['T8', { found: false, tracking: 'T8' }]]) });
+    expect(out[0].preAlert).toBeUndefined();
+  });
+});
+
+describe('RED "P" for a tracking repeated in the manifest is saved as a flag', () => {
+  const pa = { found: true, tracking: 'T7', slCode: 'SL1' };
+  it('both copies are saved with repeatedInManifest (one package per tracking remains after saving)', () => {
+    const out = buildResolved([makeRow({ tracking: 'T7', slCode: 'SL1' }), makeRow({ tracking: 'T7', slCode: 'SL1' })],
+      { preAlertsMap: new Map([['T7', pa]]) });
+    expect(out[0].preAlert).toEqual({ ...pa, repeatedInManifest: true });
+    expect(out[1].preAlert).toEqual({ ...pa, repeatedInManifest: true });
+  });
+  it('a single copy is saved without the flag', () => {
+    const out = buildResolved([makeRow({ tracking: 'T7', slCode: 'SL1' }), makeRow({ tracking: 'T6', slCode: 'SL1' })],
+      { preAlertsMap: new Map([['T7', pa]]) });
+    expect(out[0].preAlert).toEqual(pa);
+  });
+});
+

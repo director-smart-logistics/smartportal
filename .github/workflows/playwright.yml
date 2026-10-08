@@ -21,6 +21,10 @@ jobs:
     - name: Install dependencies
       run: pnpm install
 
+    # Some unit tests exercise the audit scripts, which load firebase-admin from functions/node_modules.
+    - name: Install functions dependencies
+      run: npm ci --prefix functions
+
     - name: Install Playwright Chromium
       run: npx playwright install chromium --with-deps
 

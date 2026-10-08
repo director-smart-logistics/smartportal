@@ -1,0 +1,9 @@
+Tracking Number,Weight,Description,Customer Name
+9632001960806794376300877098560696,2.1,R1 FedEx 34 pre-alertado por SL90001 y su corto en la misma lista,Cliente Uno
+877098560696,2.1,R2 el mismo FedEx en corto,Cliente Uno
+TBA330000000301,0.8,R3 TBA pre-alertado por SL90002,Cliente Dos
+TBA330000000301,0.8,R4 el mismo TBA otra vez,Cliente Dos
+TBA330000000401,1.0,R5 pre-alertado por dos cuentas,Cliente Uno
+TBA330000000499,2.0,R6 repetido sin pre-alerta,Cliente Dos
+TBA330000000499,2.0,R7 repetido sin pre-alerta,Cliente Dos
+TBA330000000409,1.5,R8 control sin repetir,Cliente Uno

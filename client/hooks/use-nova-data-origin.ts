@@ -41,6 +41,8 @@ export interface DataOriginInput {
 
 export function useNovaDataOrigin(
   resultData: DataOriginInput | null | undefined,
+  /** true once the admin saved this manifest in the current session (SAVED_POLICY). */
+  savedThisSession = false,
 ): DataOriginPolicy {
   // Memo dep is the canonical boolean — flipping it (very rare in practice,
   // happens only when the operator switches between fresh/saved manifests
@@ -48,7 +50,7 @@ export function useNovaDataOrigin(
   // instance, so referential equality is preserved across re-renders for
   // every downstream `useEffect`.
   return useMemo(
-    () => policyFromResultData(resultData ?? undefined),
-    [resultData?.loadedFromFirestore],
+    () => policyFromResultData(resultData ?? undefined, savedThisSession),
+    [resultData?.loadedFromFirestore, savedThisSession],
   );
 }

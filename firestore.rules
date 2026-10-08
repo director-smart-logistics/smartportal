@@ -52,7 +52,8 @@ service cloud.firestore {
       allow read: if isAgent();
       allow create: if isAgent();
       allow update: if isAgent();
-      allow delete: if isAdmin();
+      // 2026-09-29: only the server deletes accounts (slDeleteCustomerAccount: SP1 + SP2 together, log + backup).
+      allow delete: if false;
     }
     
     // Packages collection — delivery staff need to scan packages.

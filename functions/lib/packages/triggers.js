@@ -29,6 +29,7 @@ const firestore_1 = require("firebase-functions/v2/firestore");
 const v2_1 = require("firebase-functions/v2");
 const firebase_1 = require("../config/firebase");
 const firestore_2 = require("firebase-admin/firestore");
+const reassign_rule_1 = require("../invoices/reassign-rule");
 const PKG_STATUS_RANK = {
     'pre-alerted': 0, 'pre_alerted': 0,
     'received': 1,
@@ -84,6 +85,13 @@ const SELF_MANAGED_FIELDS = new Set([
     "invoiceStatus",
     "invoiceLinkUpdatedAt",
     "invoiceLinkSource",
+    // Written by first-invoice.ts (the package's FIRST invoice, set once). A write that only adds these must not re-run
+    // the link enforcement: it would act on that event's (possibly older) snapshot while an annul is in flight.
+    "firstInvoiceNumber",
+    "firstInvoiceDate",
+    "firstInvoiceSetAt",
+    "firstInvoiceSource",
+    "firstInvoiceSetBy",
 ]);
 function onlyManagedDiff(before, after) {
     if (!before)
@@ -281,6 +289,14 @@ exports.onPackageWritten = (0, firestore_1.onDocumentWritten)({
         number: after.invoiceNumber || null,
         status: after.invoiceStatus || null,
     };
+    // N16: a closed/old package already billed on another invoice keeps it — a newer invoice with
+    // the same tracking (recycled number) must not take it over. Clearing the link is still allowed.
+    if (current.id && desired.id && desired.id !== current.id && (0, reassign_rule_1.isSettledPackage)(after)) {
+        v2_1.logger.warn("[package-trigger] Closed/old package keeps its invoice (recycled tracking)", {
+            pkgId, tracking, keeps: current.id, wouldBe: desired.id,
+        });
+        desired = current;
+    }
     const currentPkgStatus = after.status || '';
     const currentPkgRank = getStatusRank(currentPkgStatus);
     let desiredPkgStatus = currentPkgStatus;

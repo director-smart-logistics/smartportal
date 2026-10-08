@@ -287,10 +287,14 @@ export const firebaseApi = {
         { packageId, status, location, notes, deliverySignature, paymentCollected }
       ),
     
-    bulkUpdateStatus: (packageIds: string[], status: string, extraFields?: Record<string, any>) =>
-      callFunction<{ packageIds: string[]; status: string; extraFields?: Record<string, any> }, { updated: number }>(
+    bulkUpdateStatus: (packageIds: string[], status: string, extraFields?: Record<string, any>, forceSp2?: boolean) =>
+      callFunction<{ packageIds: string[]; status: string; extraFields?: Record<string, any>; forceSp2?: boolean }, {
+        updated: number;
+        /** What SP2 (portal del cliente) answered — awaited on the server. */
+        sp2?: { total: number; updated: number; created: number; skipped: number; errors: number; details: Array<{ tracking: string; outcome: string; reason?: string }>; error?: string };
+      }>(
         "slBulkUpdatePackageStatus",
-        { packageIds, status, extraFields }
+        { packageIds, status, extraFields, ...(forceSp2 ? { forceSp2: true } : {}) }
       ),
     
     delete: (packageId: string) => 

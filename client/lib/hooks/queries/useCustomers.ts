@@ -107,13 +107,15 @@ export function useDeleteCustomer() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (customerId: string) => {
-      const res = await firestoreApi.customers.delete(customerId);
-      if (customerId) {
-        import('@/lib/services/match-learning').then(m => {
-          m.deleteLearnedFeedbackForSlCode(customerId).catch(console.error);
-        }).catch(() => {});
-      }
+    // 2026-09-29: one "Eliminar" for SP1 and SP2 on the server (slDeleteCustomerAccount): deletes in both
+    // systems only accounts without history, logs who/why with a full backup; refuses accounts with history.
+    mutationFn: async (arg: string | { id: string; reason?: string }) => {
+      const { id, reason } = typeof arg === 'string' ? { id: arg, reason: '' } : arg;
+      const { getFunctions, httpsCallable } = await import('firebase/functions');
+      const { app } = await import('@/lib/firebase/config');
+      const fn = httpsCallable<{ slCode: string; reason: string }, { status: string; message: string; logId: string }>(getFunctions(app, 'us-central1'), 'slDeleteCustomerAccount');
+      const res = (await fn({ slCode: id, reason: reason || 'Eliminado desde SP1 (lista de clientes)' })).data;
+      if (res.status !== 'deleted') throw new Error(res.message);
       return res;
     },
     onSuccess: () => {

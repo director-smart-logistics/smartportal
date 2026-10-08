@@ -1,4 +1,6 @@
 import { cn } from "@/lib/utils";
+import { planPreAlertCorrections } from "@/lib/services/prealert-corrections";
+import { preAlertBadgeFor, namesLookAlike } from "@/lib/services/prealert-badge";
 import { motion } from "framer-motion";
 import {
   FileSpreadsheet,
@@ -130,6 +132,8 @@ import {
   upsertManifestPackageOverrides,
 } from "@/lib/services/manifest-processor";
 import { updateCustomerRuta } from "@/lib/services/customer-sync";
+import { RouteReviewBadge } from "@/components/route-review/RouteReviewBadge";
+import { getRouteAttention, openRouteReviewDialog } from "@/lib/route-review/route-attention";
 import {
   loadUnmatchedRouteCache,
   lookupLearnedRoute,
@@ -172,6 +176,7 @@ import {
 } from "@/lib/services/invoice-service";
 import { useAuth } from "@/lib/context/FirebaseAuthContext";
 import { useEncomiendaLookup } from "@/lib/services/encomienda-lookup";
+import { novaEncomiendaBadge } from "@/lib/nova/encomienda-badge";
 import { NovaInvoicePreview } from "@/components/nova/NovaInvoicePreview";
 import { NovaEditCustomerModal } from "@/components/nova/NovaEditCustomerModal";
 import { NovaCustomerQuickViewModal } from "@/components/nova/NovaCustomerQuickViewModal";
@@ -192,6 +197,9 @@ import {
   abbrevRoute,
 } from "./nova-route-options";
 import { batchCheckTrackingPreAlerts, watchTrackingPreAlerts, type PreAlertInfo } from "@/lib/services/nova-tools";
+import { preAlertInfoOwner, diffLivePreAlerts } from "@/lib/services/pre-alert-resolver";
+import { repeatedTrackingIndices } from "@/lib/services/prealert-match-keys";
+import { effectiveRowRuta } from "@/lib/nova/row-route";
 import { useNovaDataOrigin } from "@/hooks/use-nova-data-origin";
 import { NovaAutoSaveIndicator } from "@/components/nova/modal/NovaAutoSaveIndicator";
 import { useNovaAutoSave } from "@/hooks/use-nova-auto-save";
@@ -256,6 +264,8 @@ import {
 } from "@/lib/services/nova-terceros-service";
 import { NovaTerceroRowCell } from "@/components/nova/NovaTerceroRowCell";
 import { NovaTableSkeleton } from "./NovaTableSkeleton";
+import { invoiceBadge } from "@/lib/nova/invoice-badge";
+import { moveTrackingsToManifestAtomic, undoMoveTrackingsAtomic, type MoveBackup } from "@/lib/services/nova-manifest-move";
 
 type GroupEntry = {
   row: {
@@ -411,7 +421,16 @@ export const ResultSummary = memo(function ResultSummary({
   }, [propResultData]);
   const resultData = liveResultData ?? propResultData;
 
-  const { resolve: resolveEncomienda } = useEncomiendaLookup();
+  const { resolve: resolveEncomienda, ready: encomiendaLookupReady, lookupMap: encomiendaLookupMap } = useEncomiendaLookup();
+  // F8.3: known encomienda services (by id or name) — anything else is "Servicio de terceros".
+  const encomiendaBadgeLookup = useMemo(() => {
+    const names = new Set([...encomiendaLookupMap.values()].map((n) => n.toLowerCase()));
+    return {
+      ready: encomiendaLookupReady,
+      isKnown: (v: string) => encomiendaLookupMap.has(v.toLowerCase()) || names.has(v.toLowerCase()),
+      resolve: resolveEncomienda,
+    };
+  }, [encomiendaLookupMap, encomiendaLookupReady, resolveEncomienda]);
   const routeOptions = useRouteOptions();
   // Filter dropdown only — extends `routeOptions` with the 'Desconocida'
   // fallback so the operator can always slice the table by unknown-route
@@ -493,7 +512,16 @@ export const ResultSummary = memo(function ResultSummary({
   // `(resultData as ...).loadedFromFirestore`. See @/lib/nova/data-origin for
   // the contract + tests. Adding a new origin-aware behavior is one flag here
   // + one read at the call-site.
-  const dataOriginPolicy = useNovaDataOrigin(resultData);
+  // F1.5: pre-alerts are validated ONCE, before saving. From the first successful save of this
+  // manifest on, nothing automatic runs (SAVED_POLICY) — see NOVA_PREALERT_MATCH_SCENARIOS.md §F.
+  const [savedThisSession, setSavedThisSession] = useState(false);
+  const savedManifestRef = useRef(resultData.manifestNumber);
+  useEffect(() => {
+    if (savedManifestRef.current === resultData.manifestNumber) return;
+    savedManifestRef.current = resultData.manifestNumber;
+    setSavedThisSession(false);
+  }, [resultData.manifestNumber]);
+  const dataOriginPolicy = useNovaDataOrigin(resultData, savedThisSession);
   const dataOriginPolicyRef = useRef(dataOriginPolicy);
   useEffect(() => {
     dataOriginPolicyRef.current = dataOriginPolicy;
@@ -593,6 +621,8 @@ export const ResultSummary = memo(function ResultSummary({
     setNameOverrides,
     approvedMatches,
     setApprovedMatches,
+    preAlertAssignedRows,
+    setPreAlertAssignedRows,
     recentlyUnlinked,
     applyNameAndMatch,
     applyExplicitMatch,
@@ -816,6 +846,30 @@ export const ResultSummary = memo(function ResultSummary({
     if (!slCode) return undefined;
     return customerContactMap.get(String(slCode).toUpperCase().trim())?.consolidationEnabled;
   }, [customerContactMap]);
+
+  // R1: ONE route rule for what the table shows and what "Guardar en BD" persists — the same
+  // inputs as useNovaResolvedRows (client/lib/nova/row-route.ts). The route is always the one of
+  // the row's CURRENT customer: never a route learned for the name, never the previous customer's.
+  const rowRouteOf = useCallback((idx: number): string => {
+    const row = resultData.rows[idx];
+    if (!row) return "";
+    const baseRaw = unlinkedRows.has(idx) ? "" : (slCodeOverrides[idx]?.slCode ?? matchOverrides[idx]?.slCode ?? (row.slCode || ""));
+    const effSlCode = baseRaw && baseRaw.toUpperCase().startsWith("SL") ? baseRaw : "";
+    const reassigned = slCodeOverrides[idx] !== undefined || matchOverrides[idx] !== undefined || unlinkedRows.has(idx);
+    const customerRoute = !effSlCode || (resultData.loadedFromFirestore && !reassigned)
+      ? undefined
+      : customerContactMap.get(effSlCode.toUpperCase())?.ruta;
+    return effectiveRowRuta({
+      effSlCode,
+      rowSlCode: row.slCode,
+      unmatchedNames: [nameOverrides[idx] ?? row.nombre, row.nombre],
+      rowRuta: row.ruta,
+      rutaOverrides,
+      customerRoute,
+      slCodeOverrideRuta: slCodeOverrides[idx]?.ruta,
+      matchOverrideRuta: matchOverrides[idx]?.ruta,
+    });
+  }, [resultData.rows, resultData.loadedFromFirestore, unlinkedRows, slCodeOverrides, matchOverrides, nameOverrides, rutaOverrides, customerContactMap]);
 
   useEffect(() => {
     if (!showTable || !resultData.manifestNumber) return;
@@ -1164,11 +1218,21 @@ export const ResultSummary = memo(function ResultSummary({
   // ── Row selection state ───────────────────────────────────────────────────
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [deletedIndices, setDeletedIndices] = useState<Set<number>>(new Set());
+  // F1.6: rows whose tracking appears 2+ times in this manifest — never assigned by a
+  // pre-alert automatically; RED "P" (docs/NOVA_PREALERT_MATCH_SCENARIOS.md, B7).
+  const repeatedTrackingRows = useMemo(
+    () => repeatedTrackingIndices(resultData.rows.map((r) => r.tracking), deletedIndices),
+    [resultData.rows, deletedIndices],
+  );
+  const repeatedTrackingRowsRef = useRef(repeatedTrackingRows);
+  useEffect(() => { repeatedTrackingRowsRef.current = repeatedTrackingRows; }, [repeatedTrackingRows]);
   const [lastReassignment, setLastReassignment] = useState<{
     trackings: string[];
     originalManifestNumber: string;
     targetManifestId: string;
     invoicesBackup: { id: string; data: any }[];
+    /** Full backup of the atomic move (invoices, package links, manifests) for "Deshacer". */
+    moveBackup?: MoveBackup;
     indices: number[];
   } | null>(null);
   const [isUndoingReassignment, setIsUndoingReassignment] = useState(false);
@@ -1454,8 +1518,15 @@ export const ResultSummary = memo(function ResultSummary({
       const trackingNorm = String(r.tracking || "").toUpperCase().trim();
       if (!trackingNorm) return;
 
+      // Saved RED "P": several accounts pre-alerted this tracking (nobody was assigned).
+      if (p && !p.found && Array.isArray(p.ambiguousSlCodes) && p.ambiguousSlCodes.length > 1) {
+        initialPreAlertMap.set(trackingNorm, { found: false, tracking: r.tracking, ambiguousSlCodes: [...p.ambiguousSlCodes] });
+        return;
+      }
+
       if (p && (p.found || p.slCode || r.hasPreAlert || r.matchSource === "pre_alert")) {
-        const resolvedSlCode = String(p.slCode || r.preAlertSlCode || r.slCode || "").toUpperCase().trim();
+        // N10: the pre-alert owner only — never the row's own customer.
+        const resolvedSlCode = String(p.slCode || r.preAlertSlCode || "").toUpperCase().trim();
         const clientFullName = p.clientName || r.nombreCliente || "";
 
         initialPreAlertMap.set(trackingNorm, {
@@ -1471,6 +1542,7 @@ export const ResultSummary = memo(function ResultSummary({
           invoiceUrl: p.invoiceUrl,
           preAlertCreatedAt: p.preAlertCreatedAt || r.preAlertCreatedAt,
           sp2PreAlertId: p.sp2PreAlertId || r.preAlertId || r.preAlertKey,
+          ...(p.repeatedInManifest === true ? { repeatedInManifest: true } : {}),
         });
 
         if (resolvedSlCode && clientFullName) {
@@ -1481,7 +1553,7 @@ export const ResultSummary = memo(function ResultSummary({
           });
         }
       } else if (r.hasPreAlert || r.matchSource === "pre_alert" || r.preAlertSlCode) {
-        const resolvedSlCode = String(r.preAlertSlCode || r.slCode || "").toUpperCase().trim();
+        const resolvedSlCode = String(r.preAlertSlCode || "").toUpperCase().trim();   // N10
         const clientFullName = r.nombreCliente || "";
         initialPreAlertMap.set(trackingNorm, {
           found: true,
@@ -1526,6 +1598,9 @@ export const ResultSummary = memo(function ResultSummary({
 
   useEffect(() => {
     if (!showTable || !resultData.rows.length) return;
+    // F1.5: live only while the manifest is fresh and not saved yet (re-loaded or saved → the
+    // P badges show the saved data; only "Corregir por Pre-Alertas" re-checks SP2, on demand).
+    if (!dataOriginPolicy.allowLivePreAlertWatch) return;
 
     const trackings = [
       ...new Set(resultData.rows.map((r) => r.tracking).filter(Boolean)),
@@ -1533,23 +1608,34 @@ export const ResultSummary = memo(function ResultSummary({
     if (!trackings.length) return;
     let cancelled = false;
 
+    // F1.3: what the live result said last time, per tracking. Only CHANGES are acted on, so an
+    // unrelated pre-alert update never re-processes rows (no loops, no fighting the admin).
+    const lastSeen = new Map<string, string>();
+
     const unsub = watchTrackingPreAlerts(trackings, async (map) => {
       if (cancelled) return;
+
+      const { changed, withdrawn } = diffLivePreAlerts(lastSeen, map);
 
       // 1. Update the reactive pre-alerts map in state for badges and filtering
       setPreAlertsMap(map);
 
+      // E2: a pre-alert that stopped counting (cancelled, changed, now several accounts) never
+      // reverts a row by itself — the admin is told to review it.
+      if (withdrawn.length > 0) {
+        toast({
+          title: "Pre-alerta ya no vigente",
+          description: `${withdrawn.join(", ")}: la pre-alerta se canceló o cambió mientras revisabas. Nova no cambió el cliente: revisa ${withdrawn.length === 1 ? "la fila" : "las filas"}.`,
+        });
+      }
+      if (changed.size === 0) return;
+
       // Build tracking -> slCode map from pre-alerts
       const slCodeByTracking = new Map<string, string>();
       map.forEach((info, t) => {
-        if (info.found) {
-          const resolvedSlCode = (
-            info.slCode ||
-            info.sp2PreAlertId?.match(/^(SL\d+)-/i)?.[1] ||
-            null
-          )?.toUpperCase() ?? null;
-          if (resolvedSlCode) slCodeByTracking.set(t, resolvedSlCode);
-        }
+        // The owner is only the slCode stored on the pre-alert (N1), never the document id.
+        const resolvedSlCode = preAlertInfoOwner(info);
+        if (resolvedSlCode) slCodeByTracking.set(t.toUpperCase().trim(), resolvedSlCode);
       });
 
       // 2. Identify rows with pre-alerts that are mismatched (wrong slCode or not assigned)
@@ -1561,8 +1647,11 @@ export const ResultSummary = memo(function ResultSummary({
         // If the operator has explicitly approved or manually assigned this row,
         // do not let the reactive pre-alert check overwrite the operator's decision.
         if (approvedMatchesRef.current.has(idx)) return;
+        // F1.6: same tracking 2+ times in the manifest → the admin decides (RED "P").
+        if (repeatedTrackingRowsRef.current.has(idx)) return;
 
         const trackingNorm = (row.tracking || "").toUpperCase().trim();
+        if (!changed.has(trackingNorm)) return;   // F1.3: only trackings whose pre-alert changed
         const preAlertSlCode = slCodeByTracking.get(trackingNorm);
         if (!preAlertSlCode) return;
 
@@ -1657,6 +1746,13 @@ export const ResultSummary = memo(function ResultSummary({
         }
       });
 
+      // N15: these rows were assigned by a PRE-ALERT, not by the operator → never learned.
+      setPreAlertAssignedRows((prev) => {
+        const next = new Set(prev);
+        mismatches.forEach(({ idx, slCode }) => { if (customerMap.get(slCode)) next.add(idx); });
+        return next;
+      });
+
       // Clear corrected rows from unlinkedRows so they are actively linked
       setUnlinkedRows((prev) => {
         const next = new Set(prev);
@@ -1674,13 +1770,21 @@ export const ResultSummary = memo(function ResultSummary({
         `[Nova] Auto-corrected ${mismatches.length} pre-alert mismatch(es) reactive:`,
         mismatches.map((m) => `row ${m.idx} → ${m.slCode}`),
       );
+    }, resultData.manifestNumber, () => {
+      if (cancelled) return;
+      // E6: never fail silently — the P badges may be incomplete.
+      toast({
+        title: "No se pudo verificar pre-alertas en vivo",
+        description: "SP2 no respondió. La P puede estar incompleta: usa Acciones → Corregir por Pre-Alertas antes de guardar.",
+        variant: "destructive",
+      });
     });
 
     return () => {
       cancelled = true;
       unsub();
     };
-  }, [showTable, resultData.rows, resultData.manifestNumber]);
+  }, [showTable, resultData.rows, resultData.manifestNumber, dataOriginPolicy.allowLivePreAlertWatch]);
 
   // ── Realtime invoice subscription — onSnapshot keeps persistedInvoices live ──
   const invoiceDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -2012,21 +2116,8 @@ export const ResultSummary = memo(function ResultSummary({
     targetRows.forEach((row) => {
       const origIdx = resultData.rows.indexOf(row);
       if (origIdx !== -1) {
-        // Resolver ruta efectiva (incluyendo mapeos y overrides)
-        const override = slCodeOverrides[origIdx];
-        const effectiveSlCode = unlinkedRows.has(origIdx)
-          ? ""
-          : override?.slCode ||
-          matchOverrides[origIdx]?.slCode ||
-          row.slCode;
-        const effNombre = nameOverrides[origIdx] ?? row.nombre;
-        const rk = effectiveSlCode || `__unmatched__${effNombre}`;
-        const effectiveRuta =
-          rutaOverrides[rk] ??
-          rutaOverrides[`__unmatched__${row.nombre}`] ??
-          rutaOverrides[row.slCode] ??
-          (override?.ruta || row.ruta) ??
-          "";
+        // Resolver ruta efectiva (R1: la misma regla que al guardar)
+        const effectiveRuta = rowRouteOf(origIdx);
 
         if (effectiveRuta === "Encomiendas") {
           encomiendaIndices.push(origIdx);
@@ -2050,7 +2141,7 @@ export const ResultSummary = memo(function ResultSummary({
       isEncomiendaOnly: true,
     });
     setBulkMoveSearch("");
-  }, [selectedRows, resultData.rows, deletedIndices, manifestReassignedIndices, slCodeOverrides, unlinkedRows, matchOverrides, nameOverrides, rutaOverrides, toast]);
+  }, [selectedRows, resultData.rows, deletedIndices, manifestReassignedIndices, slCodeOverrides, unlinkedRows, matchOverrides, nameOverrides, rutaOverrides, toast, rowRouteOf]);
 
   const handleOpenBulkMoveManifest = useCallback(() => {
     if (selectedRows.size === 0) return;
@@ -2069,10 +2160,6 @@ export const ResultSummary = memo(function ResultSummary({
 
     setIsMovingManifest(true);
 
-    // Backup arrays for rollback
-    const invoicesBackup: { id: string; data: any }[] = [];
-    const packagesBackupTrackings: string[] = [];
-
     try {
       const indices = bulkMoveManifestPicker.targetIndices;
       // Get trackings
@@ -2080,81 +2167,15 @@ export const ResultSummary = memo(function ResultSummary({
         .map((i) => resultData.rows[i]?.tracking)
         .filter(Boolean) as string[];
 
-      // 0. Backup original invoices before modifying/deleting them
-      const invQ = query(collection(db, "invoices"), where("manifestNumber", "==", resultData.manifestNumber));
-      const invSnap = await getDocs(invQ);
-      const trackingSet = new Set(trackings.map(t => t.toUpperCase()));
-
-      invSnap.docs.forEach(d => {
-        const data = d.data();
-        const single = (data.trackingNumber as string) ?? "";
-        const multi = Array.isArray(data.trackingNumbers) ? data.trackingNumbers : [];
-        const allTrackings = [single, ...multi].map(t => t.toUpperCase()).filter(Boolean);
-        if (allTrackings.some(t => trackingSet.has(t))) {
-          invoicesBackup.push({ id: d.id, data });
-        }
+      // ATOMIC (2026-09-27, admin rule: atomic and immediate): delete drafts + annul the sent invoices +
+      // unlink their packages + move the packages to the target manifest in ONE commit — all or nothing.
+      // Nothing goes to consolidation. See client/lib/services/nova-manifest-move.ts.
+      const moveResult = await moveTrackingsToManifestAtomic(trackings, resultData.manifestNumber || "", targetManifestId, {
+        movedBy: authUser?.email || "usuario",
+        reason: `Traslado masivo a manifiesto ${targetManifestId}`,
       });
-
-      // 1. Delete draft invoices in current manifest
-      const draftDeletedCount = await deleteInvoicesForTrackings(
-        trackings,
-        resultData.manifestNumber
-      );
-
-      // 2. Annul active non-draft invoices in current manifest (preserve paid ones)
-      const annulResult = await annulInvoicesByTrackingsAndManifest(
-        trackings,
-        resultData.manifestNumber,
-        {
-          reason: `Traslado masivo a manifiesto ${targetManifestId}`,
-          annulledBy: authUser?.email || "usuario",
-        }
-      );
-
-      // 3. Update packages and encomiendas manifestNumber in Firestore collections
-      const nowStr = new Date().toISOString();
-      const BATCH_LIMIT = 500;
-      let batch = writeBatch(db);
-      let batchCount = 0;
-
-      for (const t of trackings) {
-        const trackingUpper = t.toUpperCase();
-        packagesBackupTrackings.push(trackingUpper);
-
-        // Update packages collection
-        const docRef = doc(db, "packages", trackingUpper);
-        batch.set(
-          docRef,
-          {
-            manifestNumber: targetManifestId,
-            updatedAt: nowStr,
-            ...(targetManifestId.startsWith("ENC-") ? { encomiendaManifestNumber: targetManifestId } : {}),
-          },
-          { merge: true }
-        );
-        batchCount++;
-
-        // Update manifest_encomiendas collection
-        const encRef = doc(db, "manifest_encomiendas", trackingUpper);
-        batch.set(
-          encRef,
-          {
-            manifestNumber: targetManifestId,
-            updatedAt: nowStr,
-          },
-          { merge: true }
-        );
-        batchCount++;
-
-        if (batchCount >= BATCH_LIMIT) {
-          await batch.commit();
-          batch = writeBatch(db);
-          batchCount = 0;
-        }
-      }
-      if (batchCount > 0) {
-        await batch.commit();
-      }
+      const draftDeletedCount = moveResult.deletedDrafts;
+      const annulResult = { annulledIds: moveResult.annulledIds, skippedPaid: moveResult.skippedPaid };
 
       // 4. Update local reactive view state to visually hide moved packages immediately
       setDeletedIndices((prev) => {
@@ -2180,7 +2201,8 @@ export const ResultSummary = memo(function ResultSummary({
         trackings,
         originalManifestNumber: resultData.manifestNumber || "",
         targetManifestId,
-        invoicesBackup,
+        invoicesBackup: moveResult.backup.invoices,
+        moveBackup: moveResult.backup,
         indices: [...indices],
       });
 
@@ -2205,82 +2227,13 @@ export const ResultSummary = memo(function ResultSummary({
 
       setBulkMoveManifestPicker(null);
     } catch (err: any) {
-      console.error("[Nova][BulkMove] Error occurred, initiating automated rollback...", err);
-
-      // RUN ROLLBACK TO RESTORE SYSTEM CONSISTENCY
-      try {
-        // Rollback packages and manifest_encomiendas
-        if (packagesBackupTrackings.length > 0) {
-          const nowStr = new Date().toISOString();
-          let rBatch = writeBatch(db);
-          let rBatchCount = 0;
-          for (const trackingUpper of packagesBackupTrackings) {
-            const docRef = doc(db, "packages", trackingUpper);
-            rBatch.set(
-              docRef,
-              {
-                manifestNumber: resultData.manifestNumber,
-                updatedAt: nowStr,
-                encomiendaManifestNumber: deleteField(),
-              },
-              { merge: true }
-            );
-            rBatchCount++;
-
-            const encRef = doc(db, "manifest_encomiendas", trackingUpper);
-            rBatch.set(
-              encRef,
-              {
-                manifestNumber: resultData.manifestNumber,
-                updatedAt: nowStr,
-              },
-              { merge: true }
-            );
-            rBatchCount++;
-
-            if (rBatchCount >= 500) {
-              await rBatch.commit();
-              rBatch = writeBatch(db);
-              rBatchCount = 0;
-            }
-          }
-          if (rBatchCount > 0) {
-            await rBatch.commit();
-          }
-        }
-
-        // Restore backup invoices
-        if (invoicesBackup.length > 0) {
-          let invBatch = writeBatch(db);
-          let invBatchCount = 0;
-          for (const backup of invoicesBackup) {
-            const docRef = doc(db, "invoices", backup.id);
-            invBatch.set(docRef, backup.data);
-            invBatchCount++;
-            if (invBatchCount >= 500) {
-              await invBatch.commit();
-              invBatch = writeBatch(db);
-              invBatchCount = 0;
-            }
-          }
-          if (invBatchCount > 0) {
-            await invBatch.commit();
-          }
-        }
-
-        toast({
-          title: "Traslado fallido y base de datos revertida",
-          description: `Se produjo un error durante el traslado masivo. Toda la operación se canceló y el estado original de los paquetes y facturas fue restaurado automáticamente. Detalle: ${err?.message || "Error desconocido"}`,
-          variant: "destructive",
-        });
-      } catch (rollbackErr: any) {
-        console.error("[Nova][BulkMove][Rollback] Rollback process failed with critical error:", rollbackErr);
-        toast({
-          title: "ERROR CRÍTICO: Reversión fallida",
-          description: `El traslado masivo falló y no se pudo restaurar el estado original automáticamente: ${rollbackErr?.message || "Error desconocido"}. Por favor contacte soporte técnico inmediatamente.`,
-          variant: "destructive",
-        });
-      }
+      // The move is ONE commit: if it failed, nothing was written — no rollback needed.
+      console.error("[Nova][BulkMove] Move failed, nothing was written:", err);
+      toast({
+        title: "Traslado cancelado: no se modificó nada",
+        description: `No se movió ningún paquete ni se tocó ninguna factura. Detalle: ${err?.message || "Error desconocido"}`,
+        variant: "destructive",
+      });
     } finally {
       setIsMovingManifest(false);
     }
@@ -2297,67 +2250,13 @@ export const ResultSummary = memo(function ResultSummary({
     if (!lastReassignment || isUndoingReassignment) return;
     setIsUndoingReassignment(true);
     try {
-      const { trackings, originalManifestNumber, targetManifestId, invoicesBackup, indices } = lastReassignment;
-      const nowStr = new Date().toISOString();
-
-      // 1. Revert packages and manifest_encomiendas in Firestore
-      let rBatch = writeBatch(db);
-      let rBatchCount = 0;
-      for (const tracking of trackings) {
-        const trackingUpper = tracking.toUpperCase();
-
-        const docRef = doc(db, "packages", trackingUpper);
-        rBatch.set(
-          docRef,
-          {
-            manifestNumber: originalManifestNumber,
-            updatedAt: nowStr,
-            encomiendaManifestNumber: deleteField(),
-          },
-          { merge: true }
-        );
-        rBatchCount++;
-
-        const encRef = doc(db, "manifest_encomiendas", trackingUpper);
-        rBatch.set(
-          encRef,
-          {
-            manifestNumber: originalManifestNumber,
-            updatedAt: nowStr,
-          },
-          { merge: true }
-        );
-        rBatchCount++;
-
-        if (rBatchCount >= 500) {
-          await rBatch.commit();
-          rBatch = writeBatch(db);
-          rBatchCount = 0;
-        }
-      }
-      if (rBatchCount > 0) {
-        await rBatch.commit();
-      }
-
-      // 2. Restore backup invoices
-      if (invoicesBackup.length > 0) {
-        let invBatch = writeBatch(db);
-        let invBatchCount = 0;
-        for (const backup of invoicesBackup) {
-          const docRef = doc(db, "invoices", backup.id);
-          invBatch.set(docRef, backup.data);
-          invBatchCount++;
-          if (invBatchCount >= 500) {
-            await invBatch.commit();
-            invBatch = writeBatch(db);
-            invBatchCount = 0;
-          }
-        }
-        if (invBatchCount > 0) {
-          await invBatch.commit();
-        }
-      }
-
+      const { trackings, originalManifestNumber, targetManifestId, invoicesBackup, moveBackup, indices } = lastReassignment;
+      // ATOMIC (2026-09-27): invoices, package ↔ invoice links and manifests back as they were — ONE commit.
+      await undoMoveTrackingsAtomic(
+        moveBackup ?? { invoices: invoicesBackup, packages: trackings.map((t) => ({ id: t.toUpperCase(), existed: true, manifestNumber: originalManifestNumber })), encomiendas: trackings.map((t) => ({ id: t.toUpperCase(), existed: true, manifestNumber: originalManifestNumber })) },
+        originalManifestNumber,
+        { undoneBy: authUser?.email || "usuario" },
+      );
       // 3. Revert local view state
       setDeletedIndices((prev) => {
         const next = new Set(prev);
@@ -2399,7 +2298,7 @@ export const ResultSummary = memo(function ResultSummary({
     } finally {
       setIsUndoingReassignment(false);
     }
-  }, [lastReassignment, isUndoingReassignment, toast]);
+  }, [lastReassignment, isUndoingReassignment, toast, authUser?.email]);
 
   const handleRoundAndRecalc = useCallback(() => {
     const targets =
@@ -2411,22 +2310,13 @@ export const ResultSummary = memo(function ResultSummary({
 
   const handleRoundEncomiendas = useCallback(() => {
     const targets = resultData.rows
-      .map((row, idx) => {
-        const effSlCodeForRuta =
-          slCodeOverrides[idx]?.slCode ??
-          matchOverrides[idx]?.slCode ??
-          row.slCode;
-        const effectiveRuta =
-          rutaOverrides[effSlCodeForRuta] ??
-          rutaOverrides[`__unmatched__${row.nombre}`] ??
-          slCodeOverrides[idx]?.ruta ??
-          matchOverrides[idx]?.ruta ??
-          (row.ruta || "");
+      .map((_row, idx) => {
+        const effectiveRuta = rowRouteOf(idx);   // R1
         return effectiveRuta === "Encomiendas" ? idx : -1;
       })
       .filter((idx) => idx >= 0);
     if (targets.length > 0) setRecalcConfirm({ type: "encomiendas", targets });
-  }, [resultData.rows, rutaOverrides, slCodeOverrides, matchOverrides]);
+  }, [resultData.rows, rutaOverrides, slCodeOverrides, matchOverrides, rowRouteOf]);
 
   const confirmRecalc = useCallback(() => {
     if (!recalcConfirm) return;
@@ -2509,23 +2399,9 @@ export const ResultSummary = memo(function ResultSummary({
   const effectiveRutaOf = useCallback(
     (idx: number): string => {
       const j = rowGroupInfo[idx]?.twinOf ?? idx;
-      const row = resultData.rows[j];
-      if (!row) return "";
-      const override = slCodeOverrides[j];
-      const effectiveSlCode = unlinkedRows.has(j)
-        ? ""
-        : override?.slCode || matchOverrides[j]?.slCode || row.slCode;
-      const effNombre = nameOverrides[j] ?? row.nombre;
-      const rk = effectiveSlCode || `__unmatched__${effNombre}`;
-      return (
-        rutaOverrides[rk] ??
-        rutaOverrides[`__unmatched__${row.nombre}`] ??
-        rutaOverrides[row.slCode] ??
-        (override?.ruta || row.ruta) ??
-        ""
-      );
+      return rowRouteOf(j);   // R1
     },
-    [rowGroupInfo, resultData.rows, slCodeOverrides, matchOverrides, nameOverrides, rutaOverrides, unlinkedRows],
+    [rowGroupInfo, rowRouteOf],
   );
 
   const filteredIdxs = useMemo(
@@ -2637,15 +2513,11 @@ export const ResultSummary = memo(function ResultSummary({
       if (!effectiveSlCode) return;
       if (seen.has(effectiveSlCode)) return;
       seen.add(effectiveSlCode);
-      const effectiveRuta =
-        rutaOverrides[effectiveSlCode] ??
-        rutaOverrides[effectiveSlCode || `__unmatched__${row.nombre}`] ??
-        rutaOverrides[row.slCode] ??
-        (override?.ruta || row.ruta);
+      const effectiveRuta = rowRouteOf(originalIdx);   // R1
       if (!effectiveRuta) missing.add(effectiveSlCode);
     });
     return missing;
-  }, [filteredIdxs, resultData.rows, slCodeOverrides, rutaOverrides]);
+  }, [filteredIdxs, resultData.rows, slCodeOverrides, rutaOverrides, rowRouteOf]);
   const hasUnroutedGroups = unroutedGroupKeys.size > 0;
 
   // Auto-show banner whenever new unrouted groups appear
@@ -2909,9 +2781,10 @@ export const ResultSummary = memo(function ResultSummary({
       setValidationProgress(prev => ({ ...prev, total: trackingList.length }));
 
       const preAlertMap = new Map<string, any>();
+      let sp2Failed = false;   // E6: an incomplete check is always reported
       for (let i = 0; i < trackingList.length; i += 15) {
         const chunk = trackingList.slice(i, i + 15);
-        const chunkMap = await batchCheckTrackingPreAlerts(chunk, resultData.manifestNumber);
+        const chunkMap = await batchCheckTrackingPreAlerts(chunk, resultData.manifestNumber, () => { sp2Failed = true; });
         chunkMap.forEach((val, key) => {
           preAlertMap.set(key, val);
         });
@@ -2955,40 +2828,34 @@ export const ResultSummary = memo(function ResultSummary({
         });
       }
 
-      let correctedCount = 0;
-      activeIndices.forEach(({ row, idx }) => {
-        const trackingKey = (row.tracking || "").toUpperCase().trim();
-        const info = preAlertMap.get(trackingKey);
-
-        if (info?.found && info.slCode) {
-          const preAlertSlCode = info.slCode.toUpperCase().trim();
-          const currentSlCode = (slCodeOverrides[idx]?.slCode || row.slCode || "").toUpperCase().trim();
-
-          if (!currentSlCode || currentSlCode.startsWith("SL-NAN-") || currentSlCode !== preAlertSlCode) {
-            const profile = customerProfiles.get(preAlertSlCode);
-            if (profile) {
-              applyExplicitMatch([idx], {
-                slCode: profile.slCode,
-                fullName: profile.fullName,
-                ruta: profile.ruta,
-              });
-              correctedCount++;
-            } else {
-              applyExplicitMatch([idx], {
-                slCode: preAlertSlCode,
-                fullName: (row.nombreCliente && !row.nombreCliente.includes('Cliente Pre-alertado') ? row.nombreCliente : (row.nombre || `Cliente Pre-alertado (${preAlertSlCode})`)),
-                ruta: row.ruta || '',
-              });
-              correctedCount++;
-            }
-          }
-        }
+      // N11: the plan never overwrites a customer the operator chose by hand, never applies a
+      // pre-alert whose customer does not exist in SP1, and never assigns an ambiguous tracking.
+      const plan = planPreAlertCorrections(
+        activeIndices.map(({ row, idx }) => ({
+          idx,
+          tracking: (row.tracking || "").toUpperCase().trim(),
+          currentSlCode: (slCodeOverrides[idx]?.slCode || row.slCode || "").toUpperCase().trim(),
+        })),
+        { preAlertMap, approved: approvedMatches, preAlertAssigned: preAlertAssignedRows, profiles: customerProfiles, repeated: repeatedTrackingRows },
+      );
+      plan.apply.forEach(({ idx, slCode, fullName, ruta }) => {
+        applyExplicitMatch([idx], { slCode, fullName, ruta }, { source: 'pre_alert' });
       });
+      const correctedCount = plan.apply.length;
 
-      if (correctedCount > 0) {
+      const notes: string[] = [];
+      if (plan.skippedManual.length) notes.push(`${plan.skippedManual.length} fila(s) asignadas a mano no se cambiaron: revísalas`);
+      if (plan.missingCustomer.length) notes.push(`${plan.missingCustomer.length} pre-alerta(s) de un cliente que no existe en SP1 no se aplicaron`);
+      if (plan.ambiguous.length) notes.push(`${plan.ambiguous.length} tracking(s) pre-alertados por varias cuentas: asigna a mano`);
+      if (plan.repeated.length) notes.push(`${plan.repeated.length} fila(s) con el tracking repetido en el manifiesto: asigna a mano`);
+      if (sp2Failed) notes.push("SP2 no respondió a parte de la consulta: la verificación puede estar incompleta, vuelve a intentarlo");
+      if (correctedCount > 0 || notes.length) {
         toast({
           title: "Verificación de Pre-Alertas",
-          description: `Se han corregido ${correctedCount} asociaciones basadas en pre-alertas de clientes en vivo (SP2).`,
+          description: [
+            correctedCount > 0 ? `Se han corregido ${correctedCount} asociaciones basadas en pre-alertas de clientes en vivo (SP2).` : "No se corrigió ninguna fila.",
+            ...notes,
+          ].join(" · "),
         });
       } else {
         toast({
@@ -3016,7 +2883,7 @@ export const ResultSummary = memo(function ResultSummary({
         });
       }, 500);
     }
-  }, [resultData.rows, deletedIndices, toast, applyExplicitMatch, slCodeOverrides, setIsAutoSavePaused, setValidationProgress]);
+  }, [resultData.rows, deletedIndices, toast, applyExplicitMatch, slCodeOverrides, approvedMatches, preAlertAssignedRows, repeatedTrackingRows, setIsAutoSavePaused, setValidationProgress]);
 
   // ── Manual training of Nova matching system (teach Nova) ────────────────────
   const runNovaLearningSequence = useCallback(async (isSilent: boolean = false, targetIndices?: number[]) => {
@@ -3049,17 +2916,18 @@ export const ResultSummary = memo(function ResultSummary({
           return;
         }
 
+        // N15: a customer that came from a PRE-ALERT identifies one package, not the manifest
+        // name (it can be a relative, a company, another person). Learning it would assign every
+        // future package with this name to that customer. Only operator decisions are learned:
+        // skip rows assigned by pre-alert (processor, live listener, "Corregir por Pre-Alertas")
+        // unless the operator changed them afterwards.
+        const assignedByPreAlert = preAlertAssignedRows.has(idx) ||
+          ((row as any).matchSource === 'pre_alert' && !slCodeOverrides[idx] && !matchOverrides[idx]);
+        if (assignedByPreAlert) return;
+
         const slCode = (slCodeOverrides[idx]?.slCode || matchOverrides[idx]?.slCode || row.slCode || '').trim();
         const fullName = matchOverrides[idx]?.fullName || row.nombreCliente;
-        const rk = slCode || `__unmatched__${row.nombre}`;
-        const effectiveRuta = (
-          rutaOverrides[rk] ??
-          rutaOverrides[`__unmatched__${row.nombre}`] ??
-          slCodeOverrides[idx]?.ruta ??
-          matchOverrides[idx]?.ruta ??
-          row.ruta ??
-          ''
-        ).trim();
+        const effectiveRuta = rowRouteOf(idx).trim();   // R1: the same route that is saved
 
         const cc = slCode ? customerContactMap.get(slCode) : null;
         const consolidationEnabled = cc?.consolidationEnabled || row.consolidacion || false;
@@ -3151,8 +3019,10 @@ export const ResultSummary = memo(function ResultSummary({
     slCodeOverrides,
     matchOverrides,
     rutaOverrides,
+    rowRouteOf,
     customerContactMap,
     setApprovedMatches,
+    preAlertAssignedRows,
     toast,
     setValidationProgress,
   ]);
@@ -3619,6 +3489,7 @@ export const ResultSummary = memo(function ResultSummary({
       setIngestDone(
         parts.join(" · ") || `${totalProcessed} paquetes procesados`,
       );
+      setSavedThisSession(true);   // F1.5: from now on nothing automatic runs
       logAction({
         userId: authUser?.id || "unknown",
         userName: authUser?.fullName || authUser?.email || "Usuario Nova",
@@ -3838,6 +3709,7 @@ export const ResultSummary = memo(function ResultSummary({
             trackingsToAnnul,
             resultData.manifestNumber,
             {
+              keepPackagesInManifest: true,   // Nova only annuls — never sends packages to consolidation
               annulledBy: authUser?.email || "nova",
               reason: "Anulada antes de re-crear desde Nova (Actualizar BD - Sobrescribir)",
             },
@@ -3905,6 +3777,7 @@ export const ResultSummary = memo(function ResultSummary({
               movedTrackings,
               resultData.manifestNumber,
               {
+                keepPackagesInManifest: true,   // Nova only annuls — never sends packages to consolidation
                 annulledBy: authUser?.email || "nova",
                 reason:
                   "Anulada por reasignación de cliente — tracking movido a otro slCode",
@@ -4021,6 +3894,7 @@ export const ResultSummary = memo(function ResultSummary({
         setIngestDone(
           parts.join(" · ") || `${totalProcessed} paquetes procesados`,
         );
+        setSavedThisSession(true);   // F1.5: from now on nothing automatic runs
 
         // 1b — Save manifest record for traceability + manifest filter pre-loading
         //      Uses manifestDocRows (full set) so the manifests/{mn} doc never gets
@@ -4221,6 +4095,7 @@ export const ResultSummary = memo(function ResultSummary({
             movedToOtherManifestTrackings,
             resultData.manifestNumber,
             {
+              keepPackagesInManifest: true,   // Nova only annuls — never sends packages to consolidation
               annulledBy: authUser?.email || "nova",
               reason: "Anulada por reasignación de manifiesto — tracking movido a otro manifiesto",
             }
@@ -4587,6 +4462,7 @@ export const ResultSummary = memo(function ResultSummary({
           groupTrackings,
           resultData.manifestNumber,
           {
+            keepPackagesInManifest: true,   // Nova only annuls — never sends packages to consolidation
             annulledBy: authUser?.email || "nova",
             reason: "Revalidación manual de cálculos del grupo (Acciones → Revalidar cálculos)",
           }
@@ -4713,6 +4589,7 @@ export const ResultSummary = memo(function ResultSummary({
           groupTrackings,
           resultData.manifestNumber,
           {
+            keepPackagesInManifest: true,   // Nova only annuls — never sends packages to consolidation
             annulledBy: authUser?.email || "nova",
             reason: options.forceAnnulPaid
               ? "Re-generación forzada de factura pagada por grupo (Acciones → Re-generar factura)"
@@ -5248,13 +5125,7 @@ export const ResultSummary = memo(function ResultSummary({
           slCodeOverrides[idx]?.slCode ??
           matchOverrides[idx]?.slCode ??
           (row.slCode || "");
-        const effRuta =
-          rutaOverrides[effSlCode] ??
-          rutaOverrides[`__unmatched__${row.nombre}`] ??
-          rutaOverrides[row.slCode ?? ""] ??
-          slCodeOverrides[idx]?.ruta ??
-          matchOverrides[idx]?.ruta ??
-          (row.ruta || "");
+        const effRuta = rowRouteOf(idx);   // R1: print = what is saved
         const effCustomerName =
           matchOverrides[idx]?.fullName ??
           nameOverrides[idx] ??
@@ -5338,6 +5209,7 @@ export const ResultSummary = memo(function ResultSummary({
     slCodeOverrides,
     matchOverrides,
     rutaOverrides,
+    rowRouteOf,
     nameOverrides,
     fetchManifestPrintEnrichment,
   ]);
@@ -5373,13 +5245,7 @@ export const ResultSummary = memo(function ResultSummary({
           slCodeOverrides[idx]?.slCode ??
           matchOverrides[idx]?.slCode ??
           (row.slCode || "");
-        const effRuta =
-          rutaOverrides[effSlCode] ??
-          rutaOverrides[`__unmatched__${row.nombre}`] ??
-          rutaOverrides[row.slCode ?? ""] ??
-          slCodeOverrides[idx]?.ruta ??
-          matchOverrides[idx]?.ruta ??
-          (row.ruta || "");
+        const effRuta = rowRouteOf(idx);   // R1: print = what is saved
         const effCustomerName =
           matchOverrides[idx]?.fullName ??
           nameOverrides[idx] ??
@@ -5464,6 +5330,7 @@ export const ResultSummary = memo(function ResultSummary({
     slCodeOverrides,
     matchOverrides,
     rutaOverrides,
+    rowRouteOf,
     nameOverrides,
     fetchManifestPrintEnrichment,
   ]);
@@ -5753,20 +5620,8 @@ export const ResultSummary = memo(function ResultSummary({
               slCodeOverrides[b.originalIdx]?.slCode ||
               matchOverrides[b.originalIdx]?.slCode ||
               b.row.slCode;
-            aV = (
-              rutaOverrides[aEff] ??
-              rutaOverrides[`__unmatched__${a.row.nombre}`] ??
-              slCodeOverrides[a.originalIdx]?.ruta ??
-              matchOverrides[a.originalIdx]?.ruta ??
-              (a.row.ruta || "")
-            ).toUpperCase();
-            bV = (
-              rutaOverrides[bEff] ??
-              rutaOverrides[`__unmatched__${b.row.nombre}`] ??
-              slCodeOverrides[b.originalIdx]?.ruta ??
-              matchOverrides[b.originalIdx]?.ruta ??
-              (b.row.ruta || "")
-            ).toUpperCase();
+            aV = rowRouteOf(a.originalIdx).toUpperCase();   // R1
+            bV = rowRouteOf(b.originalIdx).toUpperCase();
             break;
           }
           case "descripcion":
@@ -5794,12 +5649,7 @@ export const ResultSummary = memo(function ResultSummary({
       const override = slCodeOverrides[originalIdx];
       const effSlCode =
         override?.slCode || matchOverrides[originalIdx]?.slCode || row.slCode;
-      const effRuta =
-        rutaOverrides[effSlCode] ??
-        rutaOverrides[`__unmatched__${row.nombre}`] ??
-        rutaOverrides[row.slCode] ??
-        (override?.ruta || matchOverrides[originalIdx]?.ruta || row.ruta) ??
-        "";
+      const effRuta = rowRouteOf(originalIdx);   // R1
       switch (sortConfig.col) {
         case "cliente":
           return (
@@ -5880,6 +5730,7 @@ export const ResultSummary = memo(function ResultSummary({
     unlinkedRows,
     matchOverrides,
     rutaOverrides,
+    rowRouteOf,
     priceOverrides,
     computedPrices,
     tc,
@@ -5907,15 +5758,8 @@ export const ResultSummary = memo(function ResultSummary({
            row.nombreCliente ||
            row.nombre);
       // Effective ruta — used by `onMoveToGroup` so a row reassigned to
-      // this group inherits the right delivery route. Honours the
-      // override stack: rutaOverrides[slCode] > slCodeOverrides[idx].ruta
-      // > matchOverrides[idx].ruta > the source row's own ruta.
-      const ruta =
-        (effSlCode ? rutaOverrides[effSlCode] : undefined) ??
-        slCodeOverrides[originalIdx]?.ruta ??
-        matchOverrides[originalIdx]?.ruta ??
-        row.ruta ??
-        "";
+      // this group inherits the right delivery route (R1: the group's customer route).
+      const ruta = rowRouteOf(originalIdx);
       return {
         key: groupKey,
         name,
@@ -5932,6 +5776,7 @@ export const ResultSummary = memo(function ResultSummary({
     nameOverrides,
     rutaOverrides,
     unlinkedRows,
+    rowRouteOf,
   ]);
 
   // ── Merge-target detection (groupKey → MergeTarget) ──────────────────────────
@@ -7058,8 +6903,11 @@ export const ResultSummary = memo(function ResultSummary({
                           const liveCustomerRuta = dataOriginPolicy.allowAutoCustomerRouteFill && effectiveSlCode
                             ? customerContactMap.get(effectiveSlCode.toUpperCase())?.ruta
                             : undefined;
-                          const effectiveRuta =
-                            rutaOverrides[rutaKey] ??
+                          // R1: a customer group shows its customer's route — the same rule as
+                          // "Guardar en BD" (rowRouteOf). Unmatched groups keep their group key.
+                          const effectiveRuta = effectiveSlCode
+                            ? rowRouteOf(firstIdx)
+                            : rutaOverrides[rutaKey] ??
                             rutaOverrides[`__unmatched__${effNombreForRuta}`] ??
                             rutaOverrides[`__unmatched__${firstRow.nombre}`] ??
                             rutaOverrides[firstRow.slCode] ??
@@ -7153,6 +7001,84 @@ export const ResultSummary = memo(function ResultSummary({
                                 (ae.some((e) => !e.row.permisos) ? 1 : 0) || 1
                               );
                             return ae.length;
+                          })();
+
+                          // The whole-group invoice (consolidación or factura única) shown as the header pill.
+                          // Resolved once here: the header pill shows it, and the forecast pills ("→ N fact.",
+                          // "C") are hidden once it exists — they describe what invoicing WILL do.
+                          const groupInvoice: InvoiceRecord | null = (() => {
+                                      // ── Defensive gate ─────────────────────────────────────
+                                      // The original gate was state-only:
+                                      //   (isEffectivelyConsolidated || mergedInvoices[groupKey])
+                                      // which silently failed for Firestore-loaded manifests
+                                      // when the inferring effect's `slCode` casing didn't match
+                                      // `groupKey`'s uppercased form. We now ALSO unconditionally
+                                      // attempt to resolve a whole-group invoice — if one exists
+                                      // for this slCode (consolidación or factura-única), we
+                                      // surface it in the header regardless of the toggle state.
+                                      const groupSl = (
+                                        effectiveSlCode || ""
+                                      ).toUpperCase();
+                                      if (!groupSl) return null;
+                                      const isMergedCandidate = (
+                                        inv: InvoiceRecord,
+                                      ): boolean => {
+                                        if (
+                                          String(inv.clientSlCode || inv.slCode || "").toUpperCase() !== groupSl
+                                        )
+                                          return false;
+                                        const status = String(
+                                          inv.status || "",
+                                        ).toLowerCase();
+                                        if (
+                                          status === "annulled" ||
+                                          status === "cancelled" ||
+                                          status === "void"
+                                        )
+                                          return false;
+                                        // Direct flags first, then fallback to tracking-count heuristic
+                                        // (multi-tracking, non-consolidation invoice for this slCode
+                                        // is the canonical "factura única" shape).
+                                        if (inv.isMergedSingle === true)
+                                          return true;
+                                        if (isConsolidatedInvoice(inv))
+                                          return false;
+                                        const single = (inv.trackingNumber ??
+                                          "") as string;
+                                        const multi = Array.isArray(
+                                          inv.trackingNumbers,
+                                        )
+                                          ? (inv.trackingNumbers as string[])
+                                          : [];
+                                        const all = [
+                                          ...(single ? [single] : []),
+                                          ...multi,
+                                        ].filter(Boolean);
+                                        return all.length > 1;
+                                      };
+                                      const groupInv =
+                                        createdInvoices.find(
+                                          (inv) =>
+                                            inv.isConsolidation &&
+                                            (inv.slCode || "").toUpperCase() ===
+                                            groupSl,
+                                        ) ??
+                                        persistedInvoices.find(
+                                          (inv) => {
+                                            const status = String(inv.status || "").toLowerCase();
+                                            if (status === "annulled" || status === "cancelled" || status === "void")
+                                              return false;
+                                            return isConsolidatedInvoice(inv) &&
+                                              String(inv.clientSlCode || inv.slCode || "").toUpperCase() === groupSl;
+                                          }
+                                        ) ??
+                                        createdInvoices.find(
+                                          isMergedCandidate,
+                                        ) ??
+                                        persistedInvoices.find(
+                                          isMergedCandidate,
+                                        );
+                                      return groupInv ?? null;
                           })();
 
                           // Group header row — displayed ABOVE child rows (pushed to jsx before entries loop).
@@ -7291,6 +7217,16 @@ export const ResultSummary = memo(function ResultSummary({
                                       <DropdownMenuItem
                                         key={r.name}
                                         onClick={() => {
+                                          // Customer with an open route review: confirm first (SP1 + SmartWeb + Nova learning),
+                                          // then the row takes the route once it is applied.
+                                          if (effectiveSlCode && getRouteAttention(effectiveSlCode)) {
+                                            openRouteReviewDialog({
+                                              slCode: effectiveSlCode,
+                                              preselect: r.name,
+                                              onApplied: (ruta) => setRutaOverrides((prev) => ({ ...prev, [rutaKey]: ruta })),
+                                            });
+                                            return;
+                                          }
                                           setRutaOverrides((prev) => ({
                                             ...prev,
                                             [rutaKey]: r.name,
@@ -7430,6 +7366,10 @@ export const ResultSummary = memo(function ResultSummary({
                                                            </span>
                                                          ) : null;
                                                        })()}
+                                    {/* "Revisar ruta" — live; disappears by itself once the route is decided/confirmed */}
+                                    {effectiveSlCode && !unlinkedRows.has(firstIdx) && !groupKey.startsWith("__unmatched__") && (
+                                      <RouteReviewBadge slCode={effectiveSlCode} compact />
+                                    )}
                                                      </span>
                                                    ) : (
                                                      <span className="text-slate-400 font-bold font-sans">Deshabilitada</span>
@@ -7534,15 +7474,8 @@ export const ResultSummary = memo(function ResultSummary({
                                          </TooltipProvider>
                                        );
                                      })()}
-                                    {/* Pre-alert badge — explains why unrelated manifest names appear under one customer */}
-                                    {firstRow.matchSource === "pre_alert" && (
-                                      <span
-                                        title="Este cliente pre-alertó estos paquetes. La asignación es por pre-alerta (tracking registrado por el cliente), no por similitud de nombre."
-                                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-sky-500/15 text-sky-700 dark:text-sky-400 border border-sky-500/30 shrink-0 select-none whitespace-nowrap"
-                                      >
-                                        Pre-alerta
-                                      </span>
-                                    )}
+                                    {/* The group's "Pre-alerta" badge was removed (2026-09-26): the "P" next to each tracking
+                                        already says who pre-alerted it (and warns when the name differs). */}
                                     {/* Divergent-match warning badge — clickable shortcut to unlink + rematch */}
                                     {divergentCount > 0 && (
                                       <button
@@ -7724,15 +7657,23 @@ export const ResultSummary = memo(function ResultSummary({
                                         sin registro
                                       </span>
                                     )}
-                                    {/* Encomienda service badge — shown when customer has an encomienda service configured */}
-                                    {cc?.encomiendaServiceName && (
-                                      <span
-                                        title={`Servicio de encomienda: ${resolveEncomienda(cc.encomiendaServiceName)}`}
-                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border border-red-400/60 text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 shrink-0 select-none whitespace-nowrap"
-                                      >
-                                        {resolveEncomienda(cc.encomiendaServiceName)}
-                                      </span>
-                                    )}
+                                    {/* F8.3: Encomiendas-route customer → its service, or "Servicio de terceros" when it is
+                                        none / not in the list (the admin checks it by hand). Other routes: no badge. */}
+                                    {(() => {
+                                      const badge = novaEncomiendaBadge(cc, encomiendaBadgeLookup);
+                                      if (!badge) return null;
+                                      return (
+                                        <span
+                                          title={badge.title}
+                                          data-testid={badge.kind === 'service' ? 'nova-encomienda-service' : 'nova-encomienda-third-party'}
+                                          className={badge.kind === 'service'
+                                            ? "inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border border-red-400/60 text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 shrink-0 select-none whitespace-nowrap"
+                                            : "inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border border-amber-400/70 text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 shrink-0 select-none whitespace-nowrap"}
+                                        >
+                                          {badge.label}
+                                        </span>
+                                      );
+                                    })()}
                                     {/* ── Acciones for unmatched rows (no slCode) — after name ── */}
                                     {!effectiveSlCode &&
                                       (() => {
@@ -9087,8 +9028,12 @@ export const ResultSummary = memo(function ResultSummary({
                                       )}{" "}
                                       paq.
                                     </span>
-                                    {entries.length > 1 && (
+                                    {/* Forecast of what "Guardar y facturar" will create. Once the group
+                                        already has its invoice the header pill says it — hidden then. */}
+                                    {entries.length > 1 && !groupInvoice && (
                                       <span
+                                        title={`Se crearán ${grpQueueSize} factura(s) al facturar`}
+                                        data-testid="nova-group-invoice-forecast"
                                         className={cn(
                                           "inline-flex items-center text-[9px] font-bold px-1 py-0.5 rounded whitespace-nowrap",
                                           isEffectivelyConsolidated
@@ -9098,10 +9043,10 @@ export const ResultSummary = memo(function ResultSummary({
                                               : "bg-muted border border-border/60 text-muted-foreground",
                                         )}
                                       >
-                                        {grpQueueSize} fact.
+                                        → {grpQueueSize} fact.
                                       </span>
                                     )}
-                                    {isEffectivelyConsolidated && (
+                                    {isEffectivelyConsolidated && !groupInvoice && (
                                       <span
                                         title="Consolidación activa: precio ceil(sumPeso) × tarifa"
                                         className="inline-flex items-center text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/25"
@@ -9129,77 +9074,7 @@ export const ResultSummary = memo(function ResultSummary({
                                       now suppresses itself when its invoice is THIS groupInv,
                                       so the header is the single source of truth. ────────── */}
                                     {(() => {
-                                      // ── Defensive gate ─────────────────────────────────────
-                                      // The original gate was state-only:
-                                      //   (isEffectivelyConsolidated || mergedInvoices[groupKey])
-                                      // which silently failed for Firestore-loaded manifests
-                                      // when the inferring effect's `slCode` casing didn't match
-                                      // `groupKey`'s uppercased form. We now ALSO unconditionally
-                                      // attempt to resolve a whole-group invoice — if one exists
-                                      // for this slCode (consolidación or factura-única), we
-                                      // surface it in the header regardless of the toggle state.
-                                      const groupSl = (
-                                        effectiveSlCode || ""
-                                      ).toUpperCase();
-                                      if (!groupSl) return null;
-                                      const isMergedCandidate = (
-                                        inv: InvoiceRecord,
-                                      ): boolean => {
-                                        if (
-                                          String(inv.clientSlCode || inv.slCode || "").toUpperCase() !== groupSl
-                                        )
-                                          return false;
-                                        const status = String(
-                                          inv.status || "",
-                                        ).toLowerCase();
-                                        if (
-                                          status === "annulled" ||
-                                          status === "cancelled" ||
-                                          status === "void"
-                                        )
-                                          return false;
-                                        // Direct flags first, then fallback to tracking-count heuristic
-                                        // (multi-tracking, non-consolidation invoice for this slCode
-                                        // is the canonical "factura única" shape).
-                                        if (inv.isMergedSingle === true)
-                                          return true;
-                                        if (isConsolidatedInvoice(inv))
-                                          return false;
-                                        const single = (inv.trackingNumber ??
-                                          "") as string;
-                                        const multi = Array.isArray(
-                                          inv.trackingNumbers,
-                                        )
-                                          ? (inv.trackingNumbers as string[])
-                                          : [];
-                                        const all = [
-                                          ...(single ? [single] : []),
-                                          ...multi,
-                                        ].filter(Boolean);
-                                        return all.length > 1;
-                                      };
-                                      const groupInv =
-                                        createdInvoices.find(
-                                          (inv) =>
-                                            inv.isConsolidation &&
-                                            (inv.slCode || "").toUpperCase() ===
-                                            groupSl,
-                                        ) ??
-                                        persistedInvoices.find(
-                                          (inv) => {
-                                            const status = String(inv.status || "").toLowerCase();
-                                            if (status === "annulled" || status === "cancelled" || status === "void")
-                                              return false;
-                                            return isConsolidatedInvoice(inv) &&
-                                              String(inv.clientSlCode || inv.slCode || "").toUpperCase() === groupSl;
-                                          }
-                                        ) ??
-                                        createdInvoices.find(
-                                          isMergedCandidate,
-                                        ) ??
-                                        persistedInvoices.find(
-                                          isMergedCandidate,
-                                        );
+                                      const groupInv = groupInvoice;
                                       if (!groupInv) return null;
                                       const label =
                                         groupInv.isMergedSingle ||
@@ -9247,16 +9122,21 @@ export const ResultSummary = memo(function ResultSummary({
                                         <span className="inline-flex items-center gap-0.5 shrink-0">
                                           <button
                                             type="button"
-                                            title={`Ver ${label.toLowerCase()}: ${groupInv.invoiceNumber}`}
+                                            title={`Ver ${label.toLowerCase()}: ${groupInv.invoiceNumber} (${invoiceBadge(groupInv.invoiceNumber, groupInv.status).status})`}
                                             onClick={() =>
                                               setPreviewInvoice(
                                                 enrichInv(groupInv),
                                               )
                                             }
-                                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors cursor-pointer whitespace-nowrap"
+                                            className={cn(
+                                              "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold border hover:brightness-95 transition-colors cursor-pointer whitespace-nowrap",
+                                              invoiceBadge(groupInv.invoiceNumber, groupInv.status).tone,
+                                            )}
+                                            data-testid="nova-group-invoice-badge"
                                           >
                                             <FileText className="h-2.5 w-2.5 shrink-0" />
-                                            {label}
+                                            {/* Which invoice and its state (2026-09-26): "…234230-C [Borrador]". */}
+                                            {invoiceBadge(groupInv.invoiceNumber, groupInv.status).text}
                                           </button>
                                           {/* ── Delete corrupted consolidated invoice ───────────
                                             Same affordance as the per-row badge — drops the
@@ -9443,6 +9323,14 @@ export const ResultSummary = memo(function ResultSummary({
                                           <DropdownMenuItem
                                             key={r.name}
                                             onClick={() => {
+                                              if (effectiveSlCode && getRouteAttention(effectiveSlCode)) {
+                                                openRouteReviewDialog({
+                                                  slCode: effectiveSlCode,
+                                                  preselect: r.name,
+                                                  onApplied: (ruta) => setRutaOverrides((prev) => ({ ...prev, [rutaKey]: ruta })),
+                                                });
+                                                return;
+                                              }
                                               setRutaOverrides((prev) => ({
                                                 ...prev,
                                                 [rutaKey]: r.name,
@@ -9879,16 +9767,30 @@ export const ResultSummary = memo(function ResultSummary({
                                       {(() => {
                                         const normTracking = (row.tracking || "").toUpperCase().trim();
                                         const rowPreAlert = (row as any).preAlert || (row as any).preAlertInfo;
-                                        const info = preAlertsMap.get(normTracking) || (rowPreAlert && (rowPreAlert.found || rowPreAlert.slCode) ? rowPreAlert : ((row as any).hasPreAlert || (row as any).matchSource === "pre_alert" ? { found: true, tracking: row.tracking, slCode: (row as any).preAlertSlCode || row.slCode, clientName: (row as any).nombreCliente } : null));
-                                        if (!info || !info.found) return null;
-
-                                        const preAlertSlCode = (
-                                          info.slCode ||
-                                          info.sp2PreAlertId?.match(/^(SL\d+)-/i)?.[1] ||
-                                          (row as any).preAlertSlCode ||
-                                          (row as any).slCode ||
-                                          ""
-                                        ).toUpperCase().trim();
+                                        const info = preAlertsMap.get(normTracking) || (rowPreAlert && (rowPreAlert.found || rowPreAlert.slCode) ? rowPreAlert : ((row as any).hasPreAlert || (row as any).matchSource === "pre_alert" ? { found: true, tracking: row.tracking, slCode: (row as any).preAlertSlCode, clientName: (row as any).nombreCliente } : null));
+                                        // N10 / decision (a): the badge shows only a real owner (never the row's own
+                                        // customer). F1.6: RED "P" when there is more than one match (2+ accounts, or
+                                        // the tracking repeated in this manifest); AMBER "P" when the manifest name does
+                                        // not resemble the pre-alert customer. The letter is always "P" (pre-alerta).
+                                        const badge = preAlertBadgeFor({ info, rowPreAlertSlCode: (row as any).preAlertSlCode, repeatedInManifest: repeatedTrackingRows.has(oIdx) || info?.repeatedInManifest === true });
+                                        if (badge.kind === "none") return null;
+                                        if (badge.kind === "several") {
+                                          const severalTitle = badge.reason === "accounts"
+                                            ? `Pre-alerta — más de una coincidencia: pre-alertado por varias cuentas (${badge.slCodes.join(", ")}). Nova no asignó cliente: revisa y asigna a mano.`
+                                            : `Pre-alerta — más de una coincidencia: este tracking aparece más de una vez en el manifiesto (pre-alerta de ${badge.slCodes.join(", ")}). Nova no asignó cliente: revisa y asigna a mano.`;
+                                          return (
+                                            <span
+                                              key={`prealert-several-${oIdx}`}
+                                              title={severalTitle}
+                                              data-testid="prealert-badge-several"
+                                              data-reason={badge.reason}
+                                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/15 text-red-700 dark:text-red-400 border border-red-500/50 shrink-0 select-none cursor-help"
+                                            >
+                                              P
+                                            </span>
+                                          );
+                                        }
+                                        const preAlertSlCode = badge.slCode;
 
                                         const effectiveSlCode = unlinkedRows.has(oIdx)
                                           ? ""
@@ -9896,6 +9798,7 @@ export const ResultSummary = memo(function ResultSummary({
 
                                          const preAlertCust = preAlertCustomers.get(preAlertSlCode);
                                          const custName = preAlertCust ? preAlertCust.fullName : (info.clientName || (row as any).nombreCliente || "");
+                                         const nameMismatch = !namesLookAlike(row.nombre, custName);
                                          const rowData = row as any;
                                          const rawDate = rowData.preAlertCreatedAt || info.preAlertCreatedAt;
                                          let dateFormatted = "";
@@ -9911,7 +9814,7 @@ export const ResultSummary = memo(function ResultSummary({
                                          const courier = info.courier || rowData.preAlert?.courier;
                                          const hasInvoice = info.hasInvoice ?? rowData.preAlert?.hasInvoice;
 
-                                         const badgeTitle = `Pre-alerta: ${preAlertSlCode}${custName ? ` — ${custName}` : ""}${description ? ` | ${description}` : ""}${declaredVal != null ? ` | $${declaredVal}` : ""}`;
+                                         const badgeTitle = `Pre-alerta: ${preAlertSlCode}${custName ? ` — ${custName}` : ""}${description ? ` | ${description}` : ""}${declaredVal != null ? ` | $${declaredVal}` : ""}${nameMismatch ? ` | ⚠️ El nombre del manifiesto (${row.nombre}) no coincide con el cliente de la pre-alerta` : ""}`;
 
                                          return (
                                            <TooltipProvider key={`prealert-tt-${oIdx}`}>
@@ -9919,7 +9822,10 @@ export const ResultSummary = memo(function ResultSummary({
                                                <TooltipTrigger asChild>
                                                  <span
                                                    title={badgeTitle}
-                                                   className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25 shrink-0 select-none cursor-help hover:bg-emerald-500/25 hover:border-emerald-500/40 transition-colors shadow-xs"
+                                                   data-testid={nameMismatch ? "prealert-badge-name-mismatch" : "prealert-badge"}
+                                                   className={nameMismatch
+                                                     ? "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/40 shrink-0 select-none cursor-help hover:bg-amber-500/25 transition-colors shadow-xs"
+                                                     : "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25 shrink-0 select-none cursor-help hover:bg-emerald-500/25 hover:border-emerald-500/40 transition-colors shadow-xs"}
                                                  >
                                                    P
                                                  </span>
@@ -9931,8 +9837,12 @@ export const ResultSummary = memo(function ResultSummary({
                                                >
                                                  <div className="font-semibold text-emerald-400 flex items-center justify-between gap-2 border-b border-slate-800 pb-1.5">
                                                    <div className="flex items-center gap-1.5">
-                                                     <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-400" />
-                                                     <span>Pre-alerta Verificada</span>
+                                                     {nameMismatch
+                                                       ? <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                                                       : <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-400" />}
+                                                     <span className={nameMismatch ? "text-amber-300" : undefined}>
+                                                       {nameMismatch ? "Pre-alerta — revisa el nombre" : "Pre-alerta Verificada"}
+                                                     </span>
                                                    </div>
                                                    {courier && (
                                                      <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
@@ -9980,6 +9890,11 @@ export const ResultSummary = memo(function ResultSummary({
                                                    )}
                                                  </div>
 
+                                                 {nameMismatch && (
+                                                   <div className="text-amber-300 font-semibold pt-1 border-t border-amber-500/20 text-[11px]">
+                                                     ⚠️ El nombre del manifiesto ({row.nombre}) no coincide con {custName || preAlertSlCode}. Nova asignó la pre-alerta: confírmalo.
+                                                   </div>
+                                                 )}
                                                  {effectiveSlCode && effectiveSlCode !== preAlertSlCode && (
                                                    <div className="text-amber-300 font-semibold pt-1 border-t border-amber-500/20 text-[11px]">
                                                      ⚠️ Advertencia: Reasignado a {effectiveSlCode}

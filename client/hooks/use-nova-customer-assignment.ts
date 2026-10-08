@@ -71,6 +71,9 @@ export function useNovaCustomerAssignment({
   const [matchOverrides,  setMatchOverrides]  = useState<Record<number, { slCode: string; fullName: string; ruta: string }>>({});
   const [nameOverrides,   setNameOverrides]   = useState<Record<number, string>>({});
   const [approvedMatches, setApprovedMatches] = useState<Set<number>>(new Set());
+  // N15: rows whose customer came from a PRE-ALERT (package-specific), not from an admin decision.
+  // Nova must never learn "manifest name → customer" from them. An admin assignment clears the mark.
+  const [preAlertAssignedRows, setPreAlertAssignedRows] = useState<Set<number>>(new Set());
 
   // Transient set of row indices that were just unlinked (cleared after 3 s)
   const [recentlyUnlinked, setRecentlyUnlinked] = useState<Set<number>>(new Set());
@@ -257,6 +260,16 @@ export function useNovaCustomerAssignment({
 
     setApprovedMatches(prev => {
       const next = new Set(prev);
+      nonPreAlertIndices.forEach(i => next.delete(i));
+      return next;
+    });
+
+    // N15: rows kept on their pre-alert were assigned by the PRE-ALERT (automatic, per package),
+    // not by the operator → mark them so Nova never learns "manifest name → customer" from them.
+    // Rows re-matched by name here are not pre-alert assignments anymore.
+    setPreAlertAssignedRows(prev => {
+      const next = new Set(prev);
+      preAlertMatchedIndices.forEach(i => next.add(i));
       nonPreAlertIndices.forEach(i => next.delete(i));
       return next;
     });
@@ -559,12 +572,16 @@ export function useNovaCustomerAssignment({
   const applyExplicitMatch = useCallback((
     indices: number[],
     target: { slCode: string; fullName: string; ruta?: string },
+    options?: { source?: 'admin' | 'pre_alert' },
   ) => {
     if (!indices.length || !target.slCode) return;
+    // N15: a pre-alert identifies ONE package. It must not spread to other rows with the same
+    // manifest name (they may be other people / other packages) and must not be learned.
+    const fromPreAlert = options?.source === 'pre_alert';
 
-    // Expand indices to include twin rows sharing exact normalized manifest name
+    // Expand indices to include twin rows sharing exact normalized manifest name (admin only)
     const expandedIndicesSet = new Set<number>(indices);
-    indices.forEach(i => {
+    if (!fromPreAlert) indices.forEach(i => {
       const manifestName = (nameOverrides[i] || resultDataRows[i]?.nombre || '').trim().toUpperCase();
       if (!manifestName) return;
       resultDataRows.forEach((r, idx) => {
@@ -594,7 +611,7 @@ export function useNovaCustomerAssignment({
 
     // Fire-and-forget: learn the new mapping for replaced/assigned customers
     const learnedNames = new Set<string>();
-    effectiveIndices.forEach(i => {
+    if (!fromPreAlert) effectiveIndices.forEach(i => {
       const currentSlCode = slCodeOverrides[i]?.slCode || resultDataRows[i]?.slCode;
       if (currentSlCode !== target.slCode) {
         const row = resultDataRows[i];
@@ -646,6 +663,11 @@ export function useNovaCustomerAssignment({
       effectiveIndices.forEach(i => next.add(i));
       return next;
     });
+    setPreAlertAssignedRows(prev => {
+      const next = new Set(prev);
+      effectiveIndices.forEach(i => (fromPreAlert ? next.add(i) : next.delete(i)));
+      return next;
+    });
     if (targetRuta) {
       setRutaOverrides(prev => ({ ...prev, [target.slCode]: targetRuta }));
       updateCustomerRuta(target.slCode, targetRuta, false, 'nova_assignment').catch(console.error);
@@ -659,6 +681,7 @@ export function useNovaCustomerAssignment({
     matchOverrides,  setMatchOverrides,
     nameOverrides,   setNameOverrides,
     approvedMatches, setApprovedMatches,
+    preAlertAssignedRows, setPreAlertAssignedRows,
     recentlyUnlinked,
     applyNameAndMatch,
     applyExplicitMatch,

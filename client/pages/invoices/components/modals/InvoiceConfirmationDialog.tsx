@@ -217,18 +217,7 @@ export function InvoiceConfirmationDialog({
                           <span className="block text-xs text-muted-foreground mt-0.5">Marca los paquetes de esta factura como <em>on_route</em> en SP1 (con guardia anti-regresión).</span>
                         </span>
                       </label>
-                      <label className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors">
-                        <Checkbox
-                          id="status-opt-sync-sp2"
-                          checked={statusChangeOptions.syncSp2}
-                          onCheckedChange={(v) => setStatusChangeOptions(o => ({ ...o, syncSp2: !!v }))}
-                          className="mt-0.5 shrink-0"
-                        />
-                        <span className="block">
-                          <span className="block text-sm font-medium text-foreground leading-tight">Sincronizar paquetes con SP2</span>
-                          <span className="block text-xs text-muted-foreground mt-0.5">Actualiza el estado de los paquetes en SmartWeb (SP2).</span>
-                        </span>
-                      </label>
+                      <span className="flex items-start gap-3 px-4 py-3 text-xs text-muted-foreground bg-emerald-500/5" data-testid="status-sp2-always"><span className="text-emerald-600 font-bold">✓</span><span className="block"><span className="block text-sm font-medium text-foreground leading-tight">Sincronizado con SP2</span><span className="block mt-0.5">Siempre activo: lo que SP1 decide se aplica en SP2 al instante.</span></span></span>
                     </>
                   )}
                 </span>
@@ -266,18 +255,7 @@ export function InvoiceConfirmationDialog({
                       <span className="block text-xs text-muted-foreground mt-0.5">Marca los paquetes de esta factura como <em>processed</em> en SP1.</span>
                     </span>
                   </label>
-                  <label className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors">
-                    <Checkbox
-                      id="opt-sync-sp2"
-                      checked={emailSendOptions.syncSp2}
-                      onCheckedChange={(v) => setEmailSendOptions(o => ({ ...o, syncSp2: !!v }))}
-                      className="mt-0.5 shrink-0"
-                    />
-                    <span className="block">
-                      <span className="block text-sm font-medium text-foreground leading-tight">Sincronizar con SP2</span>
-                      <span className="block text-xs text-muted-foreground mt-0.5">Agrega la factura al historial del cliente en SmartWeb (SP2).</span>
-                    </span>
-                  </label>
+                  <span className="flex items-start gap-3 px-4 py-3 text-xs text-muted-foreground bg-emerald-500/5" data-testid="email-sp2-always"><span className="text-emerald-600 font-bold">✓</span><span className="block"><span className="block text-sm font-medium text-foreground leading-tight">Sincronizado con SP2</span><span className="block mt-0.5">Siempre activo: lo que SP1 decide se aplica en SP2 al instante.</span></span></span>
                 </span>
               </span>
             )}
@@ -543,18 +521,7 @@ export function InvoiceConfirmationDialog({
                       <span className="block text-xs text-muted-foreground mt-0.5">Marca los paquetes de cada factura como <em>processed</em> en SP1.</span>
                     </span>
                   </label>
-                  <label className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors">
-                    <Checkbox
-                      id="bulk-opt-sync-sp2"
-                      checked={emailSendOptions.syncSp2}
-                      onCheckedChange={(v) => setEmailSendOptions(o => ({ ...o, syncSp2: !!v }))}
-                      className="mt-0.5 shrink-0"
-                    />
-                    <span className="block">
-                      <span className="block text-sm font-medium text-foreground leading-tight">Sincronizar con SP2</span>
-                      <span className="block text-xs text-muted-foreground mt-0.5">Agrega cada factura al historial del cliente en SmartWeb (SP2).</span>
-                    </span>
-                  </label>
+                  <span className="flex items-start gap-3 px-4 py-3 text-xs text-muted-foreground bg-emerald-500/5" data-testid="bulk-email-sp2-always"><span className="text-emerald-600 font-bold">✓</span><span className="block"><span className="block text-sm font-medium text-foreground leading-tight">Sincronizado con SP2</span><span className="block mt-0.5">Siempre activo: lo que SP1 decide se aplica en SP2 al instante.</span></span></span>
                 </span>
               </span>
             )}
@@ -606,18 +573,7 @@ export function InvoiceConfirmationDialog({
                       </span>
                     </span>
                   </span>
-                  <label className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors">
-                    <Checkbox
-                      id="bulk-status-opt-sync-sp2"
-                      checked={bulkStatusOptions.syncSp2}
-                      onCheckedChange={(v) => setBulkStatusOptions(o => ({ ...o, syncSp2: !!v }))}
-                      className="mt-0.5 shrink-0"
-                    />
-                    <span className="block">
-                      <span className="block text-sm font-medium text-foreground leading-tight">Sincronizar estado con SP2</span>
-                      <span className="block text-xs text-muted-foreground mt-0.5">Actualiza el estado de cada factura en SmartWeb (SP2).</span>
-                    </span>
-                  </label>
+                  <span className="flex items-start gap-3 px-4 py-3 text-xs text-muted-foreground bg-emerald-500/5" data-testid="bulk-status-sp2-always"><span className="text-emerald-600 font-bold">✓</span><span className="block"><span className="block text-sm font-medium text-foreground leading-tight">Estado sincronizado con SP2</span><span className="block mt-0.5">Siempre activo: lo que SP1 decide se aplica en SP2 al instante.</span></span></span>
                   {confirmAction?.data?.newStatus === "paid" && (
                     <label className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors">
                       <Checkbox

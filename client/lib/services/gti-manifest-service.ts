@@ -27,7 +27,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
-import type { GTICalculatedRow, GTIExportOptions, GTIRowInput } from './gti-export';
+import { computeGTIAmounts, type GTICalculatedRow, type GTIExportOptions, type GTIRowInput } from './gti-export';
 
 // ── Types ─────────────────────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,9 @@ export interface GTIInvoiceEntry {
   /** Invoice total in CRC colones (as billed — used to derive precioUSD at
    *  the current printTc so GTI MONTO matches the actual invoice CRC total). */
   amountCRC:        number;
+  /** The invoice's own exchange rate (0 when unknown). */
+  exchangeRate?:    number;
+  invoiceNumber?:   string;
   trackingNumbers:  string[];
   /** How many times this invoice has been included in a GTI download */
   gtiDownloadCount: number;
@@ -62,7 +65,13 @@ export interface GTIInvoiceEntry {
 
 // ── Collection ────────────────────────────────────────────────────────────────
 
+import { isLiveInvoice } from './gti-export';
+
 const COLLECTION = 'gti_manifests';
+
+
+/** Firestore rejects `undefined` — drop those keys (optional GTIRowInput fields). */
+const clean = <T extends object>(r: T): T => Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined)) as T;
 
 // ── Write ─────────────────────────────────────────────────────────────────────
 
@@ -84,6 +93,18 @@ export async function saveGTIManifest(
 ): Promise<void> {
   const manifestNumber = options.manifestNumber?.trim() || 'SIN_NUMERO';
   const docRef = doc(db, COLLECTION, manifestNumber);
+
+  // MERGE (2026-09-28): downloading route B after route A of the same manifest used to overwrite route A's rows
+  // (merge:false). Rows now accumulate; the same invoice (invoiceId) is replaced, never duplicated.
+  const prev = await getDoc(docRef);
+  const prevRows: GTICalculatedRow[] = prev.exists() ? ((prev.data() as GTIManifestDoc).rows || []) : [];
+  const incomingIds = new Set(rows.map((r) => r.invoiceId).filter(Boolean) as string[]);
+  // Rows saved before 2026-09-28 carry no invoiceId (84 prod manifests, 1 525 rows): for those the same customer
+  // (receiver name) is replaced instead of duplicated. Other customers' rows (e.g. another route) are kept.
+  const normName = (n: unknown) => String(n || '').trim().toUpperCase().replace(/\s+/g, ' ');
+  const incomingNames = new Set(rows.map((r) => normName(r.nombre)));
+  const kept = prevRows.filter((r) => (r.invoiceId ? !incomingIds.has(r.invoiceId) : !incomingNames.has(normName(r.nombre))));
+  rows = [...kept, ...rows].map(clean);
 
   const data: Omit<GTIManifestDoc, 'exportedAt'> & { exportedAt: ReturnType<typeof serverTimestamp> } = {
     manifestNumber,
@@ -250,7 +271,7 @@ export async function getGTICountsByManifests(
       );
       snap.docs.forEach(d => {
         const data = d.data() as any;
-        if (data.clientSlCode && data.manifestNumber) {
+        if (data.clientSlCode && data.manifestNumber && isLiveInvoice(data.status)) {
           countMap.set(`${data.clientSlCode}__${data.manifestNumber}`, data.gtiDownloadCount ?? 0);
           
           // Also set the key mapped to the document ID if they differ
@@ -281,9 +302,6 @@ export async function updateGTIManifestRows(
   manifestNumber: string,
   updates: Array<{ rowIndex: number; fields: Partial<GTICalculatedRow> }>,
 ): Promise<void> {
-  const FLETE_RATIO      = 0.80;
-  const LOGISTICA_DIVISOR = 4.52;
-
   const docRef = doc(db, COLLECTION, manifestNumber);
   const snap   = await getDoc(docRef);
   if (!snap.exists()) throw new Error(`GTI manifest '${manifestNumber}' not found`);
@@ -296,14 +314,11 @@ export async function updateGTIManifestRows(
     Object.assign(rows[rowIndex], fields);
 
     // Re-derive amounts when precioUSD is patched
+    // Same rule as the file (gti-export computeGTIAmounts: TRUNC) — it used ROUND/4.52 here (±0.01 differences).
     if (fields.precioUSD !== undefined) {
-      const tc = data.tc;
-      const monto = tc > 0
-        ? Math.round(fields.precioUSD * tc * 100) / 100
-        : fields.precioUSD;
-      const flete     = Math.round(monto * FLETE_RATIO * 100) / 100;
-      const logistica = Math.floor(flete / LOGISTICA_DIVISOR * 100) / 100;
-      Object.assign(rows[rowIndex], { monto, flete, logistica });
+      if (!(data.tc > 0)) throw new Error(`El manifiesto GTI '${manifestNumber}' no tiene tipo de cambio`);
+      Object.assign(rows[rowIndex], computeGTIAmounts(fields.precioUSD * data.tc));
+      delete (rows[rowIndex] as any).montoCRC; // the edited USD price is now the source
     }
   }
 
@@ -322,20 +337,14 @@ export async function updateGTIManifestTC(
   manifestNumber: string,
   newTC: number,
 ): Promise<void> {
-  const FLETE_RATIO = 0.80;
-  const LOGISTICA_IVA_RATE = 1.13;
-
+  if (!(newTC > 0)) throw new Error('Tipo de cambio inválido');
   const docRef = doc(db, COLLECTION, manifestNumber);
   const snap = await getDoc(docRef);
   if (!snap.exists()) throw new Error(`GTI manifest '${manifestNumber}' not found`);
 
   const data = snap.data() as GTIManifestDoc;
-  const rows = data.rows.map(row => {
-    const monto = newTC > 0 ? Math.round(row.precioUSD * newTC * 100) / 100 : row.precioUSD;
-    const flete = Math.trunc(monto * FLETE_RATIO * 100) / 100;
-    const logistica = Math.trunc((monto - flete) / LOGISTICA_IVA_RATE * 100) / 100;
-    return { ...row, monto, flete, logistica };
-  });
+  // A row that carries the invoice's own colones (montoCRC) keeps them: the TC only re-prices USD-only rows.
+  const rows = data.rows.map(row => (Number(row.montoCRC) > 0 ? row : { ...row, ...computeGTIAmounts(row.precioUSD * newTC) }));
 
   await updateDoc(docRef, {
     tc: newTC,
@@ -373,28 +382,20 @@ export async function addGTIManifestRow(
   manifestNumber: string,
   newRow: GTIRowInput,
 ): Promise<void> {
-  const FLETE_RATIO = 0.80;
-  const LOGISTICA_IVA_RATE = 1.13;
-
   const docRef = doc(db, COLLECTION, manifestNumber);
   const snap = await getDoc(docRef);
   if (!snap.exists()) throw new Error(`GTI manifest '${manifestNumber}' not found`);
 
   const data = snap.data() as GTIManifestDoc;
-  const tc = data.tc || 500;
-  const monto = tc > 0 ? Math.round(newRow.precioUSD * tc * 100) / 100 : newRow.precioUSD;
-  const flete = Math.trunc(monto * FLETE_RATIO * 100) / 100;
-  const logistica = Math.trunc((monto - flete) / LOGISTICA_IVA_RATE * 100) / 100;
-
+  // No invented exchange rate (it defaulted to 500): the manifest's TC or the row's own colones.
+  if (!(Number(newRow.montoCRC) > 0) && !(data.tc > 0)) throw new Error(`El manifiesto GTI '${manifestNumber}' no tiene tipo de cambio`);
   const calculatedRow: GTICalculatedRow = {
     ...newRow,
     nombre: newRow.nombre.toUpperCase(),
-    monto,
-    flete,
-    logistica,
+    ...computeGTIAmounts(Number(newRow.montoCRC) > 0 ? Number(newRow.montoCRC) : newRow.precioUSD * data.tc),
   };
 
-  const updatedRows = [...data.rows, calculatedRow];
+  const updatedRows = [...data.rows, clean(calculatedRow)];
 
   await updateDoc(docRef, {
     rows: updatedRows,

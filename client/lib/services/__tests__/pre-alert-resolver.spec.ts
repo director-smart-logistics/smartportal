@@ -4,7 +4,7 @@ import { canonicalizeTracking } from '../../utils/tracking-canonicalizer';
 
 describe('PreAlertResolver — Comprehensive Logic & Integrity Suite', () => {
   describe('Rule: isEligiblePreAlert (Consumable Entity & Active Gate)', () => {
-    it('debe aceptar pre-alertas pendientes activas dentro de la ventana de 60 días', () => {
+    it('debe aceptar pre-alertas pendientes activas dentro de la ventana de 90 días', () => {
       const validDoc = {
         active: true,
         status: 'pending',
@@ -48,8 +48,10 @@ describe('PreAlertResolver — Comprehensive Logic & Integrity Suite', () => {
     });
 
     it('debe permitir pre-alertas activas no facturadas y no entregadas aunque tengan referencia de manifiesto borrador previo', () => {
-      const manifestDoc1 = { active: true, status: 'pending', manifestNumber: 'MIA-AIR-2026' };
-      const manifestDoc2 = { active: true, status: 'pending', manifestId: 'MIA-AIR-2026' };
+      // Dated: since N5 an undated pre-alert is never eligible (this test is about the draft manifest reference).
+      const createdAt = new Date().toISOString();
+      const manifestDoc1 = { active: true, status: 'pending', manifestNumber: 'MIA-AIR-2026', createdAt };
+      const manifestDoc2 = { active: true, status: 'pending', manifestId: 'MIA-AIR-2026', createdAt };
       expect(isEligiblePreAlert(manifestDoc1)).toBe(true);
       expect(isEligiblePreAlert(manifestDoc2)).toBe(true);
     });
@@ -63,11 +65,11 @@ describe('PreAlertResolver — Comprehensive Logic & Integrity Suite', () => {
       expect(isEligiblePreAlert(deliveredDoc3)).toBe(false);
     });
 
-    it('debe rechazar pre-alertas con más de 60 días de antigüedad (Prevención de números reciclados)', () => {
+    it('debe rechazar pre-alertas con más de 90 días de antigüedad (Prevención de números reciclados)', () => {
       const oldDoc = {
         active: true,
         status: 'pending',
-        createdAt: { toDate: () => new Date(Date.now() - 65 * 24 * 60 * 60 * 1000) }, // 65 days old
+        createdAt: { toDate: () => new Date(Date.now() - 95 * 24 * 60 * 60 * 1000) }, // 95 days old (window = 90)
       };
       expect(isEligiblePreAlert(oldDoc)).toBe(false);
     });

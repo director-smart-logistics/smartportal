@@ -24,6 +24,8 @@
  * BUG-T3: priceOverrides were not reflected in invoice rows — fixed here.
  */
 
+import { repeatedTrackingIndices } from '@/lib/services/prealert-match-keys';
+import { effectiveRowRuta } from '@/lib/nova/row-route';
 import { useCallback } from 'react';
 import { calculatePrice } from '@/lib/utils/pricing';
 import { saveUnmatchedRouteLearning } from '@/lib/services/match-learning';
@@ -187,6 +189,10 @@ export function useNovaResolvedRows({
       return { price: priceOut, peso: pesoOut };
     })();
 
+    // F1.6: rows whose tracking appears 2+ times in this manifest (RED "P").
+    // Over the WHOLE manifest (a partial save passes a subset); indices = original row indices.
+    const repeatedRows = repeatedTrackingIndices(resultDataRows.map(r => r.tracking), deletedIndices);
+
     // ── Pass 2: map rows with all overrides applied ───────────────────────────
     return rows.map(row => {
       const idx       = idxOf.get(row) ?? -1;
@@ -223,22 +229,35 @@ export function useNovaResolvedRows({
       // Twin rows (see getTwin) live under the sibling's group on screen, so
       // they take that group's route — never an __unmatched__ key.
       const twin = getTwin(row, idx);
+      // R1: the route of the row's CURRENT customer — never a route learned for the manifest
+      // name nor the previous customer's route (client/lib/nova/row-route.ts).
       const effRuta   = twin
         ? (rutaOverrides[effSlCode] ?? dbDefaultRoute ?? twin.ruta)
-        : rutaOverrides[effSlCode]
-        ?? rutaOverrides[`__unmatched__${nameOverrides[idx] ?? row.nombre}`]
-        ?? rutaOverrides[`__unmatched__${row.nombre}`]
-        ?? rutaOverrides[row.slCode ?? '']
-        ?? dbDefaultRoute
-        ?? slCodeOverrides[idx]?.ruta
-        ?? matchOverrides[idx]?.ruta
-        ?? (row.ruta || '');
+        : effectiveRowRuta({
+          effSlCode,
+          rowSlCode: row.slCode,
+          unmatchedNames: [nameOverrides[idx] ?? row.nombre, row.nombre],
+          rowRuta: row.ruta,
+          rutaOverrides,
+          customerRoute: dbDefaultRoute,
+          slCodeOverrideRuta: slCodeOverrides[idx]?.ruta,
+          matchOverrideRuta: matchOverrides[idx]?.ruta,
+        });
 
       const contact = effSlCode ? customerContactMap?.get(effSlCode.toUpperCase()) : undefined;
       const livePreAlert = preAlertsMap?.get(tracking);
+      // RED "P" (several accounts pre-alerted the tracking) is saved too, so a re-opened manifest
+      // still shows it — and a re-save keeps it (docs/NOVA_PREALERT_MATCH_SCENARIOS.md §F).
+      const severalAccounts = (p: any) => !!p && !p.found && Array.isArray(p.ambiguousSlCodes) && p.ambiguousSlCodes.length > 1;
       const effPreAlert = (livePreAlert && livePreAlert.found)
         ? livePreAlert
-        : (row.preAlert && (row.preAlert.found || row.preAlert.slCode) ? row.preAlert : undefined);
+        : severalAccounts(livePreAlert)
+          ? { found: false, tracking: livePreAlert.tracking || row.tracking, ambiguousSlCodes: [...livePreAlert.ambiguousSlCodes] }
+          : (row.preAlert && (row.preAlert.found || row.preAlert.slCode || severalAccounts(row.preAlert)) ? row.preAlert : undefined);
+      // Same tracking 2+ times in this manifest (RED "P"): saved as a flag, see PreAlertInfo.
+      const savedPreAlert = effPreAlert && repeatedRows.has(idx) && !effPreAlert.repeatedInManifest
+        ? { ...effPreAlert, repeatedInManifest: true }
+        : effPreAlert;
       const preAlertName = effPreAlert?.displayName || effPreAlert?.fullName || effPreAlert?.name || effPreAlert?.clientName;
 
       const isUnlinkedRow = unlinkedRows.has(idx);
@@ -314,7 +333,7 @@ export function useNovaResolvedRows({
         precioSinPermiso: effPrecioSinPermiso,
         precioConPermiso: effPrecioConPermiso,
         ajustePrecio: effAjustePrecio,
-        ...(effPreAlert ? { preAlert: effPreAlert } : {}),
+        ...(savedPreAlert ? { preAlert: savedPreAlert } : {}),
         originalIndex: idx
       };
     });

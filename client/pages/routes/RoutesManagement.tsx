@@ -68,7 +68,7 @@ import { getInvoiceByTracking } from "@/lib/firebase/firestore-client";
 import { sendTestInvoiceEmail, sendInvoiceEmails, markInvoicesAsPaidForTrackings, updateInvoiceStatusForTrackings, getCustomersBySlCodes, getInvoiceStatusesByManifests, type InvoiceRecord } from "@/lib/services/invoice-service";
 import { syncPackagesToSmartWeb, type SP1PackageForSync } from "@/lib/services/sync-smartweb-service";
 import { pushStatusToSp2 } from "@/lib/services/sync-invoices-service";
-import { downloadGTITiquetes, downloadGTITiquetesXLSX, buildGTICalculatedRows, type GTIRowInput } from "@/lib/services/gti-export";
+import { downloadGTITiquetes, downloadGTITiquetesXLSX, buildGTICalculatedRows, isLiveInvoice, isFE, type GTIRowInput } from "@/lib/services/gti-export";
 import { downloadCSV as downloadManifestCSV, downloadXLSX as downloadManifestXLSX, type ManifestRow, type ProcessingResult } from "@/lib/services/manifest-processor";
 import { saveGTIManifest, fetchGTIInvoicesByManifest, markInvoicesAsGTIDownloaded, getGTICountsByManifests, type GTIInvoiceEntry } from "@/lib/services/gti-manifest-service";
 import { BulkManifestWizardModal } from "@/components/manifest/BulkManifestWizardModal";
@@ -776,7 +776,7 @@ export default function RoutesManagement() {
   }>({
     syncSp2: true,
     markInvoicesPaid: false,
-    syncInvoicesSp2: false,
+    syncInvoicesSp2: true,
     updateInvoices: false,
     invoiceStatus: 'sent',
   });
@@ -1161,18 +1161,19 @@ export default function RoutesManagement() {
   }, [routePackages, allPkgsForManifests]);
 
   // Mapa de trackings a facturas en tiempo real
+  // tracking → invoice: live invoices only (isLiveInvoice — a deleted copy with the same trackings never wins).
   const trackingToInvoiceMap = useMemo(() => {
     const map = new Map<string, any>();
     manifestInvoices.forEach(inv => {
       const items = inv.invoiceItems || inv.items || [];
       items.forEach((item: any) => {
         const t = (item.trackingNumber || item.tracking || '').toUpperCase().trim();
-        if (t && inv.status !== 'cancelled' && inv.status !== 'annulled') {
+        if (t && isLiveInvoice(inv.status)) {
           map.set(t, inv);
         }
       });
       const st = (inv.trackingNumber || inv.tracking || '').toUpperCase().trim();
-      if (st && inv.status !== 'cancelled' && inv.status !== 'annulled') {
+      if (st && isLiveInvoice(inv.status)) {
         map.set(st, inv);
       }
     });
@@ -1193,7 +1194,8 @@ export default function RoutesManagement() {
     if (t && trackingToInvoiceMap.has(t)) {
       return trackingToInvoiceMap.get(t);
     }
-    if (pkg.invoiceId && invoiceIdMap.has(pkg.invoiceId)) {
+    // a deleted invoice never stands in for the live one (cancelled/annulled keep showing here, as before)
+    if (pkg.invoiceId && invoiceIdMap.has(pkg.invoiceId) && invoiceIdMap.get(pkg.invoiceId)?.status !== 'deleted') {
       return invoiceIdMap.get(pkg.invoiceId);
     }
     return null;
@@ -1984,7 +1986,10 @@ export default function RoutesManagement() {
     executePrintBoleta();
   }, [selectedPkgs, filteredPkgs, executePrintBoleta]);
 
-  const BATCH = 50;
+  // ATOMIC (2026-09-26): the server writes one call in ONE Firestore batch (slBulkUpdatePackageStatus,
+  // up to 500). Sending chunks of 50 made a selection of >50 packages non-atomic (a failed later chunk
+  // left the earlier ones applied). Up to 450 packages now go in a single call = all or nothing.
+  const BATCH = 450;
   const runBulkUpdate = useCallback(async (
     status: string,
     extra: Record<string, any>,
@@ -2007,8 +2012,12 @@ export default function RoutesManagement() {
       return;
     }
 
+    let packagesDone = false;
     try {
       const batchId = `bulk_${status}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      // 2026-09-28: SP2 (portal del cliente) is ALWAYS updated, on the server, in the same call — the admin's
+      // status wins (forceSp2) and the answer comes back (updated / skipped with the reason).
+      const sp2Total = { updated: 0, created: 0, skipped: 0, errors: 0, details: [] as Array<{ tracking: string; outcome: string; reason?: string }> };
       for (let i = 0; i < ids.length; i += BATCH) {
         const batchResult = await firebaseApi.packages.bulkUpdateStatus(
           ids.slice(i, i + BATCH),
@@ -2018,13 +2027,30 @@ export default function RoutesManagement() {
             statusLockedAt: new Date().toISOString(),
             manuallyUpdated: true,
             statusLabel: STATUS_LABELS[status] ?? status,
-          }
+          },
+          true,
         );
         if (!batchResult.success) {
           throw new Error(batchResult.error || 'Error al actualizar paquetes en el servidor');
         }
-        if (i + BATCH < ids.length) await new Promise((r) => setTimeout(r, 100));
+        const r2 = (batchResult.data as any)?.sp2;
+        if (r2) {
+          sp2Total.updated += r2.updated || 0; sp2Total.created += r2.created || 0;
+          sp2Total.skipped += r2.skipped || 0; sp2Total.errors += r2.errors || 0;
+          sp2Total.details.push(...(r2.details || []));
+        }
       }
+      {
+        const notDone = sp2Total.details.filter((d) => d.outcome !== 'updated');
+        const why = notDone.slice(0, 3).map((d) => `${d.tracking}: ${d.reason || d.outcome}`).join(' · ');
+        toast({
+          title: sp2Total.errors ? 'SmartWeb (SP2) no se actualizó por completo' : 'SmartWeb (SP2) actualizado',
+          description: `${sp2Total.updated} actualizado(s) en el portal del cliente${sp2Total.skipped ? ` · ${sp2Total.skipped} omitido(s)` : ''}${sp2Total.errors ? ` · ${sp2Total.errors} con error` : ''}${why ? ` — ${why}${notDone.length > 3 ? '…' : ''}` : ''}`,
+          variant: sp2Total.errors ? 'destructive' : 'default',
+        });
+      }
+
+      packagesDone = true;
 
       // For non-delivered statuses — optionally update related invoice status
       let invoicesUpdated = 0;
@@ -2103,7 +2129,7 @@ export default function RoutesManagement() {
           });
 
           // Push `paid` status to SP2 for each updated invoice (fire-and-forget)
-          if (opts.syncInvoicesSp2 ?? false) {
+          if (opts.syncInvoicesSp2 ?? true) {
             syncSp2InvoicesAttempted = true;
             paidResult.updatedInvoices.forEach(inv => {
               pushStatusToSp2(inv.id, inv.invoiceNumber ?? inv.id, 'paid')
@@ -2157,7 +2183,7 @@ export default function RoutesManagement() {
           updatedNonDeliveredInvoiceNumbers,
           syncSp2InvoicesAttempted,
           markInvoicesPaid: opts.markInvoicesPaid ?? false,
-          syncInvoicesSp2: opts.syncInvoicesSp2 ?? false,
+          syncInvoicesSp2: opts.syncInvoicesSp2 ?? true,
           syncSp2: opts.syncSp2 ?? false,
           updateInvoices: opts.updateInvoices ?? false,
           invoiceStatus: opts.invoiceStatus,
@@ -2176,59 +2202,17 @@ export default function RoutesManagement() {
       const desc = `${ids.length} paquetes → ${STATUS_LABELS[status] ?? status}${invoiceDesc}`;
       toast({ title: "Actualizado", description: desc });
 
-      // SP2 sync — fire-and-forget after the SP1 update already succeeded.
-      // forceSync is false for most statuses (SP2 regression guard stays active).
-      // Exception: 'consolidated' uses forceSync=true because its SP2 priority (60)
-      // is below customs (80) and transit (70) — without forceSync the update would
-      // be silently blocked for packages already at those states in SP2.
-      if (syncToSP2) {
-        const pkgsToSync = (filteredPkgs as any[]).filter(p => ids.includes(p.id));
-        // All admin-set statuses use forceSync=true — admin intent must always win
-        // over SP2's regression guard (e.g. consolidated=60 < customs=80, held=75 < customs=80,
-        // returned could be below a delivered=100 for re-deliveries, etc.).
-        const FORCE_SYNC_ADMIN_STATUSES = new Set([
-          'consolidated', 'pickup', 'returned', 'delivered', 'processed', 'route', 'on_route', 'held', 'retained', 'transit', 'customs'
-        ]);
-        const needsForceSync = FORCE_SYNC_ADMIN_STATUSES.has(status);
-        const sp1Pkgs: SP1PackageForSync[] = pkgsToSync.map(p => ({
-          id: p.id,
-          trackingNumber: p.tracking || p.trackingNumber || p.id,
-          slCode: p.slCode,
-          customerName: p.customerName,
-          status,
-          weight: p.weight,
-          description: p.description || p.descripcion,
-          origin: p.origin || p.originLocationId,
-          destination: p.destination || p.destinationLocationId,
-          ruta: p.ruta ?? dispatchRoute?.name,
-          manifestNumber: p.manifestNumber || p.manifiesto,
-          requiresPermit: p.requiresPermit,
-          cost: p.calculatedCost ?? p.cost ?? p.price,
-          currency: p.currency,
-          ...(needsForceSync ? { forceSync: true } : {}),
-        }));
-        syncPackagesToSmartWeb(sp1Pkgs)
-          .then((result) => {
-            const allSkipped = result.updated === 0 && result.created === 0 && result.skipped > 0 && result.errors === 0;
-            toast({
-              title: allSkipped ? 'SP2 sin cambios' : 'Sync SP2',
-              description: allSkipped
-                ? `${result.skipped} paquete(s) omitidos — aún no registrados en el portal del cliente (SP2). SP1 sí fue actualizado.`
-                : `${result.updated} actualizado(s), ${result.created} creado(s)${result.errors ? `, ${result.errors} error(es)` : ''}${result.skipped ? `, ${result.skipped} omitido(s)` : ''}`,
-              variant: allSkipped ? 'default' : 'default',
-            });
-          })
-          .catch(() => {
-            toast({
-              title: 'Sync SP2 fallido',
-              description: 'SP1 fue actualizado correctamente. El sync a SP2 falló — reintenta manualmente si es necesario.',
-              variant: 'destructive',
-            });
-          });
-      }
+      // SP2 is updated on the server in the same call (slBulkUpdatePackageStatus, forceSp2) — see above.
     } catch (err) {
       auditLog({ action: 'packages_bulk_updated', category: 'package', result: 'error', resource: dispatchRoute?.name ?? '', errorMessage: err instanceof Error ? err.message : String(err), metadata: { status, count: ids.length } });
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Error al actualizar", variant: "destructive" });
+      toast({
+        title: "Error",
+        // Be exact about what happened: the packages are one atomic write; the invoice step runs after it.
+        description: packagesDone
+          ? `Los ${ids.length} paquetes SÍ se actualizaron a ${STATUS_LABELS[status] ?? status}, pero la actualización de sus facturas falló: ${err instanceof Error ? err.message : String(err)}. Reintenta la acción (es segura de repetir).`
+          : `No se actualizó ningún paquete: ${err instanceof Error ? err.message : "Error al actualizar"}`,
+        variant: "destructive",
+      });
     } finally {
       setIsDispatching(false);
     }
@@ -2275,7 +2259,9 @@ export default function RoutesManagement() {
           clientName:       inv.clientName || inv.name || '',
           manifestNumber:   inv.manifestNumber || manifestFilter,
           totalAmount:      inv.totalAmount ?? inv.amount ?? 0,
-          amountCRC:        inv.amountCRC ?? 0,
+          amountCRC:        inv.amountCRC ?? inv.totalCRC ?? 0,
+          exchangeRate:     Number(inv.exchangeRate) || 0,
+          invoiceNumber:    inv.invoiceNumber || '',
           trackingNumbers:  inv.trackingNumbers || [],
           gtiDownloadCount: inv.gtiDownloadCount ?? 0,
           gtiDownloadedAt:  inv.gtiDownloadedAt  ?? null,
@@ -2324,44 +2310,55 @@ export default function RoutesManagement() {
     setIsDownloadingGTI(true);
     setGtiDialogOpen(false);
     try {
+      // MONTO = the invoice's own colones (as billed). Only an invoice without them is priced USD × its own TC
+      // (the screen TC only as last resort) — it used to go CRC→USD→CRC with the screen TC (±₡2 differences).
       const gtiRows: GTIRowInput[] = toDownload.map(inv => {
         const contact = gtiContactMap.get(inv.clientSlCode);
-        const precioUSD =
-          inv.amountCRC > 0 && printTc > 0
-            ? Math.round((inv.amountCRC / printTc) * 100) / 100
-            : inv.totalAmount;
+        const tcInv = inv.exchangeRate > 0 ? inv.exchangeRate : printTc;
         return {
           nombre:      inv.clientName || '',
           dni:         contact?.dni   || '',
           email:       contact?.email || '',
           phone:       contact?.phone || '',
-          precioUSD,
+          montoCRC:    inv.amountCRC > 0 ? inv.amountCRC : (tcInv > 0 ? Math.round(inv.totalAmount * tcInv * 100) / 100 : 0),
+          precioUSD:   inv.totalAmount,
           descripcion: 'Flete Internacional',
           electronicInvoiceRequired: contact?.electronicInvoiceRequired ?? false,
+          invoiceId:     inv.id,
+          invoiceNumber: inv.invoiceNumber,
         };
       });
       const opts = { tc: printTc, manifestNumber: manifestFilter, routeSuffix: '' };
-      if (gtiDownloadFormat === 'xlsx') {
-        downloadGTITiquetesXLSX(gtiRows, opts);
-      } else {
-        downloadGTITiquetes(gtiRows, opts);
-      }
+      const res = gtiDownloadFormat === 'xlsx' ? downloadGTITiquetesXLSX(gtiRows, opts) : downloadGTITiquetes(gtiRows, opts);
 
-      const calcRows = buildGTICalculatedRows(gtiRows, opts);
+      // Only what went into the file counts as downloaded; left-out invoices stay "nuevas".
+      const writtenIds = res.included.map(r => r.invoiceId).filter(Boolean) as string[];
       await Promise.all([
-        saveGTIManifest(calcRows, opts, (user as any)?.uid || user?.id || '', (user as any)?.email || ''),
-        markInvoicesAsGTIDownloaded(toDownload.map(inv => inv.id)),
+        res.included.length ? saveGTIManifest(buildGTICalculatedRows(res.included, opts), opts, (user as any)?.uid || user?.id || '', (user as any)?.email || '') : Promise.resolve(),
+        writtenIds.length ? markInvoicesAsGTIDownloaded(writtenIds) : Promise.resolve(),
       ]);
 
+      const left = [
+        ...res.excludedFE.map(r => `${r.nombre} (${r.invoiceNumber || 'factura'}): factura electrónica — hacerla directamente en GTI`),
+        ...res.excludedNoAmount.map(r => `${r.nombre} (${r.invoiceNumber || 'factura'}): sin monto en colones`),
+      ];
+      // factura electrónica written but missing receptor data → complete it in GTI before issuing
+      const feCheck = res.feIncomplete.map(x => `${x.row.nombre}: falta ${x.missing.join(', ')}`);
       toast({
-        title: 'Manifiesto GTI descargado',
-        description: `${toDownload.length} factura${toDownload.length !== 1 ? 's' : ''} exportadas — ${manifestFilter}.`,
-      });
+        title: res.included.length ? 'Manifiesto GTI descargado' : 'No se generó archivo GTI',
+        description: `${res.included.length} factura${res.included.length !== 1 ? 's' : ''} en el archivo`
+          + (res.included.filter(isFE).length ? ` (${res.included.filter(isFE).length} factura${res.included.filter(isFE).length !== 1 ? 's' : ''} electrónica${res.included.filter(isFE).length !== 1 ? 's' : ''})` : '')
+          + ` — ${manifestFilter}.`
+          + (left.length ? ` NO incluidas (${left.length}): ${left.join(' · ')}` : '')
+          + (feCheck.length ? ` Revisar en GTI (factura electrónica incompleta): ${feCheck.join(' · ')}` : ''),
+        variant: left.length || feCheck.length ? 'destructive' : undefined,
+        duration: left.length || feCheck.length ? 30000 : undefined,
+      } as any);
       setGtiInvoices(null);
       // Optimistic update: reflect new counts immediately in the table badges
       setGtiCountMap(prev => {
         const next = new Map(prev);
-        for (const inv of toDownload) {
+        for (const inv of toDownload.filter(i => writtenIds.includes(i.id))) {
           const k = `${inv.clientSlCode}__${inv.manifestNumber}`;
           next.set(k, (next.get(k) ?? 0) + 1);
         }
@@ -2880,19 +2877,25 @@ export default function RoutesManagement() {
                 </div>
               </div>
 
-              {/* ── Bulk action buttons ── */}
-              <AnimatePresence>
-                {selectedPkgs.size > 0 && (
+              {/* ── Bulk action buttons ──
+                  Its space is ALWAYS reserved (2026-09-26): before, the bar grew from height 0 when the admin
+                  selected packages and pushed the package list down 44 px ("brinco"), and pulled it back up
+                  on deselect. Now the buttons only fade in/out in the same space; nothing below moves. */}
+              <div className="min-h-7 flex items-center" data-testid="routes-bulk-actions">
+              <AnimatePresence mode="wait" initial={false}>
+                {selectedPkgs.size > 0 ? (
                   <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="flex flex-wrap gap-1.5 overflow-hidden"
+                    key="bulk-actions"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.12 }}
+                    className="flex flex-wrap gap-1.5"
                   >
                     <Button size="sm" className="h-7 text-xs bg-gray-900 text-white hover:bg-gray-800 gap-1" onClick={() => { setRouteActionOptions(o => ({ ...o, syncSp2: true, updateInvoices: false, invoiceStatus: 'sent' })); setConfirmAction("route"); }} disabled={isDispatching}>
                       <Truck className="h-3 w-3" />En Ruta ({selectedPkgs.size})
                     </Button>
-                    <Button size="sm" className="h-7 text-xs bg-emerald-700 text-white hover:bg-emerald-800 gap-1" onClick={() => { setRouteActionOptions(o => ({ ...o, syncSp2: true, markInvoicesPaid: false, syncInvoicesSp2: false })); setConfirmAction("delivered"); }} disabled={isDispatching}>
+                    <Button size="sm" className="h-7 text-xs bg-emerald-700 text-white hover:bg-emerald-800 gap-1" onClick={() => { setRouteActionOptions(o => ({ ...o, syncSp2: true, markInvoicesPaid: false, syncInvoicesSp2: true })); setConfirmAction("delivered"); }} disabled={isDispatching}>
                       <CheckCircle2 className="h-3 w-3" />Entregado
                     </Button>
                     <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-red-400 text-red-700 hover:bg-red-50 dark:text-red-400" onClick={() => setShowCheckOut(true)} disabled={isDispatching}>
@@ -2936,8 +2939,20 @@ export default function RoutesManagement() {
                       <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
                   </motion.div>
+                ) : (
+                  <motion.p
+                    key="bulk-hint"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.12 }}
+                    className="text-[11px] text-muted-foreground"
+                  >
+                    Selecciona paquetes para ver las acciones en lote.
+                  </motion.p>
                 )}
               </AnimatePresence>
+              </div>
 
               {/* ── Packages table ── */}
               {dispatchRoute ? (
@@ -4211,18 +4226,7 @@ export default function RoutesManagement() {
                             )}
                           </>
                         )}
-                        <label className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors">
-                          <Checkbox
-                            id="route-opt-sync-invoices-sp2"
-                            checked={routeActionOptions.syncInvoicesSp2}
-                            onCheckedChange={(v) => setRouteActionOptions(o => ({ ...o, syncInvoicesSp2: !!v }))}
-                            className="mt-0.5 shrink-0"
-                          />
-                          <div>
-                            <p className="text-sm font-medium text-foreground leading-tight">Sincronizar estado de facturas con SP2</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">Actualiza el estado de las facturas a Pagado en SmartWeb (SP2).</p>
-                          </div>
-                        </label>
+                        <span className="flex items-start gap-3 px-4 py-3 text-xs text-muted-foreground bg-emerald-500/5" data-testid="route-invoices-sp2-always"><span className="text-emerald-600 font-bold">✓</span><span className="block"><span className="block text-sm font-medium text-foreground leading-tight">Estado de facturas sincronizado con SP2</span><span className="block mt-0.5">Siempre activo: lo que SP1 decide se aplica en SP2 al instante.</span></span></span>
                       </>
                     )}
                     {/* For non-delivered — optional invoice status update */}
@@ -4273,19 +4277,11 @@ export default function RoutesManagement() {
                         )}
                       </>
                     )}
-                    {/* Last step — sync packages to SP2 (all statuses) */}
-                    <label className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors">
-                      <Checkbox
-                        id="route-opt-sync-sp2"
-                        checked={routeActionOptions.syncSp2}
-                        onCheckedChange={(v) => setRouteActionOptions(o => ({ ...o, syncSp2: !!v }))}
-                        className="mt-0.5 shrink-0"
-                      />
-                      <div>
-                        <p className="text-sm font-medium text-foreground leading-tight">Sincronizar paquetes con SP2</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">Actualiza el estado de los paquetes en SmartWeb (SP2) / portal del cliente.</p>
-                      </div>
-                    </label>
+                    {/* SP2 (portal del cliente) is always updated in the same step — no opt-out (2026-09-28) */}
+                    <div className="flex items-start gap-3 px-4 py-3 text-xs text-muted-foreground" data-testid="route-sp2-always">
+                      <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" />
+                      <p>Se actualiza también el portal del cliente (SmartWeb) en el mismo paso; al terminar verás cuántos se actualizaron y, si alguno se omitió, el motivo.</p>
+                    </div>
                   </div>
                 </div>
                 <div className="flex gap-2 justify-end pt-1">

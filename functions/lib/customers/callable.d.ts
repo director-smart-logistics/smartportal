@@ -186,10 +186,6 @@ export declare const slUpdateCustomer: import("firebase-functions/v2/https").Cal
 }>, unknown>;
 export declare const slDeleteCustomer: import("firebase-functions/v2/https").CallableFunction<{
     customerId: string;
-}, Promise<{
-    success: boolean;
-    id: string;
-    deleted: boolean;
-}>, unknown>;
+}, Promise<never>, unknown>;
 export {};
 //# sourceMappingURL=callable.d.ts.map

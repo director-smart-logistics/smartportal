@@ -10,6 +10,7 @@ export type { DataOrigin, DataOriginPolicy } from './types';
 export {
   FRESH_POLICY,
   FIRESTORE_POLICY,
+  SAVED_POLICY,
   policyForOrigin,
   policyFromResultData,
 } from './types';

@@ -1,3 +1,37 @@
+export interface Sp2BulkSyncResult {
+    total: number;
+    updated: number;
+    created: number;
+    skipped: number;
+    errors: number;
+    details: Array<{
+        tracking: string;
+        outcome: string;
+        reason?: string;
+    }>;
+    error?: string;
+}
+/**
+ * Route Management → SP2 (2026-09-28): the new status of every package is pushed to SP2 and AWAITED (a
+ * fire-and-forget fetch can be cut when the function answers). `force` (Route Management's explicit admin
+ * actions only) = forceSync: SP1 governs, SP2's regression guard must not keep a package "En ruta" or
+ * "Facturado". Other callers keep the guard (e.g. a label reprint never moves a delivered package back).
+ * One retry on a network/5xx error.
+ * The per-package outcome goes back to the admin (why a package was skipped).
+ */
+export declare function pushBulkStatusToSP2(packages: Array<{
+    trackingNumber?: string;
+    slCode?: string;
+    status: string;
+    weight?: number;
+    description?: string;
+    ruta?: string;
+    manifestNumber?: string;
+    requiresPermit?: boolean;
+    calculatedCost?: number;
+    cost?: number;
+    currency?: string;
+}>, force: boolean): Promise<Sp2BulkSyncResult>;
 interface ListRoutesRequest {
     status?: string;
     limit?: number;
@@ -45,6 +79,8 @@ interface BulkUpdateStatusRequest {
     packageIds: string[];
     status: string;
     extraFields?: Record<string, unknown>;
+    /** Route Management: the admin's explicit status wins in SP2 (forceSync). */
+    forceSp2?: boolean;
 }
 export declare const slListRoutes: import("firebase-functions/v2/https").CallableFunction<ListRoutesRequest, Promise<{
     success: boolean;
@@ -152,6 +188,7 @@ export declare const slListPackagesByRoute: import("firebase-functions/v2/https"
 export declare const slBulkUpdatePackageStatus: import("firebase-functions/v2/https").CallableFunction<BulkUpdateStatusRequest, Promise<{
     success: boolean;
     updated: number;
+    sp2: Sp2BulkSyncResult;
 }>, unknown>;
 export {};
 //# sourceMappingURL=callable.d.ts.map
